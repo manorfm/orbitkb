@@ -96,6 +96,74 @@ def test_update_command_errors_on_unknown_service(tmp_path: Path, capsys):
     assert "unknown service" in capsys.readouterr().err
 
 
+def test_update_command_with_repository_reindexes_every_service(tmp_path: Path, capsys):
+    db_path = tmp_path / "test.db"
+    cli._cmd_index(_parse([
+        "index", str(SAMPLE_ROOT), "--db", str(db_path), "--repository-name", "test-repo",
+    ]))
+
+    exit_code = cli._cmd_update(_parse(["update", "--repository", "test-repo", "--db", str(db_path)]))
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "orders-service" in out
+    assert "payments-service" in out
+    assert "inventory-service" in out
+
+
+def test_update_command_with_repository_continues_after_one_service_fails(tmp_path: Path, capsys):
+    db_path = tmp_path / "test.db"
+    cli._cmd_index(_parse([
+        "index", str(SAMPLE_ROOT), "--db", str(db_path), "--repository-name", "test-repo",
+    ]))
+    conn = open_db(db_path)
+    conn.execute(
+        "UPDATE services SET root_path = ? WHERE name = ?",
+        (str(tmp_path / "does-not-exist-anymore"), "orders-service"),
+    )
+    conn.commit()
+
+    exit_code = cli._cmd_update(_parse(["update", "--repository", "test-repo", "--db", str(db_path)]))
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "root path for 'orders-service' no longer exists" in captured.err
+    assert "payments-service" in captured.out
+    assert "inventory-service" in captured.out
+
+
+def test_update_command_errors_on_unknown_repository(tmp_path: Path, capsys):
+    db_path = tmp_path / "test.db"
+    open_db(db_path)
+
+    exit_code = cli._cmd_update(_parse(["update", "--repository", "does-not-exist", "--db", str(db_path)]))
+
+    assert exit_code == 1
+    assert "unknown repository" in capsys.readouterr().err
+
+
+def test_update_command_rejects_service_and_repository_together(tmp_path: Path, capsys):
+    db_path = tmp_path / "test.db"
+    open_db(db_path)
+
+    exit_code = cli._cmd_update(_parse([
+        "update", "orders-service", "--repository", "test-repo", "--db", str(db_path),
+    ]))
+
+    assert exit_code == 1
+    assert "either a service name or --repository" in capsys.readouterr().err
+
+
+def test_update_command_requires_service_or_repository(tmp_path: Path, capsys):
+    db_path = tmp_path / "test.db"
+    open_db(db_path)
+
+    exit_code = cli._cmd_update(_parse(["update", "--db", str(db_path)]))
+
+    assert exit_code == 1
+    assert "a service name or --repository" in capsys.readouterr().err
+
+
 def test_list_command_prints_indexed_services(tmp_path: Path, capsys):
     db_path = tmp_path / "test.db"
     cli._cmd_index(_parse(["index", str(SAMPLE_ROOT), "--db", str(db_path)]))

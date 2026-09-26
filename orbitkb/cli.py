@@ -57,26 +57,63 @@ def _cmd_index(args: argparse.Namespace) -> int:
     return 0 if all(r.status == "ok" for r in results) else 1
 
 
-def _cmd_update(args: argparse.Namespace) -> int:
-    conn = open_db(args.db)
-    row = services_repo.get_service_by_name(conn, args.service)
-    if row is None:
-        print(f"error: unknown service {args.service!r} (run `orbitkb list`)", file=sys.stderr)
-        return 1
+def _update_one_service(
+    conn, row, args: argparse.Namespace, backend, embedding_backend, depth_provider, progress,
+) -> bool:
+    """Re-index one already-known service row. Prints one status/error line. Returns success."""
     root = Path(row["root_path"])
     if not root.is_dir():
         print(
-            f"error: root path for {args.service!r} no longer exists: {root}\n"
-            f"       re-run `orbitkb index <newpath> --service {args.service}` instead.",
+            f"error: root path for {row['name']!r} no longer exists: {root}\n"
+            f"       re-run `orbitkb index <newpath> --service {row['name']}` instead.",
             file=sys.stderr,
         )
-        return 1
+        return False
     from orbitkb.discovery.registry import detector_for
 
     detector = detector_for(root)
     if detector is None:
         print(f"error: {root} no longer matches any known stack", file=sys.stderr)
+        return False
+    try:
+        result = index_service(
+            conn, row["name"], root, detector, backend, force=args.force, progress=progress,
+            embedding_backend=embedding_backend, depth_provider=depth_provider,
+        )
+    except (ValueError, RuntimeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return False
+    print(
+        f"{result.service_name}: status={result.status} files_changed={result.files_changed} "
+        f"llm_calls={result.llm_calls} cost_usd={result.cost_usd}"
+    )
+    return result.status == "ok"
+
+
+def _cmd_update(args: argparse.Namespace) -> int:
+    if args.service and args.repository:
+        print("error: pass either a service name or --repository, not both", file=sys.stderr)
         return 1
+    if not args.service and not args.repository:
+        print("error: pass a service name or --repository", file=sys.stderr)
+        return 1
+    conn = open_db(args.db)
+    if args.repository:
+        repo = repositories_repo.get_repository_by_name(conn, args.repository)
+        if repo is None:
+            print(f"error: unknown repository {args.repository!r} (run `orbitkb list`)", file=sys.stderr)
+            return 1
+        rows = services_repo.list_services_for_repository(conn, repo["id"])
+        if not rows:
+            print(f"error: repository {args.repository!r} has no indexed services", file=sys.stderr)
+            return 1
+    else:
+        row = services_repo.get_service_by_name(conn, args.service)
+        if row is None:
+            print(f"error: unknown service {args.service!r} (run `orbitkb list`)", file=sys.stderr)
+            return 1
+        rows = [row]
+
     backend = resolve_backend(args.backend, args.model, args.claude_bare, args.codex_api_key)
     embedding_backend = try_create_default_backend()
     try:
@@ -85,21 +122,16 @@ def _cmd_update(args: argparse.Namespace) -> int:
             args.depth_timeout, args.depth_max_edges, args.depth_cache_entries,
             args.depth_circuit_failures, args.depth_circuit_cooldown,
         )
-        with RichProgressReporter() as progress:
-            result = index_service(
-                conn, args.service, root, detector, backend, force=args.force, progress=progress,
-                embedding_backend=embedding_backend, depth_provider=depth_provider,
-            )
     except (ValueError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    print(
-        f"{result.service_name}: status={result.status} files_changed={result.files_changed} "
-        f"llm_calls={result.llm_calls} cost_usd={result.cost_usd}"
-    )
+    all_ok = True
+    with RichProgressReporter() as progress:
+        for row in rows:
+            all_ok = _update_one_service(conn, row, args, backend, embedding_backend, depth_provider, progress) and all_ok
     if args.depth_mode != DepthMode.OFF.value:
         print(f"depth_provider_metrics={json.dumps(depth_provider.metrics(), sort_keys=True)}")
-    return 0 if result.status == "ok" else 1
+    return 0 if all_ok else 1
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
@@ -396,11 +428,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_index.set_defaults(func=_cmd_index)
 
     p_update = sub.add_parser(
-        "update", help="Re-index one already-known service by name",
-        epilog="example:\n  orbitkb update orders-service\n",
+        "update", help="Re-index one already-known service, or every service in a repository",
+        epilog="example:\n  orbitkb update orders-service\n  orbitkb update --repository shop\n",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p_update.add_argument("service", help="Exact name shown by `orbitkb list`")
+    p_update.add_argument(
+        "service", nargs="?", default=None, help="Exact name shown by `orbitkb list` (omit when using --repository)",
+    )
+    p_update.add_argument(
+        "--repository", default=None,
+        help="Update every service in this repository instead of one by name (see `orbitkb list`)",
+    )
     p_update.add_argument("--force", action="store_true", help="Regenerate everything, ignoring file-hash skip")
     add_backend_args(p_update)
     add_depth_args(p_update)
