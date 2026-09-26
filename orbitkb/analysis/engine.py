@@ -503,9 +503,20 @@ class _Function:
 class _FileAnalyzer:
     def __init__(self, language: Language):
         self._parser = Parser(language)
+        self._tree = None
 
     def parse(self, source: bytes) -> Node:
-        return self._parser.parse(source).root_node
+        # A `Node` is a view into memory owned by its `Tree`. Returning only
+        # `.root_node` drops the sole Python reference to the `Tree` in this
+        # same expression, so CPython's refcounting frees it immediately --
+        # before every subsequent `_walk()`/`_edges_for()` call over the
+        # returned node and its descendants. Keeping it on `self` for the
+        # analyzer's lifetime (one `parse()` call per file, per instance) is
+        # what those callers were silently relying on the tree-sitter binding
+        # to do internally -- which isn't guaranteed across versions, and
+        # segfaulted for real on a fresh `pip install` with newer ones.
+        self._tree = self._parser.parse(source)
+        return self._tree.root_node
 
     @staticmethod
     def _edges_for(function: _Function, path: Path, root: Path, source: bytes) -> list[FlowEdge]:
