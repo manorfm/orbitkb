@@ -82,8 +82,43 @@ orbitkb verify <run-id> --repository shop --since <commit>
 
 ## Connect an MCP client
 
-Register `orbitkb serve` as a stdio MCP server. A generic client configuration looks
-like this:
+```bash
+orbitkb setup --repository shop --backend codex
+```
+
+Registers `orbitkb serve` as a stdio MCP server for Claude Code, Cursor and Codex
+CLI in one step, by writing directly to each client's own config file
+(`.mcp.json`, `.cursor/mcp.json`, `~/.codex/config.toml`) — never by shelling out to
+a client's own `mcp add` CLI, since Cursor doesn't have one. The write is always
+idempotent: an existing, matching entry is left alone, a conflicting one is reported
+(with the exact snippet to paste manually) rather than overwritten, unless `--force`
+is passed. `--client claude|cursor|codex` limits it to one client; `--scope
+project|user` controls where Claude Code/Cursor register (default: `project`,
+i.e. `.mcp.json` at the repository root, so anyone who clones it inherits the
+config); `--dry-run` prints what would be written without touching disk.
+
+With `--repository`, `orbitkb setup` also:
+
+- Installs a non-blocking `post-commit`/`post-merge` git hook that runs `orbitkb
+  update --repository <name>` in the background after every commit or merge, so
+  the index stays close to current without anyone remembering to run it by hand.
+  It never overwrites a hook you already have (husky, pre-commit framework, a
+  hand-written script) — it reports the conflict and gives you the exact block to
+  paste in yourself instead.
+- Writes an instruction block to both `AGENTS.md` and `CLAUDE.md` at the
+  repository root, teaching any MCP-connected agent to check the `freshness`
+  field before trusting `find_change_surface`/`plan_change`/`get_change_context`,
+  and to run `orbitkb update --repository <name>` when it comes back stale. Both
+  files get it (not just one) because Claude Code only falls back to `AGENTS.md`
+  when a repository has no `CLAUDE.md` of its own.
+
+Without `--repository`, `orbitkb setup` only registers the MCP clients
+(`--scope` then defaults to `user`, since there's no repository root to anchor a
+project-scoped file to) — useful for a first-time, machine-wide setup before
+anything has been indexed yet.
+
+Prefer a manual, one-off configuration instead? A generic client configuration
+looks like this:
 
 ```json
 {
@@ -176,6 +211,10 @@ orbitkb list
 A service identity is `(repository, name)`. When names collide, agents must pass the
 repository to service-scoped tools. This avoids silently mixing two services named
 `orders` from different repositories.
+
+Re-index a single service with `orbitkb update <name>`, or every service in a
+repository at once with `orbitkb update --repository <name>` — a service whose
+root path no longer exists is reported and skipped, without aborting the rest.
 
 Re-indexing is authoritative for detected service boundaries. Removed services are
 removed from the knowledge base; moved services keep their identity by name, while a
