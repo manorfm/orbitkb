@@ -163,6 +163,80 @@ def test_setup_force_overwrites_conflicting_mcp_config(tmp_path: Path, monkeypat
     assert json.loads((root / ".mcp.json").read_text())["mcpServers"]["orbitkb"]["command"] != "something-else"
 
 
+def test_setup_remove_without_yes_is_a_preview_only(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "test.db"
+    home = _isolated_home(tmp_path, monkeypatch)
+    root = _indexed_repo(tmp_path, db_path)
+    cli._cmd_setup(_parse(["setup", "--repository", "test-repo", "--db", str(db_path)]))
+
+    exit_code = cli._cmd_setup(_parse(["setup", "--remove", "--repository", "test-repo", "--db", str(db_path)]))
+
+    assert exit_code == 0
+    assert (root / ".mcp.json").exists()
+    assert (home / ".codex" / "config.toml").exists()
+    assert (root / ".git" / "hooks" / "post-commit").exists()
+    assert (root / "AGENTS.md").exists()
+
+
+def test_setup_remove_with_yes_removes_everything(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "test.db"
+    home = _isolated_home(tmp_path, monkeypatch)
+    root = _indexed_repo(tmp_path, db_path)
+    cli._cmd_setup(_parse(["setup", "--repository", "test-repo", "--db", str(db_path)]))
+
+    exit_code = cli._cmd_setup(_parse([
+        "setup", "--remove", "--yes", "--repository", "test-repo", "--db", str(db_path),
+    ]))
+
+    assert exit_code == 0
+    assert not (root / ".mcp.json").exists()
+    assert not (root / ".cursor" / "mcp.json").exists()
+    assert not (home / ".codex" / "config.toml").exists()
+    assert not (root / ".git" / "hooks" / "post-commit").exists()
+    assert not (root / "AGENTS.md").exists()
+    assert not (root / "CLAUDE.md").exists()
+
+
+def test_setup_remove_declines_a_repurposed_mcp_entry(tmp_path: Path, monkeypatch, capsys):
+    db_path = tmp_path / "test.db"
+    _isolated_home(tmp_path, monkeypatch)
+    root = _indexed_repo(tmp_path, db_path)
+    (root / ".mcp.json").write_text(json.dumps({"mcpServers": {"orbitkb": {"command": "not-ours"}}}))
+
+    exit_code = cli._cmd_setup(_parse([
+        "setup", "--remove", "--yes", "--client", "claude", "--repository", "test-repo", "--db", str(db_path),
+    ]))
+
+    assert exit_code == 0
+    assert json.loads((root / ".mcp.json").read_text())["mcpServers"]["orbitkb"]["command"] == "not-ours"
+    assert "declined" in capsys.readouterr().out.lower()
+
+
+def test_setup_remove_never_touches_a_foreign_hook(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "test.db"
+    _isolated_home(tmp_path, monkeypatch)
+    root = _indexed_repo(tmp_path, db_path)
+    hooks_dir = root / ".git" / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    foreign = "#!/bin/sh\nnpx husky-run post-commit\n"
+    (hooks_dir / "post-commit").write_text(foreign)
+
+    cli._cmd_setup(_parse(["setup", "--remove", "--yes", "--repository", "test-repo", "--db", str(db_path)]))
+
+    assert (hooks_dir / "post-commit").read_text() == foreign
+
+
+def test_setup_remove_errors_on_unknown_repository(tmp_path: Path, monkeypatch, capsys):
+    db_path = tmp_path / "test.db"
+    _isolated_home(tmp_path, monkeypatch)
+    open_db(db_path)
+
+    exit_code = cli._cmd_setup(_parse(["setup", "--remove", "--repository", "does-not-exist", "--db", str(db_path)]))
+
+    assert exit_code == 1
+    assert "unknown repository" in capsys.readouterr().err
+
+
 def test_setup_never_overwrites_a_foreign_git_hook(tmp_path: Path, monkeypatch, capsys):
     db_path = tmp_path / "test.db"
     _isolated_home(tmp_path, monkeypatch)

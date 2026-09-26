@@ -154,15 +154,40 @@ _SETUP_CLIENTS = ("claude", "cursor", "codex")
 
 
 def _print_setup_summary(actions: list[SetupAction]) -> None:
-    conflicts = [a for a in actions if a.status == "conflict"]
-    for action in [a for a in actions if a.status != "conflict"]:
+    needs_attention = [a for a in actions if a.status in ("conflict", "declined")]
+    for action in [a for a in actions if a.status not in ("conflict", "declined")]:
         print(f"[{action.category}] {action.client} ({action.scope or 'n/a'}): {action.status} — {action.path}")
-    for action in conflicts:
-        print(f"[{action.category}] {action.client} ({action.scope or 'n/a'}): CONFLICT — {action.path}")
-        print(action.detail)
+    for action in needs_attention:
+        print(f"[{action.category}] {action.client} ({action.scope or 'n/a'}): {action.status.upper()} — {action.path}")
+        if action.detail:
+            print(action.detail)
+
+
+def _resolve_setup_scope_and_repository_root(args: argparse.Namespace) -> tuple[str, Path | None, int | None]:
+    """Shared by the write and remove paths of `orbitkb setup`. Returns
+    (scope, repository_root, error_exit_code); error_exit_code is None on
+    success (an error message was already printed to stderr otherwise)."""
+    scope = args.scope
+    if scope is None:
+        scope = "project" if args.repository else "user"
+    if scope == "project" and not args.repository:
+        print("error: --scope project requires --repository", file=sys.stderr)
+        return scope, None, 1
+
+    if not args.repository:
+        return scope, None, None
+    conn = open_db(args.db)
+    repo = repositories_repo.get_repository_by_name(conn, args.repository)
+    if repo is None:
+        print(f"error: unknown repository {args.repository!r} (run `orbitkb list`)", file=sys.stderr)
+        return scope, None, 1
+    return scope, Path(repo["root_path"]), None
 
 
 def _cmd_setup(args: argparse.Namespace) -> int:
+    if args.remove:
+        return _cmd_setup_remove(args)
+
     from orbitkb.setup.agent_instructions import write_agent_instructions
     from orbitkb.setup.git_hook import install_repository_hooks
     from orbitkb.setup.mcp_config import (
@@ -172,21 +197,9 @@ def _cmd_setup(args: argparse.Namespace) -> int:
         write_cursor_config,
     )
 
-    scope = args.scope
-    if scope is None:
-        scope = "project" if args.repository else "user"
-    if scope == "project" and not args.repository:
-        print("error: --scope project requires --repository", file=sys.stderr)
-        return 1
-
-    repository_root: Path | None = None
-    if args.repository:
-        conn = open_db(args.db)
-        repo = repositories_repo.get_repository_by_name(conn, args.repository)
-        if repo is None:
-            print(f"error: unknown repository {args.repository!r} (run `orbitkb list`)", file=sys.stderr)
-            return 1
-        repository_root = Path(repo["root_path"])
+    scope, repository_root, error_exit_code = _resolve_setup_scope_and_repository_root(args)
+    if error_exit_code is not None:
+        return error_exit_code
 
     clients = args.client or list(_SETUP_CLIENTS)
     command, mcp_args = mcp_command_line(args.backend, args.model, args.claude_bare, args.codex_api_key, args.db)
@@ -206,6 +219,40 @@ def _cmd_setup(args: argparse.Namespace) -> int:
 
     _print_setup_summary(actions)
     return 1 if any(a.status == "conflict" for a in actions) else 0
+
+
+def _cmd_setup_remove(args: argparse.Namespace) -> int:
+    from orbitkb.setup.agent_instructions import remove_agent_instructions
+    from orbitkb.setup.git_hook import uninstall_repository_hooks
+    from orbitkb.setup.mcp_config import (
+        remove_claude_code_config,
+        remove_codex_config,
+        remove_cursor_config,
+    )
+
+    scope, repository_root, error_exit_code = _resolve_setup_scope_and_repository_root(args)
+    if error_exit_code is not None:
+        return error_exit_code
+
+    clients = args.client or list(_SETUP_CLIENTS)
+    target_root = repository_root or Path.cwd()
+    dry_run = not args.yes
+
+    actions: list[SetupAction] = []
+    if "claude" in clients:
+        actions.append(remove_claude_code_config(target_root, scope, dry_run=dry_run))
+    if "cursor" in clients:
+        actions.append(remove_cursor_config(target_root, scope, dry_run=dry_run))
+    if "codex" in clients:
+        actions.append(remove_codex_config(dry_run=dry_run))
+    if repository_root is not None:
+        actions.extend(uninstall_repository_hooks(repository_root, dry_run=dry_run))
+        actions.extend(remove_agent_instructions(repository_root, dry_run=dry_run))
+
+    _print_setup_summary(actions)
+    if not args.yes:
+        print("\n(preview only — re-run with --yes to actually remove)")
+    return 0
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
@@ -654,6 +701,7 @@ def build_parser() -> argparse.ArgumentParser:
             "example:\n"
             "  orbitkb setup --repository shop --backend codex\n"
             "  orbitkb setup --client codex\n"
+            "  orbitkb setup --remove --repository shop --yes\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -663,7 +711,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_setup.add_argument(
         "--client", action="append", choices=list(_SETUP_CLIENTS), default=None,
-        help="Register only this MCP client (repeatable; default: claude, cursor and codex)",
+        help="Register only this MCP client (repeatable; default: detected clients, or all three if none are)",
     )
     p_setup.add_argument(
         "--scope", choices=["project", "user"], default=None,
@@ -672,6 +720,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_setup.add_argument(
         "--force", action="store_true",
         help="Overwrite a conflicting MCP entry instead of reporting it (never affects the git hook)",
+    )
+    p_setup.add_argument(
+        "--remove", action="store_true",
+        help="Undo a previous setup: remove the MCP registration, the reindex hook and the agent instructions",
+    )
+    p_setup.add_argument(
+        "--yes", action="store_true",
+        help="Skip confirmation: with --remove, actually delete instead of previewing; otherwise, skip the client-selection prompt",
     )
     p_setup.add_argument("--dry-run", action="store_true", help="Print what would be written/installed without touching disk")
     add_backend_args(p_setup)
