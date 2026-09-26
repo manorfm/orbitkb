@@ -35,9 +35,13 @@ def _indexed_repo(tmp_path: Path, db_path: Path, *, git: bool = True) -> Path:
 
 
 def _isolated_home(tmp_path: Path, monkeypatch) -> Path:
+    """Isolated $HOME, and a real machine's installed CLIs hidden from
+    `shutil.which` — client auto-detection (WP10) must never depend on what
+    happens to be on the PATH of whoever runs the test suite."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(shutil, "which", lambda name: None)
     return home
 
 
@@ -235,6 +239,90 @@ def test_setup_remove_errors_on_unknown_repository(tmp_path: Path, monkeypatch, 
 
     assert exit_code == 1
     assert "unknown repository" in capsys.readouterr().err
+
+
+def test_setup_registers_only_detected_clients_when_client_flag_omitted(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "test.db"
+    home = _isolated_home(tmp_path, monkeypatch)
+    (home / ".codex").mkdir()
+    root = _indexed_repo(tmp_path, db_path)
+
+    exit_code = cli._cmd_setup(_parse(["setup", "--repository", "test-repo", "--db", str(db_path)]))
+
+    assert exit_code == 0
+    assert (home / ".codex" / "config.toml").exists()
+    assert not (root / ".mcp.json").exists()
+    assert not (root / ".cursor" / "mcp.json").exists()
+
+
+def test_setup_never_prompts_outside_a_real_terminal(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "test.db"
+    _isolated_home(tmp_path, monkeypatch)
+    root = _indexed_repo(tmp_path, db_path)
+
+    def _must_not_prompt(*args, **kwargs):
+        raise AssertionError("orbitkb setup must never block on input outside a real terminal")
+
+    monkeypatch.setattr("builtins.input", _must_not_prompt)
+    monkeypatch.setattr(cli, "_running_interactively", lambda: False)
+
+    exit_code = cli._cmd_setup(_parse(["setup", "--repository", "test-repo", "--db", str(db_path)]))
+
+    assert exit_code == 0
+    assert (root / ".mcp.json").exists()  # nothing detected -> fell back to all three, no prompt needed
+
+
+def test_setup_offers_a_menu_in_a_real_terminal_and_honors_the_choice(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "test.db"
+    home = _isolated_home(tmp_path, monkeypatch)
+    (home / ".codex").mkdir()
+    (home / ".cursor").mkdir()
+    root = _indexed_repo(tmp_path, db_path)
+    monkeypatch.setattr(cli, "_running_interactively", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda *a, **kw: "1")
+
+    exit_code = cli._cmd_setup(_parse(["setup", "--repository", "test-repo", "--db", str(db_path)]))
+
+    assert exit_code == 0
+    registered = [(home / ".codex" / "config.toml").exists(), (root / ".cursor" / "mcp.json").exists()]
+    assert registered.count(True) == 1
+
+
+def test_setup_yes_flag_skips_the_menu_even_in_a_terminal(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "test.db"
+    home = _isolated_home(tmp_path, monkeypatch)
+    (home / ".codex").mkdir()
+    _indexed_repo(tmp_path, db_path)
+    monkeypatch.setattr(cli, "_running_interactively", lambda: True)
+
+    def _must_not_prompt(*args, **kwargs):
+        raise AssertionError("--yes must skip the client-selection prompt")
+
+    monkeypatch.setattr("builtins.input", _must_not_prompt)
+
+    exit_code = cli._cmd_setup(_parse(["setup", "--repository", "test-repo", "--db", str(db_path), "--yes"]))
+
+    assert exit_code == 0
+    assert (home / ".codex" / "config.toml").exists()
+
+
+def test_setup_client_flag_bypasses_detection_and_the_menu(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "test.db"
+    _isolated_home(tmp_path, monkeypatch)
+    root = _indexed_repo(tmp_path, db_path)
+    monkeypatch.setattr(cli, "_running_interactively", lambda: True)
+
+    def _must_not_prompt(*args, **kwargs):
+        raise AssertionError("an explicit --client must skip both detection and the prompt")
+
+    monkeypatch.setattr("builtins.input", _must_not_prompt)
+
+    exit_code = cli._cmd_setup(_parse([
+        "setup", "--repository", "test-repo", "--db", str(db_path), "--client", "claude",
+    ]))
+
+    assert exit_code == 0
+    assert (root / ".mcp.json").exists()
 
 
 def test_setup_never_overwrites_a_foreign_git_hook(tmp_path: Path, monkeypatch, capsys):

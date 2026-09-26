@@ -184,6 +184,27 @@ def _resolve_setup_scope_and_repository_root(args: argparse.Namespace) -> tuple[
     return scope, Path(repo["root_path"]), None
 
 
+def _running_interactively() -> bool:
+    """Whether it's safe to block on a prompt: a real terminal on both ends.
+    False in CI, in a script, or when an agent shells out to this command —
+    the exact case `orbitkb setup` must never hang waiting for input."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _resolve_setup_clients(args: argparse.Namespace) -> list[str]:
+    if args.client:
+        return args.client
+    from orbitkb.setup.client_detection import (
+        choose_clients_interactively,
+        detect_available_clients,
+    )
+
+    candidates = detect_available_clients() or list(_SETUP_CLIENTS)
+    if not args.yes and _running_interactively():
+        return choose_clients_interactively(candidates)
+    return candidates
+
+
 def _cmd_setup(args: argparse.Namespace) -> int:
     if args.remove:
         return _cmd_setup_remove(args)
@@ -201,7 +222,7 @@ def _cmd_setup(args: argparse.Namespace) -> int:
     if error_exit_code is not None:
         return error_exit_code
 
-    clients = args.client or list(_SETUP_CLIENTS)
+    clients = _resolve_setup_clients(args)
     command, mcp_args = mcp_command_line(args.backend, args.model, args.claude_bare, args.codex_api_key, args.db)
     target_root = repository_root or Path.cwd()
 
