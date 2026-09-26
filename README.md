@@ -92,10 +92,16 @@ CLI in one step, by writing directly to each client's own config file
 a client's own `mcp add` CLI, since Cursor doesn't have one. The write is always
 idempotent: an existing, matching entry is left alone, a conflicting one is reported
 (with the exact snippet to paste manually) rather than overwritten, unless `--force`
-is passed. `--client claude|cursor|codex` limits it to one client; `--scope
-project|user` controls where Claude Code/Cursor register (default: `project`,
-i.e. `.mcp.json` at the repository root, so anyone who clones it inherits the
-config); `--dry-run` prints what would be written without touching disk.
+is passed. `--client claude|cursor|codex` limits it to one client; without it,
+`orbitkb setup` detects which clients are plausibly installed (an executable on
+PATH, or that client's own config directory) and registers only those — falling
+back to all three when nothing is detected. In a real terminal (never in a
+script or when an agent shells out to this command) it offers a menu to confirm
+the selection first; `--yes` skips that menu and proceeds with what was
+detected. `--scope project|user` controls where Claude Code/Cursor register
+(default: `project`, i.e. `.mcp.json` at the repository root, so anyone who
+clones it inherits the config); `--dry-run` prints what would be written
+without touching disk.
 
 With `--repository`, `orbitkb setup` also:
 
@@ -116,6 +122,14 @@ Without `--repository`, `orbitkb setup` only registers the MCP clients
 (`--scope` then defaults to `user`, since there's no repository root to anchor a
 project-scoped file to) — useful for a first-time, machine-wide setup before
 anything has been indexed yet.
+
+Undo it with `orbitkb setup --remove --repository shop`. It always prints a
+preview first; nothing is actually removed until you add `--yes`. Safety runs
+both ways: an MCP entry is only removed when it still looks like some
+`orbitkb serve` invocation (an entry you repurposed to run something else is
+left alone and reported), and a hook or instruction block is only removed when
+it still carries the marker `orbitkb setup` writes — a hook or `AGENTS.md`/
+`CLAUDE.md` you already had of your own is never touched.
 
 Prefer a manual, one-off configuration instead? A generic client configuration
 looks like this:
