@@ -7,7 +7,11 @@ import stat
 import subprocess
 from pathlib import Path
 
-from orbitkb.setup.git_hook import install_repository_hooks, resolve_git_dir
+from orbitkb.setup.git_hook import (
+    install_repository_hooks,
+    resolve_git_dir,
+    uninstall_repository_hooks,
+)
 
 
 def _init_git_repo(root: Path) -> None:
@@ -84,3 +88,38 @@ def test_install_repository_hooks_dry_run_writes_nothing(tmp_path: Path):
     assert {a.status for a in actions} == {"created"}
     assert not (tmp_path / ".git" / "hooks" / "post-commit").exists()
     assert not (tmp_path / ".git" / "hooks" / "post-merge").exists()
+
+
+def test_uninstall_repository_hooks_removes_files_it_created(tmp_path: Path):
+    _init_git_repo(tmp_path)
+    install_repository_hooks(tmp_path, "shop", tmp_path / "orbitkb.db")
+
+    actions = uninstall_repository_hooks(tmp_path)
+
+    assert {a.status for a in actions} == {"removed"}
+    assert not (tmp_path / ".git" / "hooks" / "post-commit").exists()
+    assert not (tmp_path / ".git" / "hooks" / "post-merge").exists()
+
+
+def test_uninstall_repository_hooks_never_touches_a_foreign_hook(tmp_path: Path):
+    _init_git_repo(tmp_path)
+    hooks_dir = tmp_path / ".git" / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    foreign = "#!/bin/sh\nnpx husky-run post-commit\n"
+    (hooks_dir / "post-commit").write_text(foreign)
+
+    actions = uninstall_repository_hooks(tmp_path)
+
+    assert (hooks_dir / "post-commit").read_text() == foreign
+    post_commit_action = next(a for a in actions if a.path.name == "post-commit")
+    assert post_commit_action.status == "skipped"
+
+
+def test_uninstall_repository_hooks_dry_run_touches_nothing(tmp_path: Path):
+    _init_git_repo(tmp_path)
+    install_repository_hooks(tmp_path, "shop", tmp_path / "orbitkb.db")
+
+    actions = uninstall_repository_hooks(tmp_path, dry_run=True)
+
+    assert {a.status for a in actions} == {"removed"}
+    assert (tmp_path / ".git" / "hooks" / "post-commit").exists()

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from orbitkb.setup.marked_block import apply_marked_block
+from orbitkb.setup.marked_block import apply_marked_block, remove_marked_block
 
 BEGIN = "# orbitkb:begin"
 END = "# orbitkb:end"
@@ -79,4 +79,55 @@ def test_dry_run_does_not_modify_existing_file(tmp_path: Path):
     action = apply_marked_block(path, "new block", BEGIN, END, category="instructions", client="agents.md", dry_run=True)
 
     assert action.status == "updated"
+    assert path.read_text() == original
+
+
+def test_remove_skips_a_missing_file(tmp_path: Path):
+    action = remove_marked_block(tmp_path / "AGENTS.md", BEGIN, END, category="instructions", client="agents.md")
+
+    assert action.status == "skipped"
+
+
+def test_remove_skips_a_file_without_the_marker(tmp_path: Path):
+    path = tmp_path / "AGENTS.md"
+    foreign = "# Team notes\n\nNo orbitkb block here.\n"
+    path.write_text(foreign)
+
+    action = remove_marked_block(path, BEGIN, END, category="instructions", client="agents.md")
+
+    assert action.status == "skipped"
+    assert path.read_text() == foreign
+
+
+def test_remove_strips_only_the_block_preserving_surrounding_content(tmp_path: Path):
+    path = tmp_path / "AGENTS.md"
+    path.write_text(f"# Team notes\n\nDo not break prod.\n\n{BEGIN}\nour block\n{END}\n\nMore team notes.\n")
+
+    action = remove_marked_block(path, BEGIN, END, category="instructions", client="agents.md")
+
+    assert action.status == "removed"
+    content = path.read_text()
+    assert "Do not break prod." in content
+    assert "More team notes." in content
+    assert BEGIN not in content and "our block" not in content
+
+
+def test_remove_deletes_the_file_when_only_the_block_remains(tmp_path: Path):
+    path = tmp_path / "hook.sh"
+    path.write_text(f"#!/bin/sh\n\n{BEGIN}\nour block\n{END}\n")
+
+    action = remove_marked_block(path, BEGIN, END, category="hook", client="git", header="#!/bin/sh\n\n")
+
+    assert action.status == "removed"
+    assert not path.exists()
+
+
+def test_remove_dry_run_touches_nothing(tmp_path: Path):
+    path = tmp_path / "hook.sh"
+    original = f"#!/bin/sh\n\n{BEGIN}\nour block\n{END}\n"
+    path.write_text(original)
+
+    action = remove_marked_block(path, BEGIN, END, category="hook", client="git", header="#!/bin/sh\n\n", dry_run=True)
+
+    assert action.status == "removed"
     assert path.read_text() == original

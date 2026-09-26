@@ -12,7 +12,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from orbitkb.setup.agent_instructions import write_agent_instructions
+from orbitkb.setup.agent_instructions import (
+    remove_agent_instructions,
+    write_agent_instructions,
+)
 
 
 def test_writes_block_to_both_agents_md_and_claude_md(tmp_path: Path):
@@ -69,3 +72,37 @@ def test_dry_run_writes_nothing(tmp_path: Path):
     assert {a.status for a in actions} == {"created"}
     assert not (tmp_path / "AGENTS.md").exists()
     assert not (tmp_path / "CLAUDE.md").exists()
+
+
+def test_remove_deletes_files_that_had_only_the_orbitkb_block(tmp_path: Path):
+    write_agent_instructions(tmp_path, "shop", tmp_path / "orbitkb.db")
+
+    actions = remove_agent_instructions(tmp_path)
+
+    assert {a.status for a in actions} == {"removed"}
+    assert not (tmp_path / "AGENTS.md").exists()
+    assert not (tmp_path / "CLAUDE.md").exists()
+
+
+def test_remove_preserves_surrounding_team_content(tmp_path: Path):
+    write_agent_instructions(tmp_path, "shop", tmp_path / "orbitkb.db")
+    for filename, note in (("AGENTS.md", "Always run lint first."), ("CLAUDE.md", "Use TDD.")):
+        path = tmp_path / filename
+        path.write_text(f"# Team notes\n\n{note}\n\n{path.read_text()}")
+
+    remove_agent_instructions(tmp_path)
+
+    assert "Always run lint first." in (tmp_path / "AGENTS.md").read_text()
+    assert "Use TDD." in (tmp_path / "CLAUDE.md").read_text()
+    assert "ORBITKB" not in (tmp_path / "AGENTS.md").read_text()
+
+
+def test_remove_never_touches_a_file_without_the_marker(tmp_path: Path):
+    foreign = "# Team notes\n\nNo orbitkb block here.\n"
+    (tmp_path / "AGENTS.md").write_text(foreign)
+
+    actions = remove_agent_instructions(tmp_path)
+
+    assert (tmp_path / "AGENTS.md").read_text() == foreign
+    agents_action = next(a for a in actions if a.path.name == "AGENTS.md")
+    assert agents_action.status == "skipped"

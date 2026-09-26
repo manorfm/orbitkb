@@ -14,7 +14,7 @@ import subprocess
 from pathlib import Path
 
 from orbitkb.setup.actions import SetupAction
-from orbitkb.setup.marked_block import apply_marked_block
+from orbitkb.setup.marked_block import apply_marked_block, remove_marked_block
 
 HOOK_MARKER_BEGIN = "# orbitkb:begin (managed by `orbitkb setup` — do not edit by hand)"
 HOOK_MARKER_END = "# orbitkb:end"
@@ -75,3 +75,26 @@ def install_repository_hooks(
     block = hook_block(repository_name, db_path, log_path)
     hooks_dir = git_dir / "hooks"
     return [install_hook(hooks_dir / name, block, dry_run=dry_run) for name in _HOOK_NAMES]
+
+
+def uninstall_hook(hook_path: Path, *, dry_run: bool = False) -> SetupAction:
+    return remove_marked_block(
+        hook_path, HOOK_MARKER_BEGIN, HOOK_MARKER_END,
+        category="hook", client="git", header="#!/bin/sh\n\n", dry_run=dry_run,
+    )
+
+
+def uninstall_repository_hooks(repository_root: Path, *, dry_run: bool = False) -> list[SetupAction]:
+    """Remove the reindex hook from `post-commit`/`post-merge`, installed by
+    `install_repository_hooks`. Never touches a hook that doesn't have the
+    orbitkb marker: that means it wasn't installed by this tool."""
+    git_dir = resolve_git_dir(repository_root)
+    if git_dir is None:
+        return [
+            SetupAction(
+                category="hook", client="git", scope="", path=repository_root, status="skipped",
+                detail="not a git repository",
+            )
+        ]
+    hooks_dir = git_dir / "hooks"
+    return [uninstall_hook(hooks_dir / name, dry_run=dry_run) for name in _HOOK_NAMES]

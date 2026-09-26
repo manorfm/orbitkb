@@ -48,3 +48,39 @@ def apply_marked_block(
     if not dry_run:
         path.write_text(new_content, encoding="utf-8")
     return SetupAction(category=category, client=client, scope="", path=path, status="updated")
+
+
+def remove_marked_block(
+    path: Path, marker_begin: str, marker_end: str,
+    *, category: str, client: str, header: str = "", dry_run: bool = False,
+) -> SetupAction:
+    """Remove the orbitkb-managed block from `path`, preserving everything
+    else. Deletes the file entirely when nothing but `header` (or nothing at
+    all) would be left. Never touches a file that doesn't exist or doesn't
+    have the marker: both mean this file wasn't ours to remove from.
+    """
+    if not path.exists():
+        return SetupAction(category=category, client=client, scope="", path=path, status="skipped", detail="nothing to remove")
+
+    existing = path.read_text(encoding="utf-8")
+    begin_idx = existing.find(marker_begin)
+    end_idx = existing.find(marker_end)
+    if begin_idx == -1 or end_idx == -1 or end_idx < begin_idx:
+        return SetupAction(
+            category=category, client=client, scope="", path=path, status="skipped",
+            detail=f"{path} has no orbitkb-managed block; left untouched",
+        )
+
+    remainder_start = end_idx + len(marker_end)
+    if remainder_start < len(existing) and existing[remainder_start] == "\n":
+        remainder_start += 1
+    remaining = existing[:begin_idx] + existing[remainder_start:]
+    body = remaining[len(header):] if header and remaining.startswith(header) else remaining
+    if body.strip() == "":
+        if not dry_run:
+            path.unlink()
+        return SetupAction(category=category, client=client, scope="", path=path, status="removed", detail="file removed (only orbitkb-managed content remained)")
+
+    if not dry_run:
+        path.write_text(remaining, encoding="utf-8")
+    return SetupAction(category=category, client=client, scope="", path=path, status="removed")

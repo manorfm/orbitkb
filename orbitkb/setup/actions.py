@@ -11,8 +11,10 @@ from pathlib import Path
 # "created": the target file did not exist and was written (or would be, in dry-run).
 # "updated": the target file existed and the orbitkb entry/block was added or changed.
 # "unchanged": the target already had exactly this entry/block; nothing to do.
-# "conflict": something else is already there and differs; nothing was touched.
-# "skipped": this action does not apply here (e.g. not a git repository).
+# "conflict": something else is already there and differs; nothing was touched (write path).
+# "skipped": this action does not apply here (not a git repository, nothing to remove, ...).
+# "removed": a previous orbitkb-managed entry/block was removed (or would be, in dry-run).
+# "declined": something is there, but it doesn't look like ours to remove; left untouched.
 Status = str
 
 

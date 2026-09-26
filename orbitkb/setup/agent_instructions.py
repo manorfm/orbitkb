@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from orbitkb.setup.actions import SetupAction
-from orbitkb.setup.marked_block import apply_marked_block
+from orbitkb.setup.marked_block import apply_marked_block, remove_marked_block
 
 INSTRUCTIONS_MARKER_BEGIN = "<!-- ORBITKB:START (managed by `orbitkb setup` — do not edit by hand) -->"
 INSTRUCTIONS_MARKER_END = "<!-- ORBITKB:END -->"
@@ -44,6 +44,19 @@ def write_agent_instructions(
     return [
         apply_marked_block(
             repository_root / filename, block, INSTRUCTIONS_MARKER_BEGIN, INSTRUCTIONS_MARKER_END,
+            category="instructions", client=filename.lower(), dry_run=dry_run,
+        )
+        for filename in _INSTRUCTION_FILES
+    ]
+
+
+def remove_agent_instructions(repository_root: Path, *, dry_run: bool = False) -> list[SetupAction]:
+    """Remove the orbitkb block from `AGENTS.md`/`CLAUDE.md`, installed by
+    `write_agent_instructions`. Never touches a file without the marker: that
+    means it wasn't written by this tool."""
+    return [
+        remove_marked_block(
+            repository_root / filename, INSTRUCTIONS_MARKER_BEGIN, INSTRUCTIONS_MARKER_END,
             category="instructions", client=filename.lower(), dry_run=dry_run,
         )
         for filename in _INSTRUCTION_FILES

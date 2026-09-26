@@ -51,6 +51,19 @@ def mcp_command_line(
     return command, args
 
 
+def _looks_like_orbitkb_entry(entry: dict) -> bool:
+    """Whether an existing MCP entry plausibly came from `orbitkb setup`,
+    without requiring its exact flags to match a freshly rebuilt command line
+    (a user would otherwise have to remember and repeat the original
+    `--backend`/`--model` just to remove it). Only the executable name and the
+    `serve` subcommand are checked, so an entry deliberately repurposed to run
+    something else is correctly left alone.
+    """
+    command = entry.get("command")
+    args = entry.get("args") or []
+    return isinstance(command, str) and Path(command).name == "orbitkb" and args[:1] == ["serve"]
+
+
 def resolve_claude_code_config_path(repository_root: Path, scope: str, home: Path | None = None) -> Path:
     if scope == "project":
         return repository_root / ".mcp.json"
@@ -122,6 +135,41 @@ def _merge_json_mcp_server(
     return SetupAction(category="mcp", client=client, scope=scope, path=path, status=status)
 
 
+def _remove_json_mcp_server(path: Path, *, client: str, scope: str, dry_run: bool) -> SetupAction:
+    if not path.exists():
+        return SetupAction(category="mcp", client=client, scope=scope, path=path, status="skipped", detail="nothing to remove")
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except json.JSONDecodeError as exc:
+        return SetupAction(
+            category="mcp", client=client, scope=scope, path=path, status="skipped",
+            detail=f"existing file is not valid JSON ({exc}); left untouched",
+        )
+    servers = existing.get("mcpServers")
+    if not isinstance(servers, dict) or _ENTRY_KEY not in servers:
+        return SetupAction(category="mcp", client=client, scope=scope, path=path, status="skipped", detail="no orbitkb entry present")
+
+    current = servers[_ENTRY_KEY]
+    if not _looks_like_orbitkb_entry(current):
+        return SetupAction(
+            category="mcp", client=client, scope=scope, path=path, status="declined",
+            detail=f"the '{_ENTRY_KEY}' entry here doesn't look like an `orbitkb serve` invocation; left untouched",
+        )
+
+    if not dry_run:
+        servers = dict(servers)
+        del servers[_ENTRY_KEY]
+        if servers:
+            existing["mcpServers"] = servers
+        else:
+            existing.pop("mcpServers", None)
+        if existing:
+            path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+        else:
+            path.unlink()
+    return SetupAction(category="mcp", client=client, scope=scope, path=path, status="removed")
+
+
 def write_claude_code_config(
     repository_root: Path, scope: str, command: str, args: list[str],
     *, home: Path | None = None, force: bool = False, dry_run: bool = False,
@@ -131,6 +179,13 @@ def write_claude_code_config(
     return _merge_json_mcp_server(path, entry, client="claude-code", scope=scope, force=force, dry_run=dry_run)
 
 
+def remove_claude_code_config(
+    repository_root: Path, scope: str, *, home: Path | None = None, dry_run: bool = False,
+) -> SetupAction:
+    path = resolve_claude_code_config_path(repository_root, scope, home)
+    return _remove_json_mcp_server(path, client="claude-code", scope=scope, dry_run=dry_run)
+
+
 def write_cursor_config(
     repository_root: Path, scope: str, command: str, args: list[str],
     *, home: Path | None = None, force: bool = False, dry_run: bool = False,
@@ -138,6 +193,13 @@ def write_cursor_config(
     path = resolve_cursor_config_path(repository_root, scope, home)
     entry = {"command": command, "args": args}
     return _merge_json_mcp_server(path, entry, client="cursor", scope=scope, force=force, dry_run=dry_run)
+
+
+def remove_cursor_config(
+    repository_root: Path, scope: str, *, home: Path | None = None, dry_run: bool = False,
+) -> SetupAction:
+    path = resolve_cursor_config_path(repository_root, scope, home)
+    return _remove_json_mcp_server(path, client="cursor", scope=scope, dry_run=dry_run)
 
 
 def write_codex_config(
@@ -186,3 +248,37 @@ def write_codex_config(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(tomlkit.dumps(doc), encoding="utf-8")
     return SetupAction(category="mcp", client="codex", scope="user", path=path, status=status)
+
+
+def remove_codex_config(*, home: Path | None = None, dry_run: bool = False) -> SetupAction:
+    path = resolve_codex_config_path(home)
+    if not path.exists():
+        return SetupAction(category="mcp", client="codex", scope="user", path=path, status="skipped", detail="nothing to remove")
+    try:
+        doc = tomlkit.parse(path.read_text(encoding="utf-8"))
+    except tomlkit.exceptions.TOMLKitError as exc:
+        return SetupAction(
+            category="mcp", client="codex", scope="user", path=path, status="skipped",
+            detail=f"existing file is not valid TOML ({exc}); left untouched",
+        )
+
+    servers = doc.get("mcp_servers")
+    if servers is None or _ENTRY_KEY not in servers:
+        return SetupAction(category="mcp", client="codex", scope="user", path=path, status="skipped", detail="no orbitkb entry present")
+
+    current = {"command": servers[_ENTRY_KEY].get("command"), "args": list(servers[_ENTRY_KEY].get("args") or [])}
+    if not _looks_like_orbitkb_entry(current):
+        return SetupAction(
+            category="mcp", client="codex", scope="user", path=path, status="declined",
+            detail=f"the '{_ENTRY_KEY}' entry here doesn't look like an `orbitkb serve` invocation; left untouched",
+        )
+
+    if not dry_run:
+        del servers[_ENTRY_KEY]
+        if len(servers) == 0:
+            del doc["mcp_servers"]
+        if len(doc) == 0:
+            path.unlink()
+        else:
+            path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+    return SetupAction(category="mcp", client="codex", scope="user", path=path, status="removed")
