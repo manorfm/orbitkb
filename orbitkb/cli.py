@@ -26,6 +26,7 @@ from orbitkb.generation.embeddings import try_create_default_backend
 from orbitkb.generation.orchestrator import DiscoveryError, index_path, index_service
 from orbitkb.generation.verification import verify_change_surface
 from orbitkb.mcp import queries as mcp_queries
+from orbitkb.setup.actions import SetupAction
 
 
 def _cmd_index(args: argparse.Namespace) -> int:
@@ -147,6 +148,64 @@ def _cmd_list(args: argparse.Namespace) -> int:
             f"apis={r['api_count']:<3} {r['short_desc'] or ''}"
         )
     return 0
+
+
+_SETUP_CLIENTS = ("claude", "cursor", "codex")
+
+
+def _print_setup_summary(actions: list[SetupAction]) -> None:
+    conflicts = [a for a in actions if a.status == "conflict"]
+    for action in [a for a in actions if a.status != "conflict"]:
+        print(f"[{action.category}] {action.client} ({action.scope or 'n/a'}): {action.status} — {action.path}")
+    for action in conflicts:
+        print(f"[{action.category}] {action.client} ({action.scope or 'n/a'}): CONFLICT — {action.path}")
+        print(action.detail)
+
+
+def _cmd_setup(args: argparse.Namespace) -> int:
+    from orbitkb.setup.agent_instructions import write_agent_instructions
+    from orbitkb.setup.git_hook import install_repository_hooks
+    from orbitkb.setup.mcp_config import (
+        mcp_command_line,
+        write_claude_code_config,
+        write_codex_config,
+        write_cursor_config,
+    )
+
+    scope = args.scope
+    if scope is None:
+        scope = "project" if args.repository else "user"
+    if scope == "project" and not args.repository:
+        print("error: --scope project requires --repository", file=sys.stderr)
+        return 1
+
+    repository_root: Path | None = None
+    if args.repository:
+        conn = open_db(args.db)
+        repo = repositories_repo.get_repository_by_name(conn, args.repository)
+        if repo is None:
+            print(f"error: unknown repository {args.repository!r} (run `orbitkb list`)", file=sys.stderr)
+            return 1
+        repository_root = Path(repo["root_path"])
+
+    clients = args.client or list(_SETUP_CLIENTS)
+    command, mcp_args = mcp_command_line(args.backend, args.model, args.claude_bare, args.codex_api_key, args.db)
+    target_root = repository_root or Path.cwd()
+
+    actions: list[SetupAction] = []
+    if "claude" in clients:
+        actions.append(write_claude_code_config(target_root, scope, command, mcp_args, force=args.force, dry_run=args.dry_run))
+    if "cursor" in clients:
+        actions.append(write_cursor_config(target_root, scope, command, mcp_args, force=args.force, dry_run=args.dry_run))
+    if "codex" in clients:
+        actions.append(write_codex_config(command, mcp_args, force=args.force, dry_run=args.dry_run))
+
+    if repository_root is not None:
+        actions.extend(install_repository_hooks(repository_root, args.repository, args.db, dry_run=args.dry_run))
+        actions.extend(write_agent_instructions(repository_root, args.repository, args.db, dry_run=args.dry_run))
+
+    _print_setup_summary(actions)
+    return 1 if any(a.status == "conflict" for a in actions) else 0
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
@@ -587,6 +646,36 @@ def build_parser() -> argparse.ArgumentParser:
     p_verify.add_argument("--record-feedback", action="store_true", help="Auto-record confirmed/rejected feedback for the predicted services")
     p_verify.add_argument("--db", type=Path, default=DEFAULT_DB_PATH, help=f"SQLite database path (default: {DEFAULT_DB_PATH})")
     p_verify.set_defaults(func=_cmd_verify)
+
+    p_setup = sub.add_parser(
+        "setup",
+        help="Register orbitkb as an MCP server, and (with --repository) install a reindex hook + agent instructions",
+        epilog=(
+            "example:\n"
+            "  orbitkb setup --repository shop --backend codex\n"
+            "  orbitkb setup --client codex\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_setup.add_argument(
+        "--repository", default=None,
+        help="Repository name (see `orbitkb list`); also installs the reindex git hook and agent instructions there",
+    )
+    p_setup.add_argument(
+        "--client", action="append", choices=list(_SETUP_CLIENTS), default=None,
+        help="Register only this MCP client (repeatable; default: claude, cursor and codex)",
+    )
+    p_setup.add_argument(
+        "--scope", choices=["project", "user"], default=None,
+        help="Claude Code/Cursor config scope (default: project with --repository, user otherwise)",
+    )
+    p_setup.add_argument(
+        "--force", action="store_true",
+        help="Overwrite a conflicting MCP entry instead of reporting it (never affects the git hook)",
+    )
+    p_setup.add_argument("--dry-run", action="store_true", help="Print what would be written/installed without touching disk")
+    add_backend_args(p_setup)
+    p_setup.set_defaults(func=_cmd_setup)
 
     p_serve = sub.add_parser(
         "serve", help="Run the MCP server (stdio)",
