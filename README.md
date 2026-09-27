@@ -411,6 +411,7 @@ make evaluate-change-surface
 make validate-real-corpus CORPUS=/secure/path/real-change-corpus.json
 make evaluate-real-corpus CORPUS=/secure/path/real-change-corpus.json
 make gate-real-corpus CORPUS=/secure/path/real-change-corpus.json REQUIRED_STACKS="go node-ts" MIN_CASES_PER_STACK=10 MIN_PRECISION=0.80 MIN_RECALL=0.90
+make readiness-audit-corpus CORPUS=/secure/path/real-change-corpus.json REQUIRED_STACKS="go node-ts" MIN_CASES_PER_STACK=10 MIN_PRECISION=0.80 MIN_RECALL=0.90
 make benchmark-scale
 make integration-containers
 make readiness-audit
@@ -459,6 +460,9 @@ explicitly: `REQUIRED_STACKS`, `MIN_CASES_PER_STACK`, `MIN_PRECISION` and
 `MIN_RECALL`. The command fails on missing stack coverage, pending cases, or metrics
 below the supplied limits. There are intentionally no default limits: teams must set
 them from their own reviewed corpus rather than inheriting an arbitrary threshold.
+`make readiness-audit-corpus` includes that same explicit gate in the readiness
+report: a failed gate makes the audit `blocked`; no supplied corpus leaves the normal
+audit `conditional` and records real-world validation as an outstanding condition.
 
 Incremental indexing skips unchanged LLM-derived units by file hash. Static analysis
 also stores a versioned digest of every local artifact it reads (stack source files,
