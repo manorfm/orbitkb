@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
@@ -19,6 +20,8 @@ from orbitkb.discovery.scan_helpers import (
     excerpt_around,
     find_matches,
 )
+
+logger = logging.getLogger(__name__)
 
 _MANIFEST_FILES = ("pom.xml", "build.gradle", "build.gradle.kts")
 _ENGINE_DRIVER_KEYWORDS = {
@@ -72,6 +75,7 @@ _CLASS_RE = re.compile(r"^\s*(?:public\s+|private\s+)?(?:class|interface)\s+(\w+
 
 
 def _endpoint_hint(method: str, path_value: str, file_path: Path, folder: Path, line_no: int) -> EndpointHint:
+    logger.debug("building endpoint hint: %s %s (%s:%s)", method, path_value, file_path, line_no)
     excerpt = excerpt_around(file_path, folder, line_no, before=ENDPOINT_BEFORE, after=ENDPOINT_AFTER)
     component_hint = component_hint_for(file_path, line_no, _CLASS_RE)
     extra_excerpts = resolve_kotlin_java_calls(
@@ -110,6 +114,7 @@ class JvmSpringDetector:
         return False
 
     def collect_hints(self, folder: Path) -> ServiceHints:
+        logger.debug("scanning JVM/Spring hints: %s", folder)
         hints = ServiceHints()
         engine_hint = engine_hint_from_manifest(folder, _MANIFEST_FILES, _ENGINE_DRIVER_KEYWORDS)
         src = folder / "src" / "main"

@@ -7,6 +7,7 @@ explicitly imported name into the one file whose package matches, nothing more.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import tree_sitter_java
@@ -16,6 +17,8 @@ from tree_sitter import Language, Node, Parser, Tree
 from orbitkb.analysis.jvm_imports import parse_jvm_imports
 from orbitkb.discovery.base import CodeExcerpt
 from orbitkb.discovery.scan_helpers import CALL_RE, iter_files
+
+logger = logging.getLogger(__name__)
 
 EXTENSIONS = (".kt", ".java")
 
@@ -43,6 +46,7 @@ def _parse(path: Path) -> tuple[Tree, Node, bytes] | None:
     if source is None:
         return None
     parser = _KOTLIN_PARSER if path.suffix == ".kt" else _JAVA_PARSER
+    logger.debug("tree-sitter parsing: %s", path)
     tree = parser.parse(source)
     return tree, tree.root_node, source
 
@@ -113,6 +117,7 @@ def resolve_kotlin_java_calls(
     top-level/extension function, or Java's `import a.b.Util` behind a `Util.method()`
     call), follows it into the one file under `folder` whose package matches.
     """
+    logger.debug("resolving JVM/Kotlin calls for endpoint: %s (lines %s-%s)", path, *exclude_line_range)
     parsed = _parse(path)
     if parsed is None:
         return []

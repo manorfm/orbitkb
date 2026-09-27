@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -8,6 +9,8 @@ from pathlib import Path
 from orbitkb.discovery.base import StackDetector
 from orbitkb.discovery.registry import detector_for
 from orbitkb.discovery.scan_helpers import SKIP_DIRS
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -30,9 +33,11 @@ def discover_services(root: Path) -> list[ServiceCandidate]:
     as a service boundary, without descending further into it (so nested vendored
     code never gets mistaken for a second service).
     """
+    logger.debug("detecting stack: %s", root)
     root = root.resolve()
     detector = detector_for(root)
     if detector is not None:
+        logger.debug("detected stack: %s (%s)", detector.id, root)
         return [ServiceCandidate(name=slugify(root.name), path=root, detector=detector)]
 
     candidates: list[ServiceCandidate] = []
@@ -43,6 +48,7 @@ def discover_services(root: Path) -> list[ServiceCandidate]:
             continue
         found = detector_for(current)
         if found is not None:
+            logger.debug("detected stack: %s (%s)", found.id, current)
             candidates.append(ServiceCandidate(name=slugify(current.name), path=current, detector=found))
             dirnames[:] = []
 

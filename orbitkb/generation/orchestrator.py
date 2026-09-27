@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 from dataclasses import dataclass, field, replace
@@ -45,6 +46,8 @@ from orbitkb.generation.llm_harness import generate_with_retry, load_prompt, loa
 from orbitkb.iac.scanner import scan_repository_facts
 from orbitkb.security.findings import find_security_findings
 from orbitkb.security.redaction import redact_sensitive_values
+
+logger = logging.getLogger(__name__)
 
 MAX_EXCERPT_CHARS = 20_000
 
@@ -534,6 +537,7 @@ def _index_service_unlocked(
 ) -> IndexResult:
     failures_root = failures_root or (Path.home() / ".orbitkb" / "failures")
     progress = progress or NullProgressReporter()
+    logger.debug("collecting hints: %s (stack=%s) at %s", name, detector.id, root)
     hints = detector.collect_hints(root)
     component_groups = _group_endpoints_by_component(hints.endpoints)
     total_units = (

@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from orbitkb.discovery.jvm_stack import JvmSpringDetector
@@ -83,6 +84,22 @@ def test_kotlin_endpoint_resolves_a_statically_imported_extension_function_into_
     assert len(endpoint.extra_excerpts) == 1
     assert endpoint.extra_excerpts[0].file_path == "out.kt"
     assert "fun Restaurant.out()" in endpoint.extra_excerpts[0].text
+
+
+def test_jvm_collect_hints_logs_before_and_during_tree_sitter_resolution(caplog):
+    """A real crash happened inside this exact call chain (JvmSpringDetector.collect_hints
+    -> _endpoint_hint -> resolve_kotlin_java_calls -> tree-sitter), entirely before
+    StaticAnalysisEngine.analyze()'s own per-file DEBUG line ever runs -- so `--verbose`
+    produced no output at all. These three log lines (scan start, endpoint hint, and the
+    jvm_ast.py tree-sitter parse itself) give the next crash something to end on.
+    """
+    with caplog.at_level(logging.DEBUG):
+        JvmSpringDetector().collect_hints(COMPONENT_KOTLIN_ROOT)
+
+    messages = [record.message for record in caplog.records]
+    assert any("scanning JVM/Spring hints" in m for m in messages)
+    assert any("building endpoint hint" in m for m in messages)
+    assert any("tree-sitter parsing" in m for m in messages)
 
 
 def test_python_celery_task_is_tagged_as_an_abstracted_provider(tmp_path: Path):

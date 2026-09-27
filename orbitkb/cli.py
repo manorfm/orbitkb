@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import json
 import logging
 import math
@@ -979,6 +980,15 @@ def _render_top_level_help(sub: argparse._SubParsersAction) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # `index`/`update` shell into tree-sitter, a native extension: a use-after-free there
+    # raises SIGBUS/SIGSEGV, which Python can't catch, and the OS crash reporter only shows
+    # C frames inside the interpreter -- never which Python source line was running. This is
+    # the one thing that can print that frame at the moment of the signal, so it has to be
+    # armed up front; there's no enabling it after a process is already dead. `sys.__stderr__`
+    # (not `sys.stderr`) because faulthandler needs a real fd, and test harnesses commonly
+    # replace `sys.stderr` with a captured stream that has none.
+    if sys.__stderr__ is not None:
+        faulthandler.enable(file=sys.__stderr__)
     parser = build_parser()
     argv = sys.argv[1:] if argv is None else list(argv)
     if not argv or argv[0] in ("-h", "--help"):

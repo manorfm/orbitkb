@@ -2,6 +2,7 @@
 resolution so `index`/`update` never shell out to a real `claude`/`codex` CLI.
 """
 import argparse
+import faulthandler
 import logging
 from pathlib import Path
 
@@ -528,3 +529,20 @@ def test_verify_command_reports_precision_and_recall(tmp_path: Path, capsys):
     out = capsys.readouterr().out
     assert "precision" in out
     assert "recall" in out
+
+
+def test_main_enables_faulthandler_for_native_crash_diagnostics(tmp_path: Path):
+    """`index`/`update` shell out into tree-sitter, a native extension; a use-after-free
+    there raises SIGBUS/SIGSEGV, which Python itself can't catch or report on -- the OS
+    crash reporter only shows C frames inside the interpreter, never the Python source
+    line that was executing. `faulthandler` is the one thing that can print that Python
+    frame at the moment of the signal, so it has to be armed before any such command runs,
+    not opt-in after the fact (a crash doesn't leave a second chance to enable it).
+    """
+    faulthandler.disable()
+    db_path = tmp_path / "test.db"
+    open_db(db_path)
+
+    cli.main(["list", "--db", str(db_path)])
+
+    assert faulthandler.is_enabled()

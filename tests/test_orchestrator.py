@@ -3,6 +3,7 @@ schema validation -> SQLite writes -> incremental hash-based skip) against the
 project's own verify/sample_project fixture, faking only the LLM call itself so the
 suite stays deterministic and never shells out to a real `claude`/`codex` CLI.
 """
+import logging
 import shutil
 from pathlib import Path
 
@@ -512,3 +513,24 @@ def test_index_service_directly_with_service_override_style_path(tmp_path: Path)
 
     assert result.status == "ok"
     assert services_repo.get_service_by_name(conn, "custom-orders-name") is not None
+
+
+def test_index_service_logs_hint_collection_before_static_analysis(tmp_path: Path, caplog):
+    """Hint collection (`detector.collect_hints`) runs before `StaticAnalysisEngine.analyze()`'s
+    own per-file DEBUG line (test_engine_verbose_logging.py) -- and for a JVM/Spring service it
+    shells into tree-sitter (jvm_ast.py) before that per-file logging exists to name anything.
+    A real crash there produced zero `--verbose` output for exactly that reason; this line is
+    the first thing on the timeline, so the next crash's log always has *something* to end on.
+    """
+    conn = open_db(tmp_path / "test.db")
+    single_service_root = SAMPLE_ROOT / "orders-service"
+    detector = detector_for(single_service_root)
+    assert detector is not None
+
+    with caplog.at_level(logging.DEBUG, logger="orbitkb.generation.orchestrator"):
+        index_service(conn, "custom-orders-name", single_service_root, detector, FakeOrchestratorBackend())
+
+    assert any(
+        "collecting hints" in record.message and detector.id in record.message
+        for record in caplog.records
+    )
