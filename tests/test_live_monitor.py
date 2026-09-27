@@ -8,6 +8,7 @@ from orbitkb.db.repositories import (
     change_plans,
     context_telemetry,
     index_runs,
+    local_activity,
     services,
 )
 from orbitkb.mcp.activity import track_local_activity
@@ -132,6 +133,34 @@ def test_local_monitor_treats_missing_ephemeral_activity_table_as_idle(tmp_path)
     conn.commit()
 
     assert collect_snapshot(conn)["agent"]["active_operations"] == []
+
+
+def test_local_monitor_hides_activity_left_by_a_terminated_process(tmp_path, monkeypatch):
+    conn = open_db(tmp_path / "monitor.db")
+    conn.execute(
+        "INSERT INTO local_activity_runs (operation, process_id, started_at) VALUES (?, ?, ?)",
+        ("plan_change", 999_999, "2026-09-27T00:00:00+00:00"),
+    )
+    conn.commit()
+    monkeypatch.setattr(local_activity, "_process_exists", lambda _: False)
+
+    assert collect_snapshot(conn)["agent"]["active_operations"] == []
+
+
+def test_new_local_activity_prunes_abandoned_rows(tmp_path, monkeypatch):
+    db_path = tmp_path / "monitor.db"
+    conn = open_db(db_path)
+    conn.execute(
+        "INSERT INTO local_activity_runs (operation, process_id, started_at) VALUES (?, ?, ?)",
+        ("plan_change", 999_999, "2026-09-27T00:00:00+00:00"),
+    )
+    conn.commit()
+    monkeypatch.setattr(local_activity, "_process_exists", lambda _: False)
+
+    with track_local_activity(db_path, "get_change_context"):
+        rows = conn.execute("SELECT operation FROM local_activity_runs").fetchall()
+
+        assert [row["operation"] for row in rows] == ["get_change_context"]
 
 
 def test_monitor_redraws_only_for_state_changes_unless_work_is_active(tmp_path):

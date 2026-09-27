@@ -308,7 +308,8 @@ a terminal it uses color in addition to explicit status text. Use `--no-color` f
 logs or plain output; `--interval` must be greater than zero in watch mode.
 An in-flight MCP operation records only its tool name, process ID and start time, then
 removes that ephemeral row when it finishes; task text, arguments, code and responses
-are never recorded for monitoring.
+are never recorded for monitoring. If a local MCP process exits abruptly, the monitor
+ignores its inactive PID and the next tracked operation prunes the abandoned row.
 
 Back up before destructive maintenance:
 
