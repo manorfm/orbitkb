@@ -5,6 +5,7 @@ import os
 import sqlite3
 
 from ._util import now
+from ._util import process_exists as _process_exists
 
 _OPERATIONS = frozenset({
     "find_change_surface",
@@ -54,15 +55,3 @@ def _remove_abandoned(conn: sqlite3.Connection) -> None:
     abandoned_ids = [(row["id"],) for row in rows if not _process_exists(row["process_id"])]
     if abandoned_ids:
         conn.executemany("DELETE FROM local_activity_runs WHERE id = ?", abandoned_ids)
-
-
-def _process_exists(process_id: int) -> bool:
-    if process_id <= 0:
-        return False
-    try:
-        os.kill(process_id, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True

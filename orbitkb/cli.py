@@ -10,7 +10,11 @@ from pathlib import Path
 
 import orbitkb
 from orbitkb.analysis.depth import DepthMode, resolve_depth_provider
-from orbitkb.cli_progress import RichProgressReporter
+from orbitkb.cli_progress import (
+    CompositeProgressReporter,
+    LocalIndexProgressReporter,
+    RichProgressReporter,
+)
 from orbitkb.config import resolve_backend
 from orbitkb.db.backup import backup_database, restore_database
 from orbitkb.db.connection import DEFAULT_DB_PATH, open_db, open_readonly_db
@@ -59,7 +63,8 @@ def _cmd_index(args: argparse.Namespace) -> int:
             args.depth_timeout, args.depth_max_edges, args.depth_cache_entries,
             args.depth_circuit_failures, args.depth_circuit_cooldown,
         )
-        with RichProgressReporter() as progress:
+        with RichProgressReporter() as terminal_progress:
+            progress = CompositeProgressReporter(terminal_progress, LocalIndexProgressReporter(args.db))
             results = index_path(
                 conn, Path(args.path), backend, service_override=args.service, force=args.force,
                 progress=progress, repository_name=args.repository_name, embedding_backend=embedding_backend,
@@ -148,7 +153,8 @@ def _cmd_update(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     all_ok = True
-    with RichProgressReporter() as progress:
+    with RichProgressReporter() as terminal_progress:
+        progress = CompositeProgressReporter(terminal_progress, LocalIndexProgressReporter(args.db))
         for row in rows:
             all_ok = _update_one_service(conn, row, args, backend, embedding_backend, depth_provider, progress) and all_ok
     if args.depth_mode != DepthMode.OFF.value:

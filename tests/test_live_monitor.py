@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from orbitkb import cli
+from orbitkb.cli_progress import LocalIndexProgressReporter
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import (
     change_plans,
@@ -40,6 +41,30 @@ def test_local_monitor_reports_an_active_index_run_and_aggregate_usage(tmp_path)
     assert "Indexing" in rendered
     assert "payments  running (fake)" in rendered
     assert "runs: 1" in rendered
+
+
+def test_local_monitor_reports_granular_active_index_progress(tmp_path):
+    db_path = tmp_path / "monitor.db"
+    conn = open_db(db_path)
+    progress = LocalIndexProgressReporter(db_path)
+
+    progress.service_started("payments", total_units=3)
+    progress.unit_started("payments", "POST /payments")
+    progress.unit_finished("payments", "POST /payments", "ok")
+
+    snapshot = collect_snapshot(conn)
+    assert snapshot["indexing"]["active"] == [{
+        "service": "payments",
+        "backend": "unknown",
+        "stage": "endpoint analysis",
+        "completed_units": 1,
+        "total_units": 3,
+    }]
+    assert "endpoint analysis 1/3" in render_snapshot(snapshot, color=False)
+
+    progress.service_finished("payments")
+
+    assert collect_snapshot(conn)["indexing"]["active"] == []
 
 
 def test_metrics_command_prints_a_read_only_local_snapshot(tmp_path, capsys):

@@ -306,6 +306,9 @@ orbitkb metrics --watch --interval 1
 changes, except while an active operation needs its duration updated. When attached to
 a terminal it uses color in addition to explicit status text. Use `--no-color` for
 logs or plain output; `--interval` must be greater than zero in watch mode.
+During `orbitkb index` or `orbitkb update`, it also shows the current normalized
+generation stage and completed/total unit count. It never displays source paths,
+endpoint names, prompts or generated content.
 An in-flight MCP operation records only its tool name, process ID and start time, then
 removes that ephemeral row when it finishes; task text, arguments, code and responses
 are never recorded for monitoring. If a local MCP process exits abruptly, the monitor

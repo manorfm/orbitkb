@@ -10,7 +10,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from orbitkb.db.repositories import local_activity
+from orbitkb.db.repositories import local_activity, local_index_progress
 
 
 def collect_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -38,12 +38,35 @@ def collect_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     plan_rows = conn.execute(
         "SELECT status, COUNT(*) AS count FROM change_plan_runs GROUP BY status ORDER BY status"
     ).fetchall()
+    progress_by_service = {
+        progress["service"]: progress for progress in local_index_progress.list_active(conn)
+    }
+    active_indexing: list[dict[str, Any]] = []
+    indexed_services: set[str] = set()
+    for row in active_rows:
+        service = row["service"] or "unknown service"
+        indexed_services.add(service)
+        entry: dict[str, Any] = {"service": service, "backend": row["backend"] or "unknown"}
+        if progress := progress_by_service.get(service):
+            entry.update({
+                "stage": progress["stage"].replace("_", " "),
+                "completed_units": progress["completed_units"],
+                "total_units": progress["total_units"],
+            })
+        active_indexing.append(entry)
+    for service, progress in progress_by_service.items():
+        if service in indexed_services:
+            continue
+        active_indexing.append({
+            "service": service,
+            "backend": "unknown",
+            "stage": progress["stage"].replace("_", " "),
+            "completed_units": progress["completed_units"],
+            "total_units": progress["total_units"],
+        })
     return {
         "indexing": {
-            "active": [
-                {"service": row["service"] or "unknown service", "backend": row["backend"]}
-                for row in active_rows
-            ],
+            "active": active_indexing,
             "runs": totals["runs"],
             "files_changed": totals["files_changed"],
             "llm_calls": totals["llm_calls"],
@@ -75,9 +98,8 @@ def render_snapshot(
     if indexing["active"]:
         for active in indexing["active"]:
             status = _paint(f"running ({active['backend']})", "33", color)
-            lines.append(
-                f"  {active['service']}  {status}"
-            )
+            progress = _index_progress(active)
+            lines.append(f"  {active['service']}  {status}{progress}")
     else:
         lines.append(f"  {_paint('idle', '32', color)}")
     lines.extend([
@@ -103,6 +125,13 @@ def _paint(text: str, code: str, enabled: bool) -> str:
 
 def _plan_statuses(statuses: dict[str, int]) -> str:
     return ", ".join(f"{status}={count}" for status, count in statuses.items()) or "none"
+
+
+def _index_progress(active: dict[str, Any]) -> str:
+    if not {"stage", "completed_units", "total_units"} <= active.keys():
+        return ""
+    stage = active["stage"]
+    return f" · {stage} {active['completed_units']}/{active['total_units']}"
 
 
 def snapshot_state_key(snapshot: dict[str, Any]) -> str:

@@ -650,6 +650,24 @@ CREATE TABLE IF NOT EXISTS local_activity_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_local_activity_runs_started ON local_activity_runs(started_at, id);
 
+-- Aggregate-only progress for an index process. The local monitor reads it but
+-- never writes; source paths, endpoint names and generated content stay out.
+CREATE TABLE IF NOT EXISTS local_index_progress (
+    id              INTEGER PRIMARY KEY,
+    service         TEXT NOT NULL,
+    process_id      INTEGER NOT NULL,
+    total_units     INTEGER NOT NULL CHECK (total_units > 0),
+    completed_units INTEGER NOT NULL CHECK (completed_units >= 0),
+    stage           TEXT NOT NULL CHECK (stage IN (
+        'discovery', 'endpoint_analysis', 'component_analysis',
+        'persistence_analysis', 'messaging_analysis', 'overview_generation'
+    )),
+    started_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    UNIQUE(process_id, service)
+);
+CREATE INDEX IF NOT EXISTS idx_local_index_progress_started ON local_index_progress(started_at, id);
+
 -- A static snapshot is valid only for the exact analyzer input digest and parser
 -- version. It stores no source content and is invalidated by external depth facts.
 CREATE TABLE IF NOT EXISTS static_analysis_snapshots (
