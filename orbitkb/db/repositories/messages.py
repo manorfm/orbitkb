@@ -57,6 +57,27 @@ def list_all_message_links(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def list_unmatched_message_channels(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every message row with no opposite-direction counterpart from a *different*
+    service on the same channel — the complement of `list_all_message_links`. Covers
+    a single-service repo publishing/consuming a real broker with no other indexed
+    service on that channel, which `list_all_message_links` otherwise drops silently
+    (same posture as `list_all_static_cloud_facts`: a fact about one service's own
+    external target, no second service required)."""
+    return conn.execute(
+        """
+        SELECT s.name AS service, m1.direction AS direction, m1.channel AS channel, m1.provider AS provider
+        FROM messages m1
+        JOIN services s ON s.id = m1.service_id
+        WHERE NOT EXISTS (
+            SELECT 1 FROM messages m2
+            WHERE m2.channel = m1.channel AND m2.service_id != m1.service_id AND m2.direction != m1.direction
+        )
+        ORDER BY s.name, m1.channel
+        """
+    ).fetchall()
+
+
 def list_message_links(conn: sqlite3.Connection, service_id: int) -> list[sqlite3.Row]:
     """Other services connected to this one through a shared channel name.
 

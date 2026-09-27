@@ -88,6 +88,26 @@ def generate_topology_diagram(conn: sqlite3.Connection) -> str:
             continue
         lines.append(f'  {publisher_id} ==>|{link["channel"]}| {consumer_id}')
 
+    for row in messages_repo.list_unmatched_message_channels(conn):
+        from_id = service_ids.get(row["service"])
+        if from_id is None:
+            continue
+        broker_id = external_node(f"{row['provider']}: {row['channel']}")
+        if row["direction"] == "publishes":
+            lines.append(f"  {from_id} -.->|{row['channel']}| {broker_id}")
+        else:
+            lines.append(f"  {broker_id} -.->|{row['channel']}| {from_id}")
+
+    for svc in services_repo.list_services(conn):
+        from_id = service_ids[svc["name"]]
+        engines = {entity["engine"] for entity in persistence_repo.list_persistence(conn, svc["id"])}
+        for engine in sorted(engines):
+            # Never shared across services — a same-named engine on two services isn't
+            # evidence they're the same physical database, just the same technology.
+            node_id = f"db_{_slug(svc['name'])}_{_slug(engine)}"
+            lines.append(f'  {node_id}[("{engine}")]')
+            lines.append(f"  {from_id} -.->|persists| {node_id}")
+
     if cycle_names:
         lines.append("  classDef cycle fill:#f88,stroke:#900,stroke-width:2px;")
         cycle_node_ids = ",".join(service_ids[name] for name in sorted(cycle_names) if name in service_ids)

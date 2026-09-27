@@ -67,6 +67,34 @@ def test_generate_topology_diagram_includes_cloud_nodes(tmp_path: Path):
     assert "orders-queue" in diagram
 
 
+def test_generate_topology_diagram_shows_unmatched_messaging_and_persistence(tmp_path: Path):
+    """A single-service repo that both publishes and consumes on the same channel (no
+    other indexed service on it) and persists to a DB shouldn't render an empty
+    topology just because there's no second service to pair the channel with."""
+    conn = open_db(tmp_path / "test.db")
+    lone_id = services_repo.ensure_service(conn, "lone-service", "/tmp/lone", "jvm-spring")
+    messages_repo.replace_messages(
+        conn, lone_id,
+        [
+            {"direction": "publishes", "channel": "order.created", "shape_json": {}, "description": "d", "provider": "rabbitmq"},
+            {"direction": "consumes", "channel": "order.created", "shape_json": {}, "description": "d", "provider": "rabbitmq"},
+        ],
+        EVIDENCE,
+    )
+    persistence_repo.replace_persistence_entities(
+        conn, lone_id,
+        [{"name": "orders", "kind": "sql_table", "engine": "postgres", "schema_json": []}],
+        EVIDENCE,
+    )
+
+    diagram = generate_topology_diagram(conn)
+
+    assert "rabbitmq: order.created" in diagram
+    assert diagram.count("order.created") >= 2  # one edge in each direction
+    assert 'db_lone_service_postgres[("postgres")]' in diagram
+    assert "persists" in diagram
+
+
 def test_generate_topology_diagram_highlights_cycle_services(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     a_id = services_repo.ensure_service(conn, "a-service", "/tmp/a", "python")
