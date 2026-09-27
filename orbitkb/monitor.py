@@ -91,7 +91,7 @@ def collect_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
 def render_snapshot(
     snapshot: dict[str, Any], color: bool, current_time: datetime | None = None,
     alerts_only: bool = False, include_updated_at: bool = False, watch_interval: float | None = None,
-    watch_interval_source: str | None = None,
+    watch_interval_source: str | None = None, watch_interval_floor_active: bool = False,
 ) -> str:
     """Render a stable, human-readable snapshot without terminal dependencies."""
     if alerts_only:
@@ -110,8 +110,12 @@ def render_snapshot(
         "─" * 40,
     ]
     if watch_interval is not None:
-        source = f" ({watch_interval_source})" if watch_interval_source else ""
-        lines.append(f"refresh: every {watch_interval:g}s{source}")
+        annotations = [annotation for annotation in (
+            watch_interval_source,
+            "safety floor active" if watch_interval_floor_active else None,
+        ) if annotation]
+        suffix = f" ({'; '.join(annotations)})" if annotations else ""
+        lines.append(f"refresh: every {watch_interval:g}s{suffix}")
     if action_summary := _action_summary(validation, plan_quality, color):
         lines.append(action_summary)
     lines.append("Indexing")

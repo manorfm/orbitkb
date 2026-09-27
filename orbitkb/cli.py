@@ -460,7 +460,7 @@ def _cmd_metrics(args: argparse.Namespace) -> int:
     """Display local, redacted operational metrics without writing to SQLite."""
     if args.watch:
         try:
-            interval, interval_source = _resolve_metrics_watch_interval(args.interval)
+            interval, interval_source, floor_active = _resolve_metrics_watch_interval(args.interval)
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
@@ -484,6 +484,7 @@ def _cmd_metrics(args: argparse.Namespace) -> int:
                     include_updated_at=args.alerts_only,
                     watch_interval=interval if args.watch and not args.alerts_only else None,
                     watch_interval_source=interval_source if args.watch and not args.alerts_only else None,
+                    watch_interval_floor_active=floor_active if args.watch and not args.alerts_only else False,
                 ))
                 previous_state = snapshot_state_key(snapshot, alerts_only=args.alerts_only)
             if not args.watch:
@@ -493,7 +494,7 @@ def _cmd_metrics(args: argparse.Namespace) -> int:
         conn.close()
 
 
-def _resolve_metrics_watch_interval(command_interval: float | None) -> tuple[float, str]:
+def _resolve_metrics_watch_interval(command_interval: float | None) -> tuple[float, str, bool]:
     environment_value = os.environ.get(_METRICS_INTERVAL_ENV)
     if command_interval is not None:
         value, source = command_interval, "CLI"
@@ -513,7 +514,7 @@ def _resolve_metrics_watch_interval(command_interval: float | None) -> tuple[flo
     minimum = _resolve_metrics_min_interval()
     if minimum is not None and interval < minimum:
         raise ValueError(f"interval must be at least {minimum:g} seconds in --watch mode")
-    return interval, source
+    return interval, source, minimum is not None
 
 
 def _resolve_metrics_min_interval() -> float | None:

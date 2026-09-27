@@ -157,10 +157,11 @@ def test_metrics_watch_interval_reports_its_default_source(monkeypatch):
     monkeypatch.delenv("ORBITKB_METRICS_INTERVAL", raising=False)
     monkeypatch.delenv("ORBITKB_METRICS_MIN_INTERVAL", raising=False)
 
-    interval, source = cli._resolve_metrics_watch_interval(None)
+    interval, source, floor_active = cli._resolve_metrics_watch_interval(None)
 
     assert interval == 1.0
     assert source == "default"
+    assert floor_active is False
 
 
 def test_metrics_watch_rejects_an_empty_environment_interval(monkeypatch):
@@ -168,6 +169,21 @@ def test_metrics_watch_rejects_an_empty_environment_interval(monkeypatch):
 
     with pytest.raises(ValueError, match="ORBITKB_METRICS_INTERVAL must be a number"):
         cli._resolve_metrics_watch_interval(None)
+
+
+def test_metrics_watch_marks_an_active_safety_floor(tmp_path, capsys, monkeypatch):
+    db_path = tmp_path / "monitor.db"
+    open_db(db_path)
+    monkeypatch.setenv("ORBITKB_METRICS_MIN_INTERVAL", "0.25")
+    args = cli.build_parser().parse_args([
+        "metrics", "--watch", "--interval", "0.5", "--db", str(db_path), "--no-color",
+    ])
+    monkeypatch.setattr(cli.time, "sleep", lambda _: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+    with pytest.raises(KeyboardInterrupt):
+        cli._cmd_metrics(args)
+
+    assert "refresh: every 0.5s (CLI; safety floor active)" in capsys.readouterr().out
 
 
 def test_metrics_watch_rejects_an_invalid_environment_interval(tmp_path, capsys, monkeypatch):
