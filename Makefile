@@ -1,4 +1,4 @@
-.PHONY: help install dev hooks test coverage lint sast sca security dast verify benchmark-scale evaluate-static evaluate-change-surface integration-containers readiness-audit \
+.PHONY: help install dev hooks test coverage lint sast sca security dast verify benchmark-scale evaluate-static evaluate-change-surface validate-real-corpus integration-containers readiness-audit \
         build clean release release-patch release-minor release-major _release
 
 # Defaults to the project's own .venv when one exists, so `make verify`/
@@ -40,6 +40,7 @@ help:
 	@echo "  benchmark-scale Profile static-analysis time and peak memory"
 	@echo "  evaluate-static Run cross-stack golden facts with time/memory report"
 	@echo "  evaluate-change-surface Run deterministic change-surface candidate goldens"
+	@echo "  validate-real-corpus Validate a local, redacted real-change corpus (CORPUS=path)"
 	@echo "  integration-containers Run opt-in RabbitMQ/Postgres/MongoDB/LocalStack container E2E"
 	@echo "  readiness-audit Report deterministic evidence and production conditions"
 	@echo "  build           Build sdist + wheel into dist/"
@@ -102,6 +103,10 @@ evaluate-static:
 
 evaluate-change-surface:
 	$(PYTHON) scripts/run_benchmark_report.py
+
+validate-real-corpus:
+	@test -n "$(CORPUS)" || (echo "Set CORPUS to a local manifest path." >&2; exit 2)
+	$(PYTHON) scripts/validate_real_corpus.py --corpus "$(CORPUS)"
 
 integration-containers:
 	ORBITKB_CONTAINER_E2E=1 $(PYTHON) -m pytest tests/test_container_integrations.py tests/test_container_cloud_integrations.py -v

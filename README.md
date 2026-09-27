@@ -408,6 +408,7 @@ Useful focused checks:
 ```bash
 make evaluate-static
 make evaluate-change-surface
+make validate-real-corpus CORPUS=/secure/path/real-change-corpus.json
 make benchmark-scale
 make integration-containers
 make readiness-audit
@@ -426,6 +427,25 @@ generated Go handler corpora. For a comparable local baseline, change its inputs
 ```bash
 make benchmark-scale SCALE_FILES="5000" SCALE_REPEAT=5
 ```
+
+### Opt-in real-change corpus
+
+`make validate-real-corpus` validates an external JSON manifest before it is used as
+quality evidence. The repository ships no production corpus, and this command neither
+writes to SQLite nor calls an LLM. Keep the manifest in an access-controlled local or
+CI location; do not commit it with source code.
+
+Each case has schema version `1` and only the following structured metadata:
+
+| Field | Purpose |
+| --- | --- |
+| `id`, `changed_unit_refs`, `contract_refs`, `migration_refs`, `test_refs` | Opaque lowercase references; maintain any mapping to real paths or symbols outside the manifest. |
+| `task_digest`, `kb_snapshot_digest` | SHA-256 digests that correlate a redacted request and KB snapshot without retaining either. |
+| `stack`, `size`, `criticality`, `decision_kinds` | Controlled categories for coverage and quality analysis. |
+
+The validator rejects task text, prompts, descriptions, diffs, source, file paths,
+symbols and decision text. This keeps the corpus suitable for measuring coverage by
+stack while preserving the privacy boundary required for real changes.
 
 Incremental indexing skips unchanged LLM-derived units by file hash. Static analysis
 also stores a versioned digest of every local artifact it reads (stack source files,
