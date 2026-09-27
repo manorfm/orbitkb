@@ -6,14 +6,13 @@ judgment or generalise to arbitrary production codebases.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 import time
 import tracemalloc
+from dataclasses import dataclass
+from pathlib import Path
 
 from orbitkb.analysis.engine import StaticAnalysisEngine
 from orbitkb.analysis.models import AnalysisResult
-
 
 EntrypointFact = tuple[str, str, str]
 EdgeFact = tuple[str, str]
@@ -98,6 +97,7 @@ class OrdersController {
 @dataclass(frozen=True)
 class StaticEvaluationResult:
     case_id: str
+    stack: str
     expected: frozenset[tuple]
     observed: frozenset[tuple]
 
@@ -136,11 +136,31 @@ class StaticEvaluationReport:
         observed = _report_facts(self.results, "observed")
         return _ratio(len(expected & observed), len(observed), default=1.0)
 
+    @property
+    def quality_by_stack(self) -> dict[str, dict[str, int | float]]:
+        """Return independent fact-quality measurements for every supported stack."""
+        results_by_stack: dict[str, list[StaticEvaluationResult]] = {}
+        for result in self.results:
+            results_by_stack.setdefault(result.stack, []).append(result)
+        return {
+            stack: _stack_quality(results)
+            for stack, results in sorted(results_by_stack.items())
+        }
+
+    @property
+    def passes_quality_gate(self) -> bool:
+        """Require full precision and recall in every stack, not only in aggregate."""
+        return all(
+            metrics["precision"] == 1.0 and metrics["recall"] == 1.0
+            for metrics in self.quality_by_stack.values()
+        )
+
     def as_dict(self) -> dict[str, int | float | list[dict[str, object]]]:
         return {
             "cases": len(self.results),
             "precision": self.aggregate_precision,
             "recall": self.aggregate_recall,
+            "stacks": self.quality_by_stack,
             "elapsed_ms": self.elapsed_ms,
             "peak_memory_bytes": self.peak_memory_bytes,
             "results": [
@@ -175,7 +195,7 @@ def _run_case(case: StaticGoldenCase, root: Path) -> StaticEvaluationResult:
         path.write_text(source, encoding="utf-8")
     analysis = StaticAnalysisEngine().analyze(root, case.stack)
     expected = _expected_facts(case)
-    return StaticEvaluationResult(case.id, expected, _scored_facts(case, analysis))
+    return StaticEvaluationResult(case.id, case.stack, expected, _scored_facts(case, analysis))
 
 
 def _expected_facts(case: StaticGoldenCase) -> frozenset[tuple]:
@@ -217,4 +237,15 @@ def _report_facts(results: tuple[StaticEvaluationResult, ...], attribute: str) -
         (result.case_id, *fact)
         for result in results
         for fact in getattr(result, attribute)
+    }
+
+
+def _stack_quality(results: list[StaticEvaluationResult]) -> dict[str, int | float]:
+    expected = _report_facts(tuple(results), "expected")
+    observed = _report_facts(tuple(results), "observed")
+    matched = len(expected & observed)
+    return {
+        "cases": len(results),
+        "precision": _ratio(matched, len(observed), default=1.0),
+        "recall": _ratio(matched, len(expected), default=1.0),
     }

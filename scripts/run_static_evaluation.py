@@ -21,7 +21,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as directory:
         report = run_static_evaluation(CASES, Path(directory))
     print(json.dumps(report.as_dict(), sort_keys=True))
-    return 0 if report.aggregate_precision == 1.0 and report.aggregate_recall == 1.0 else 1
+    return 0 if report.passes_quality_gate else 1
 
 
 if __name__ == "__main__":

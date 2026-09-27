@@ -443,7 +443,9 @@ storage, missing encryption or bucket versioning). A component-level cycle or
 fan-in/fan-out finding is scoped to one service's traced entrypoint-to-boundary
 `flow_edges`, never a claim about that service's whole code graph. Static and
 change-surface evaluations are deterministic regression checks; they do not
-claim to measure an LLM's judgment on arbitrary codebases.
+claim to measure an LLM's judgment on arbitrary codebases. `make evaluate-static`
+also reports precision and recall per supported stack and fails when any stack
+regresses, so a passing aggregate cannot mask a regression in another stack.
 
 ## Further reading
 
