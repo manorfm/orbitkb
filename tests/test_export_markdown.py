@@ -69,7 +69,7 @@ def test_export_markdown_includes_a_cloud_section(tmp_path: Path):
     export_markdown(conn, out_dir)
 
     index_text = (out_dir / "orders-service" / "index.md").read_text(encoding="utf-8")
-    assert "## Nuvem" in index_text
+    assert "## Cloud" in index_text
     assert "sqs" in index_text
     assert "orders-queue" in index_text
 
@@ -86,6 +86,30 @@ def test_export_markdown_service_filter_only_writes_matching_service(tmp_path: P
     assert not (out_dir / "payments-service").exists()
 
 
+def test_export_markdown_splits_messaging_into_publishes_and_consumes(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    orders_id = _seed(conn)  # already publishes "order_created"
+    messages_repo.replace_messages(
+        conn, orders_id,
+        [
+            {"direction": "publishes", "channel": "order_created", "shape_json": [], "description": "order created"},
+            {"direction": "consumes", "channel": "payment_confirmed", "shape_json": [], "description": "payment confirmed"},
+        ],
+        [],
+    )
+    out_dir = tmp_path / "docs"
+
+    export_markdown(conn, out_dir)
+
+    index_text = (out_dir / "orders-service" / "index.md").read_text(encoding="utf-8")
+    publishes_section = index_text.split("### Publishes")[1].split("### Consumes")[0]
+    consumes_section = index_text.split("### Consumes")[1]
+    assert "order_created" in publishes_section
+    assert "payment_confirmed" not in publishes_section
+    assert "payment_confirmed" in consumes_section
+    assert "order_created" not in consumes_section
+
+
 def test_export_markdown_handles_service_with_no_apis(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     services_repo.ensure_service(conn, "empty-service", "/tmp/empty", "python")
@@ -94,6 +118,6 @@ def test_export_markdown_handles_service_with_no_apis(tmp_path: Path):
     written = export_markdown(conn, out_dir)
 
     index_text = (out_dir / "empty-service" / "index.md").read_text(encoding="utf-8")
-    assert "nenhuma API detectada" in index_text
+    assert "no API detected" in index_text
     assert not (out_dir / "empty-service" / "apis").exists()
     assert len(written) == 1

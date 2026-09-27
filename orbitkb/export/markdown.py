@@ -23,9 +23,14 @@ def _fmt_calls(calls: list[sqlite3.Row]) -> list[str]:
         data_needed = ", ".join(json.loads(c["data_needed"] or "[]"))
         line = f"- **{c['to_service_name']}** ({c['call_kind']}, {c['purpose_kind']}): {c['reason']}"
         if data_needed:
-            line += f" — precisa de: {data_needed}"
+            line += f" — needs: {data_needed}"
         lines.append(line)
-    return lines or ["- (nenhuma dependência detectada)"]
+    return lines or ["- (no dependency detected)"]
+
+
+def _fmt_messages(messages: list[sqlite3.Row]) -> list[str]:
+    lines = [f"- **{m['channel']}** ({m['direction']}): {m['description'] or ''}" for m in messages]
+    return lines or ["- (none detected)"]
 
 
 def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str | None = None) -> list[Path]:
@@ -52,7 +57,7 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
             "",
             f"**Stack:** {svc['stack'] or '?'}",
             "",
-            "## Depende de",
+            "## Depends on",
             *_fmt_calls(calls),
             "",
             "## APIs",
@@ -60,28 +65,26 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
         if apis:
             for a in apis:
                 slug = _slug(f"{a['method']}-{a['path']}")
-                lines.append(f"- `{a['method']} {a['path']}` — {a['summary'] or ''} ([detalhe](apis/{slug}.md))")
+                lines.append(f"- `{a['method']} {a['path']}` — {a['summary'] or ''} ([detail](apis/{slug}.md))")
         else:
-            lines.append("- (nenhuma API detectada)")
+            lines.append("- (no API detected)")
 
-        lines += ["", "## Persistência"]
-        lines += [f"- **{p['name']}** ({p['kind']})" for p in persistence] or ["- (nada detectado)"]
+        lines += ["", "## Persistence"]
+        lines += [f"- **{p['name']}** ({p['kind']})" for p in persistence] or ["- (none detected)"]
 
-        lines += ["", "## Mensageria"]
-        if messages:
-            lines += [f"- **{m['channel']}** ({m['direction']}): {m['description'] or ''}" for m in messages]
-        else:
-            lines.append("- (nada detectado)")
+        publishes = [m for m in messages if m["direction"] == "publishes"]
+        consumes = [m for m in messages if m["direction"] == "consumes"]
+        lines += ["", "## Messaging", "", "### Publishes", *_fmt_messages(publishes), "", "### Consumes", *_fmt_messages(consumes)]
 
-        lines += ["", "## Nuvem"]
+        lines += ["", "## Cloud"]
         if cloud_facts:
             lines += [
                 f"- **{f['provider']}:{f['service_name']}** {f['operation']} "
-                f"({f['target_name'] or 'destino não resolvido'})"
+                f"({f['target_name'] or 'unresolved target'})"
                 for f in cloud_facts
             ]
         else:
-            lines.append("- (nada detectado)")
+            lines.append("- (none detected)")
 
         index_path = service_dir / "index.md"
         index_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -96,14 +99,14 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
                 validations = apis_repo.list_validations_for_api(conn, api_row["id"])
                 response_shape = json.loads(api_row["response_shape"] or "[]")
 
-                api_lines = [f"# {a['method']} {a['path']}", "", api_row["description"] or "", "", "## Resposta"]
-                api_lines += [f"- `{f['field']}`: {f['type_desc']}" for f in response_shape] or ["(não detectado)"]
-                api_lines += ["", "## Chamadas", *_fmt_calls(api_calls)]
-                api_lines += ["", "## Validações / Restrições"]
+                api_lines = [f"# {a['method']} {a['path']}", "", api_row["description"] or "", "", "## Response"]
+                api_lines += [f"- `{f['field']}`: {f['type_desc']}" for f in response_shape] or ["(not detected)"]
+                api_lines += ["", "## Calls", *_fmt_calls(api_calls)]
+                api_lines += ["", "## Validations / Constraints"]
                 if validations:
                     api_lines += [f"- [{v['kind']}] {v['description']}" for v in validations]
                 else:
-                    api_lines.append("(nenhuma detectada)")
+                    api_lines.append("(none detected)")
 
                 slug = _slug(f"{a['method']}-{a['path']}")
                 api_path = apis_dir / f"{slug}.md"
