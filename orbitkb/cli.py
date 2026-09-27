@@ -792,7 +792,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_context_metrics.set_defaults(func=_cmd_context_metrics)
 
     p_metrics = sub.add_parser(
-        "metrics", help="Show local operational metrics; add --watch for a live terminal view",
+        "metrics",
+        help="Show local operational metrics; add --watch for a live terminal view",
+        epilog=(
+            "examples:\n"
+            "  orbitkb metrics --watch\n"
+            f"  {_METRICS_INTERVAL_ENV}=2 orbitkb metrics --watch\n"
+            f"  {_METRICS_MIN_INTERVAL_ENV}=0.25 orbitkb metrics --watch --alerts-only\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_metrics.add_argument("--watch", action="store_true", help="Refresh the local read-only view until Ctrl+C")
     p_metrics.add_argument(

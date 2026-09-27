@@ -114,6 +114,16 @@ def test_metrics_watch_rejects_a_nonpositive_refresh_interval(tmp_path, capsys, 
     assert "interval must be greater than zero" in capsys.readouterr().err
 
 
+def test_metrics_help_includes_watch_interval_environment_examples(capsys):
+    with pytest.raises(SystemExit) as result:
+        cli.build_parser().parse_args(["metrics", "--help"])
+
+    assert result.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "ORBITKB_METRICS_INTERVAL=2 orbitkb metrics --watch" in help_text
+    assert "ORBITKB_METRICS_MIN_INTERVAL=0.25 orbitkb metrics --watch --alerts-only" in help_text
+
+
 def test_metrics_watch_reads_interval_from_environment_and_cli_overrides_it(tmp_path, monkeypatch):
     db_path = tmp_path / "monitor.db"
     open_db(db_path)

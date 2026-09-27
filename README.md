@@ -313,6 +313,7 @@ greater than zero.
 Optionally set `ORBITKB_METRICS_MIN_INTERVAL` as a finite positive safety floor. A
 requested interval below it fails before the watch starts, including an explicit
 `--interval`; it is never silently clamped.
+`orbitkb metrics --help` also shows runnable examples for both environment variables.
 Within validation and plan quality, color is reserved for nonzero actionable states:
 pending or stale items use yellow, while failures and confirmed breaks use red.
 When plan quality has no actionable risk, the monitor collapses its detailed coverage,
