@@ -2588,6 +2588,55 @@ func (s *InventoryServer) Reserve(ctx context.Context, request *pb.ReserveReques
     )
 
 
+def test_static_analysis_links_a_go_grpc_service_handler_split_across_files(tmp_path: Path):
+    """A struct embedding the generated server base and the method implementing it can live in
+    different files of the same Go package -- `_go_grpc_handlers` must resolve this across two
+    separate tree-sitter parses, not just within one file's tree. This is also the regression
+    case for a tree-sitter `Tree` lifetime bug: `_go_grpc_handlers` used to defer `Node` access
+    to a second pass over every file's methods, by which point its loop-local `tree` variable
+    had been reassigned to the last file parsed, leaving earlier files' `Tree`s with no live
+    reference while their `Node`s were still being read (the same defect fixed in
+    `orbitkb/discovery/jvm_ast.py`, see `test_jvm_ast_tree_lifetime.py`).
+    """
+    (tmp_path / "inventory.proto").write_text(
+        '''syntax = "proto3";
+package inventory.v1;
+
+service Inventory {
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);
+}
+''',
+        encoding="utf-8",
+    )
+    (tmp_path / "a_inventory_struct.go").write_text(
+        '''package inventory
+
+type InventoryServer struct {
+  pb.UnimplementedInventoryServer
+}
+''',
+        encoding="utf-8",
+    )
+    (tmp_path / "b_inventory_handler.go").write_text(
+        '''package inventory
+
+func (s *InventoryServer) Reserve(ctx context.Context, request *pb.ReserveRequest) (*pb.ReserveResponse, error) {
+  return nil, nil
+}
+''',
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "go")
+
+    assert any(
+        edge.source == "proto.inventory.v1.Inventory.Reserve"
+        and edge.target == "InventoryServer.Reserve"
+        and edge.confidence == "high"
+        for edge in result.edges
+    )
+
+
 def test_static_analysis_ignores_a_go_named_generated_server_field(tmp_path: Path):
     (tmp_path / "inventory.proto").write_text(
         '''syntax = "proto3";
@@ -2639,6 +2688,56 @@ type CheckoutService struct {
 func NewCheckoutService(conn *grpc.ClientConn) *CheckoutService {
   return &CheckoutService{inventory: pb.NewInventoryClient(conn)}
 }
+
+func (s *CheckoutService) Checkout(ctx context.Context, request *pb.ReserveRequest) error {
+  _, err := s.inventory.Reserve(ctx, request)
+  return err
+}
+''',
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "go")
+
+    assert any(
+        edge.source == "CheckoutService.Checkout"
+        and edge.target == "proto.inventory.v1.Inventory.Reserve"
+        and edge.confidence == "high"
+        for edge in result.edges
+    )
+
+
+def test_static_analysis_links_a_go_grpc_client_call_split_across_files(tmp_path: Path):
+    """Twin of `..._go_grpc_service_handler_split_across_files` for `_go_grpc_client_bindings`:
+    the struct/factory and the method that calls through it can live in different files, and
+    that method's receiver was the other raw `Node` this function used to defer past its
+    file-scanning loop's `tree` reassignment -- the same use-after-free class, on the client side.
+    """
+    (tmp_path / "inventory.proto").write_text(
+        '''syntax = "proto3";
+package inventory.v1;
+
+service Inventory {
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);
+}
+''',
+        encoding="utf-8",
+    )
+    (tmp_path / "a_checkout_struct.go").write_text(
+        '''package checkout
+
+type CheckoutService struct {
+  inventory pb.InventoryClient
+}
+
+func NewCheckoutService(conn *grpc.ClientConn) *CheckoutService {
+  return &CheckoutService{inventory: pb.NewInventoryClient(conn)}
+}
+''',
+        encoding="utf-8",
+    )
+    (tmp_path / "b_checkout_handler.go").write_text(
+        '''package checkout
 
 func (s *CheckoutService) Checkout(ctx context.Context, request *pb.ReserveRequest) error {
   _, err := s.inventory.Reserve(ctx, request)

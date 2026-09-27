@@ -1190,7 +1190,12 @@ def _go_grpc_handlers(files: list[Path], root: Path) -> list[GrpcHandler]:
     """Return Go methods on structs embedding one generated gRPC server base."""
     parser = Parser(Language(tree_sitter_go.language()))
     servers: dict[str, list[str]] = {}
-    methods: list[tuple[Node, bytes, Path]] = []
+    # (receiver_type, method_name, evidence), extracted eagerly while each file's `Tree` is
+    # still referenced by `tree` below -- a struct and the method implementing it can live in
+    # different files, so resolving against `servers` has to wait for every file to be scanned,
+    # but a `Node` is a view into its `Tree`'s memory and `tree` gets reassigned every iteration,
+    # so deferring `Node` access itself (not just the resolution) past this loop is a use-after-free.
+    methods: list[tuple[str, str, Evidence]] = []
     for path in files:
         if path.suffix != ".go":
             continue
@@ -1214,27 +1219,23 @@ def _go_grpc_handlers(files: list[Path], root: Path) -> list[GrpcHandler]:
                 if len(matches) == 1:
                     servers.setdefault(_text(name, source), []).append(matches[0].group("service"))
             elif node.type == "method_declaration":
-                methods.append((node, source, path))
+                receiver = node.child_by_field_name("receiver")
+                name = node.child_by_field_name("name")
+                if receiver is None or name is None:
+                    continue
+                receiver_match = re.fullmatch(
+                    r"\s*\(\s*(?:[A-Za-z_]\w*\s+)?\*?(?P<type>[A-Za-z_]\w*)\s*\)\s*",
+                    _text(receiver, source),
+                )
+                if receiver_match is None:
+                    continue
+                methods.append((receiver_match.group("type"), _text(name, source), _evidence(path, root, node)))
     handlers: list[GrpcHandler] = []
-    for method, source, path in methods:
-        receiver = method.child_by_field_name("receiver")
-        name = method.child_by_field_name("name")
-        if receiver is None or name is None:
-            continue
-        receiver_match = re.fullmatch(
-            r"\s*\(\s*(?:[A-Za-z_]\w*\s+)?\*?(?P<type>[A-Za-z_]\w*)\s*\)\s*",
-            _text(receiver, source),
-        )
-        if receiver_match is None:
-            continue
-        receiver_type = receiver_match.group("type")
+    for receiver_type, method_name, evidence in methods:
         services = servers.get(receiver_type, [])
         if len(services) != 1:
             continue
-        method_name = _text(name, source)
-        handlers.append(GrpcHandler(
-            services[0], method_name, f"{receiver_type}.{method_name}", _evidence(path, root, method),
-        ))
+        handlers.append(GrpcHandler(services[0], method_name, f"{receiver_type}.{method_name}", evidence))
     return handlers
 
 
@@ -1243,7 +1244,10 @@ def _go_grpc_client_bindings(files: list[Path], root: Path) -> list[GrpcClientBi
     parser = Parser(Language(tree_sitter_go.language()))
     fields: dict[tuple[str, str], list[tuple[str, str]]] = {}
     initializers: dict[tuple[str, str], list[tuple[str, str, Evidence]]] = {}
-    methods: list[tuple[Node, bytes, Path]] = []
+    # (owner, receiver_name), extracted eagerly for the same reason as in `_go_grpc_handlers`:
+    # a `Node` is a view into its `Tree`'s memory, and `tree` below gets reassigned every file,
+    # so a raw `Node` can't be deferred past this loop once a later file has been parsed.
+    methods: list[tuple[str, str]] = []
     for path in files:
         if path.suffix != ".go":
             continue
@@ -1255,7 +1259,16 @@ def _go_grpc_client_bindings(files: list[Path], root: Path) -> list[GrpcClientBi
             elif node.type == "composite_literal":
                 _go_grpc_client_initializers(node, source, path, root, initializers)
             elif node.type == "method_declaration":
-                methods.append((node, source, path))
+                receiver = node.child_by_field_name("receiver")
+                if receiver is None:
+                    continue
+                receiver_match = re.fullmatch(
+                    r"\s*\(\s*(?P<name>[A-Za-z_]\w*)\s+\*?(?P<type>[A-Za-z_]\w*)\s*\)\s*",
+                    _text(receiver, source),
+                )
+                if receiver_match is None:
+                    continue
+                methods.append((receiver_match.group("type"), receiver_match.group("name")))
     clients: dict[str, list[tuple[str, str, Evidence]]] = {}
     for key, typed_candidates in fields.items():
         initialized_candidates = initializers.get(key, [])
@@ -1267,18 +1280,7 @@ def _go_grpc_client_bindings(files: list[Path], root: Path) -> list[GrpcClientBi
             owner, member = key
             clients.setdefault(owner, []).append((member, service, evidence))
     bindings: list[GrpcClientBinding] = []
-    for method, source, _path in methods:
-        receiver = method.child_by_field_name("receiver")
-        if receiver is None:
-            continue
-        receiver_match = re.fullmatch(
-            r"\s*\(\s*(?P<name>[A-Za-z_]\w*)\s+\*?(?P<type>[A-Za-z_]\w*)\s*\)\s*",
-            _text(receiver, source),
-        )
-        if receiver_match is None:
-            continue
-        owner = receiver_match.group("type")
-        receiver_name = receiver_match.group("name")
+    for owner, receiver_name in methods:
         for member, service, evidence in clients.get(owner, []):
             bindings.append(GrpcClientBinding(owner, f"{receiver_name}.{member}", service, evidence))
     return bindings

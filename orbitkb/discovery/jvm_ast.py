@@ -11,7 +11,7 @@ from pathlib import Path
 
 import tree_sitter_java
 import tree_sitter_kotlin
-from tree_sitter import Language, Node, Parser
+from tree_sitter import Language, Node, Parser, Tree
 
 from orbitkb.analysis.jvm_imports import parse_jvm_imports
 from orbitkb.discovery.base import CodeExcerpt
@@ -33,12 +33,18 @@ def _read_bytes(path: Path) -> bytes | None:
         return None
 
 
-def _parse(path: Path) -> tuple[Node, bytes] | None:
+def _parse(path: Path) -> tuple[Tree, Node, bytes] | None:
+    """Returns the `Tree` alongside its root `Node`: `Node`s are views into memory
+    owned by their `Tree`, so callers must keep the `Tree` referenced for as long as
+    they walk nodes derived from it, or tree-sitter frees the backing memory out from
+    under them (SIGSEGV/SIGBUS, often only surfacing later at GC time).
+    """
     source = _read_bytes(path)
     if source is None:
         return None
     parser = _KOTLIN_PARSER if path.suffix == ".kt" else _JAVA_PARSER
-    return parser.parse(source).root_node, source
+    tree = parser.parse(source)
+    return tree, tree.root_node, source
 
 
 def _text(node: Node, source: bytes) -> str:
@@ -78,19 +84,19 @@ def _excerpt_from_node(node: Node, path: Path, folder: Path, source: bytes) -> C
     )
 
 
-def _find_in_package(folder: Path, package: str, name: str, exclude: Path) -> tuple[Node, Path, bytes] | None:
+def _find_in_package(folder: Path, package: str, name: str, exclude: Path) -> tuple[Tree, Node, Path, bytes] | None:
     for candidate in iter_files(folder, EXTENSIONS):
         if candidate == exclude:
             continue
         parsed = _parse(candidate)
         if parsed is None:
             continue
-        candidate_root, candidate_source = parsed
+        candidate_tree, candidate_root, candidate_source = parsed
         if _package_of(candidate_root, candidate_source) != package:
             continue
         node = _find_function(candidate_root, candidate_source, name)
         if node is not None:
-            return node, candidate, candidate_source
+            return candidate_tree, node, candidate, candidate_source
     return None
 
 
@@ -110,7 +116,8 @@ def resolve_kotlin_java_calls(
     parsed = _parse(path)
     if parsed is None:
         return []
-    root, source = parsed
+    # `_tree` is unread but must stay bound: `root` is a view into its memory (see `_parse`).
+    _tree, root, source = parsed
     excerpts: list[CodeExcerpt] = []
     seen: set[str] = set()
     range_start, range_end = exclude_line_range
@@ -140,7 +147,7 @@ def resolve_kotlin_java_calls(
         found = _find_in_package(folder, fqn.rsplit(".", 1)[0], name, exclude=path)
         if found is None:
             continue
-        found_node, found_path, found_source = found
+        _found_tree, found_node, found_path, found_source = found  # kept bound, see `_tree` above
         excerpts.append(_excerpt_from_node(found_node, found_path, folder, found_source))
 
     return excerpts
