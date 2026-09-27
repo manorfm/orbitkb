@@ -302,8 +302,10 @@ orbitkb metrics
 orbitkb metrics --watch --interval 1
 ```
 
-`--watch` refreshes the terminal until `Ctrl+C`; when attached to a terminal it uses
-color in addition to explicit status text. Use `--no-color` for logs or plain output.
+`--watch` refreshes the terminal until `Ctrl+C`; it redraws only when persisted state
+changes, except while an active operation needs its duration updated. When attached to
+a terminal it uses color in addition to explicit status text. Use `--no-color` for
+logs or plain output; `--interval` must be greater than zero in watch mode.
 An in-flight MCP operation records only its tool name, process ID and start time, then
 removes that ephemeral row when it finishes; task text, arguments, code and responses
 are never recorded for monitoring.

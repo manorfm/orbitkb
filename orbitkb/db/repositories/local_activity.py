@@ -32,13 +32,13 @@ def finish(conn: sqlite3.Connection, activity_id: int) -> None:
     conn.commit()
 
 
-def list_active(conn: sqlite3.Connection) -> list[str]:
+def list_active(conn: sqlite3.Connection) -> list[dict[str, str]]:
     try:
         rows = conn.execute(
-            "SELECT operation FROM local_activity_runs ORDER BY started_at, id"
+            "SELECT operation, started_at FROM local_activity_runs ORDER BY started_at, id"
         ).fetchall()
     except sqlite3.OperationalError as exc:
         if "no such table: local_activity_runs" not in str(exc):
             raise
         return []
-    return [row["operation"] for row in rows]
+    return [{"operation": row["operation"], "started_at": row["started_at"]} for row in rows]

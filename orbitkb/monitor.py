@@ -5,7 +5,9 @@ It owns no background worker and never writes to the knowledge base.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any
 
 from orbitkb.db.repositories import local_activity
@@ -59,7 +61,9 @@ def collect_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
-def render_snapshot(snapshot: dict[str, Any], color: bool) -> str:
+def render_snapshot(
+    snapshot: dict[str, Any], color: bool, current_time: datetime | None = None,
+) -> str:
     """Render a stable, human-readable snapshot without terminal dependencies."""
     indexing = snapshot["indexing"]
     agent = snapshot["agent"]
@@ -84,7 +88,7 @@ def render_snapshot(snapshot: dict[str, Any], color: bool) -> str:
         f"  tokens: {indexing['input_tokens']} in / {indexing['output_tokens']} out",
         f"  indexed cost: ${indexing['cost_usd']:.4f}",
         "Agent activity",
-        f"  running now: {', '.join(agent['active_operations']) or 'none'}",
+        f"  running now: {_active_operations(agent['active_operations'], current_time) or 'none'}",
         f"  context briefings: {agent['context_runs']}",
         f"  context tokens: {agent['context_tokens']}",
         f"  truncated briefings: {agent['truncated_contexts']}",
@@ -99,3 +103,35 @@ def _paint(text: str, code: str, enabled: bool) -> str:
 
 def _plan_statuses(statuses: dict[str, int]) -> str:
     return ", ".join(f"{status}={count}" for status, count in statuses.items()) or "none"
+
+
+def snapshot_state_key(snapshot: dict[str, Any]) -> str:
+    """Return a stable key for state changes, excluding render-only elapsed time."""
+    return json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+
+
+def should_render_snapshot(snapshot: dict[str, Any], previous_state: str | None) -> bool:
+    """Refresh on a state transition, or once per interval while duration advances."""
+    return previous_state != snapshot_state_key(snapshot) or bool(snapshot["agent"]["active_operations"])
+
+
+def _active_operations(operations: list[dict[str, str]], current_time: datetime | None) -> str:
+    now = current_time or datetime.now(timezone.utc)
+    return ", ".join(
+        f"{operation['operation']} ({_elapsed(operation['started_at'], now)})"
+        for operation in operations
+    )
+
+
+def _elapsed(started_at: str, current_time: datetime) -> str:
+    try:
+        elapsed_seconds = max(0, int((current_time - datetime.fromisoformat(started_at)).total_seconds()))
+    except (TypeError, ValueError):
+        return "unknown duration"
+    minutes, seconds = divmod(elapsed_seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m {seconds}s"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"

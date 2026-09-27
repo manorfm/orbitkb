@@ -29,7 +29,12 @@ from orbitkb.generation.embeddings import try_create_default_backend
 from orbitkb.generation.orchestrator import DiscoveryError, index_path, index_service
 from orbitkb.generation.verification import verify_change_surface
 from orbitkb.mcp import queries as mcp_queries
-from orbitkb.monitor import collect_snapshot, render_snapshot
+from orbitkb.monitor import (
+    collect_snapshot,
+    render_snapshot,
+    should_render_snapshot,
+    snapshot_state_key,
+)
 from orbitkb.setup.actions import SetupAction
 
 
@@ -442,6 +447,9 @@ def _cmd_context_metrics(args: argparse.Namespace) -> int:
 
 def _cmd_metrics(args: argparse.Namespace) -> int:
     """Display local, redacted operational metrics without writing to SQLite."""
+    if args.watch and args.interval <= 0:
+        print("error: --interval must be greater than zero in --watch mode", file=sys.stderr)
+        return 1
     try:
         conn = open_readonly_db(args.db)
     except sqlite3.Error as exc:
@@ -449,11 +457,14 @@ def _cmd_metrics(args: argparse.Namespace) -> int:
         return 1
     try:
         color = not args.no_color and sys.stdout.isatty()
+        previous_state = None
         while True:
             snapshot = collect_snapshot(conn)
-            if args.watch and sys.stdout.isatty():
-                print("\033[2J\033[H", end="")
-            print(render_snapshot(snapshot, color=color))
+            if should_render_snapshot(snapshot, previous_state):
+                if args.watch and sys.stdout.isatty():
+                    print("\033[2J\033[H", end="")
+                print(render_snapshot(snapshot, color=color))
+                previous_state = snapshot_state_key(snapshot)
             if not args.watch:
                 return 0
             time.sleep(args.interval)
