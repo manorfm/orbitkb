@@ -6,6 +6,7 @@ from orbitkb import cli
 from orbitkb.cli_progress import LocalIndexProgressReporter
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import (
+    change_closure_summaries,
     change_plans,
     ci_validation_results,
     context_telemetry,
@@ -155,6 +156,41 @@ def test_local_monitor_summarizes_manual_and_reported_ci_validation(tmp_path):
     assert "CI reported: passed=0 failed=1" in rendered
 
 
+def test_local_monitor_summarizes_latest_plan_closure_quality(tmp_path):
+    conn = open_db(tmp_path / "monitor.db")
+    plan_id = change_plans.record_plan(conn, None, "ready", 2200, [], [])
+    repository_id = repositories.ensure_repository(conn, "commerce", "/workspace/commerce")
+    change_closure_summaries.record_summary(conn, plan_id, repository_id, {
+        "status": "needs_attention",
+        "coverage": {
+            "planned_units": 4,
+            "covered_units": 2,
+            "omitted_units": 1,
+            "unassessable_units": 1,
+        },
+        "risks": {
+            "files_outside_planned_surface": 1,
+            "public_error_contracts_at_risk": 2,
+            "public_error_contract_breaks": 1,
+        },
+    })
+
+    snapshot = collect_snapshot(conn)
+
+    assert snapshot["plan_quality"] == {
+        "closures": {"needs_attention": 1, "needs_review": 0, "ready_for_manual_review": 0},
+        "coverage": {"planned_units": 4, "covered_units": 2, "omitted_units": 1, "unassessable_units": 1},
+        "risks": {
+            "files_outside_planned_surface": 1,
+            "public_error_contracts_at_risk": 2,
+            "public_error_contract_breaks": 1,
+        },
+    }
+    rendered = render_snapshot(snapshot, color=False)
+    assert "coverage: 2/4 covered, 1 omitted, 1 unassessable" in rendered
+    assert "contracts: 2 at risk, 1 break" in rendered
+
+
 def test_local_monitor_reports_only_an_in_flight_agent_operation(tmp_path):
     db_path = tmp_path / "monitor.db"
     conn = open_db(db_path)
@@ -188,6 +224,18 @@ def test_local_monitor_treats_missing_ephemeral_activity_table_as_idle(tmp_path)
     conn.commit()
 
     assert collect_snapshot(conn)["agent"]["active_operations"] == []
+
+
+def test_local_monitor_treats_missing_closure_summary_table_as_no_reviews(tmp_path):
+    conn = open_db(tmp_path / "legacy-monitor.db")
+    conn.execute("DROP TABLE change_plan_closure_summaries")
+    conn.commit()
+
+    assert collect_snapshot(conn)["plan_quality"]["closures"] == {
+        "needs_attention": 0,
+        "needs_review": 0,
+        "ready_for_manual_review": 0,
+    }
 
 
 def test_local_monitor_hides_activity_left_by_a_terminated_process(tmp_path, monkeypatch):

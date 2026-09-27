@@ -638,6 +638,28 @@ CREATE TABLE IF NOT EXISTS change_plan_manual_validation_results (
 CREATE INDEX IF NOT EXISTS idx_change_plan_manual_validation_results_plan
     ON change_plan_manual_validation_results(plan_id, change_unit_id);
 
+-- Latest-only numeric outcome from an explicit review_change_closure call.
+-- Source paths, Git revisions, unit IDs and diff text never enter this table.
+CREATE TABLE IF NOT EXISTS change_plan_closure_summaries (
+    id                              INTEGER PRIMARY KEY,
+    plan_id                         INTEGER NOT NULL REFERENCES change_plan_runs(id) ON DELETE CASCADE,
+    repository_id                   INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    status                          TEXT NOT NULL CHECK (status IN (
+        'needs_attention', 'needs_review', 'ready_for_manual_review'
+    )),
+    planned_units                   INTEGER NOT NULL CHECK (planned_units >= 0),
+    covered_units                   INTEGER NOT NULL CHECK (covered_units >= 0),
+    omitted_units                   INTEGER NOT NULL CHECK (omitted_units >= 0),
+    unassessable_units              INTEGER NOT NULL CHECK (unassessable_units >= 0),
+    files_outside_planned_surface   INTEGER NOT NULL CHECK (files_outside_planned_surface >= 0),
+    public_error_contracts_at_risk  INTEGER NOT NULL CHECK (public_error_contracts_at_risk >= 0),
+    public_error_contract_breaks    INTEGER NOT NULL CHECK (public_error_contract_breaks >= 0),
+    recorded_at                     TEXT NOT NULL,
+    UNIQUE(plan_id, repository_id)
+);
+CREATE INDEX IF NOT EXISTS idx_change_plan_closure_summaries_repository
+    ON change_plan_closure_summaries(repository_id, recorded_at);
+
 -- Ephemeral local monitor state. Rows exist only while a bounded MCP operation
 -- is executing; task text, arguments, source and results are never persisted.
 CREATE TABLE IF NOT EXISTS local_activity_runs (

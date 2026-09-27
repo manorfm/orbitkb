@@ -15,6 +15,7 @@ from orbitkb.analysis.engine import StaticAnalysisEngine
 from orbitkb.analysis.smells import find_entrypoint_smells
 from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import architecture as architecture_repo
+from orbitkb.db.repositories import change_closure_summaries as closure_summaries_repo
 from orbitkb.db.repositories import change_plans as change_plans_repo
 from orbitkb.db.repositories import change_surface as change_surface_repo
 from orbitkb.db.repositories import ci_commands as ci_commands_repo
@@ -2560,6 +2561,10 @@ def review_change_closure(conn: sqlite3.Connection, plan_id: str, repository: st
         assessment, ci_validation, manual_validation, manual_outstanding, ci_outstanding,
         MAX_CLOSURE_CHANGE_UNIT_IDS,
     )
+    repo = repositories_repo.get_repository_by_name(conn, repository)
+    if repo is None:
+        return {"error": f"unknown repository: {repository}"}
+    closure_summaries_repo.record_summary(conn, int(plan_id.removeprefix("cp_")), repo["id"], closure)
     return {
         "plan_id": plan_id,
         "repository": repository,

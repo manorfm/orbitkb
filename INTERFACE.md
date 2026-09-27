@@ -454,8 +454,11 @@ manually failed unit IDs, alongside omitted and unassessable units.
 It also returns up to three pending or failed indexed CI references (workflow path,
 line and kind), never command output or execution logs.
 The result also lists changed files outside services named by the plan and every
-remaining validation obligation. It is an advisory, read-only check, never an
-implementation gate.
+remaining validation obligation. After a successful review, OrbitKB retains only the
+latest numeric closure summary for that plan and repository (status, coverage and
+risk counters) for the local metrics monitor; it never retains the revision, file
+paths, diff, source content or change-unit identifiers from the assessment. The
+assessment remains advisory and is never an implementation gate.
 
 ## Compact change context
 

@@ -65,6 +65,7 @@ def collect_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
             "total_units": progress["total_units"],
         })
     validation = _validation_summary(conn)
+    plan_quality = _plan_quality_summary(conn)
     return {
         "indexing": {
             "active": active_indexing,
@@ -83,6 +84,7 @@ def collect_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
             "change_plans": {row["status"]: row["count"] for row in plan_rows},
         },
         "validation": validation,
+        "plan_quality": plan_quality,
     }
 
 
@@ -93,8 +95,12 @@ def render_snapshot(
     indexing = snapshot["indexing"]
     agent = snapshot["agent"]
     validation = snapshot["validation"]
+    plan_quality = snapshot["plan_quality"]
     manual = validation["manual"]
     ci_reported = validation["ci_reported"]
+    closure_counts = plan_quality["closures"]
+    coverage = plan_quality["coverage"]
+    risks = plan_quality["risks"]
     lines = [
         _paint("OrbitKB local monitor", "36", color),
         "─" * 40,
@@ -130,6 +136,21 @@ def render_snapshot(
             _paint(f"passed={ci_reported['passed']}", "32", color),
             _paint(f"failed={ci_reported['failed']}", "31", color),
         ]),
+        "Plan quality",
+        "  closures: " + " ".join([
+            _paint(f"attention={closure_counts['needs_attention']}", "31", color),
+            _paint(f"review={closure_counts['needs_review']}", "33", color),
+            _paint(f"ready={closure_counts['ready_for_manual_review']}", "32", color),
+        ]),
+        (
+            f"  coverage: {coverage['covered_units']}/{coverage['planned_units']} covered, "
+            f"{coverage['omitted_units']} omitted, {coverage['unassessable_units']} unassessable"
+        ),
+        (
+            f"  contracts: {risks['public_error_contracts_at_risk']} at risk, "
+            f"{risks['public_error_contract_breaks']} break"
+        ),
+        f"  outside planned surface: {risks['files_outside_planned_surface']}",
     ])
     return "\n".join(lines)
 
@@ -198,6 +219,67 @@ def _validation_summary(conn: sqlite3.Connection) -> dict[str, dict[str, int]]:
             "total": sum(ci_counts.values()),
             "passed": ci_counts.get("passed", 0),
             "failed": ci_counts.get("failed", 0),
+        },
+    }
+
+
+def _plan_quality_summary(conn: sqlite3.Connection) -> dict[str, dict[str, int]]:
+    try:
+        rows = conn.execute(
+            "SELECT status, COUNT(*) AS count FROM change_plan_closure_summaries GROUP BY status"
+        ).fetchall()
+        totals = conn.execute(
+            """SELECT COALESCE(SUM(planned_units), 0) AS planned_units,
+                      COALESCE(SUM(covered_units), 0) AS covered_units,
+                      COALESCE(SUM(omitted_units), 0) AS omitted_units,
+                      COALESCE(SUM(unassessable_units), 0) AS unassessable_units,
+                      COALESCE(SUM(files_outside_planned_surface), 0) AS files_outside_planned_surface,
+                      COALESCE(SUM(public_error_contracts_at_risk), 0) AS public_error_contracts_at_risk,
+                      COALESCE(SUM(public_error_contract_breaks), 0) AS public_error_contract_breaks
+               FROM change_plan_closure_summaries"""
+        ).fetchone()
+    except sqlite3.OperationalError as exc:
+        if "no such table: change_plan_closure_summaries" not in str(exc):
+            raise
+        return _empty_plan_quality()
+    closures = {row["status"]: row["count"] for row in rows}
+    return {
+        "closures": {
+            status: closures.get(status, 0)
+            for status in ("needs_attention", "needs_review", "ready_for_manual_review")
+        },
+        "coverage": {
+            key: totals[key]
+            for key in ("planned_units", "covered_units", "omitted_units", "unassessable_units")
+        },
+        "risks": {
+            key: totals[key]
+            for key in (
+                "files_outside_planned_surface",
+                "public_error_contracts_at_risk",
+                "public_error_contract_breaks",
+            )
+        },
+    }
+
+
+def _empty_plan_quality() -> dict[str, dict[str, int]]:
+    return {
+        "closures": {
+            "needs_attention": 0,
+            "needs_review": 0,
+            "ready_for_manual_review": 0,
+        },
+        "coverage": {
+            "planned_units": 0,
+            "covered_units": 0,
+            "omitted_units": 0,
+            "unassessable_units": 0,
+        },
+        "risks": {
+            "files_outside_planned_surface": 0,
+            "public_error_contracts_at_risk": 0,
+            "public_error_contract_breaks": 0,
         },
     }
 

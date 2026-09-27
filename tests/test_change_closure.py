@@ -1,5 +1,6 @@
 from jsonschema import validate
 
+from orbitkb.db.repositories import change_closure_summaries as closure_summaries_repo
 from orbitkb.db.repositories import ci_commands as ci_commands_repo
 from orbitkb.db.repositories import repositories as repositories_repo
 from orbitkb.generation.llm_harness import load_schema
@@ -49,6 +50,16 @@ def test_review_change_closure_reports_ready_only_for_covered_plan_with_reported
         },
     }
     validate(result, load_schema("change_closure"))
+    assert closure_summaries_repo.get_summary(conn, int(plan["plan_id"].removeprefix("cp_")), repository_id) == {
+        "status": "ready_for_manual_review",
+        "planned_units": 1,
+        "covered_units": 1,
+        "omitted_units": 0,
+        "unassessable_units": 0,
+        "files_outside_planned_surface": 0,
+        "public_error_contracts_at_risk": 0,
+        "public_error_contract_breaks": 0,
+    }
 
 
 def test_review_change_closure_keeps_an_omitted_change_unit_as_needing_attention(tmp_path):

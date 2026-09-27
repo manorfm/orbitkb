@@ -314,6 +314,12 @@ The monitor also summarizes manual checks on ready plans as passed, pending or f
 CI shows only agent-reported passed/failed results: it intentionally does not label a
 workflow command as pending globally because a current indexed command cannot be
 proven to belong to every plan.
+
+After an explicit `review_change_closure`, the monitor also presents the latest
+aggregate plan-quality result for that plan/repository: coverage counts, units omitted
+or unassessable, files outside the planned surface, and public error-contract risks or
+breaks. It retains only those counters and the advisory status, never a Git revision,
+file path, diff, or change-unit ID.
 An in-flight MCP operation records only its tool name, process ID and start time, then
 removes that ephemeral row when it finishes; task text, arguments, code and responses
 are never recorded for monitoring. If a local MCP process exits abruptly, the monitor
