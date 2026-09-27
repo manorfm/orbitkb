@@ -24,12 +24,14 @@ _ALLOWED_CASE_FIELDS = frozenset(
         "changed_unit_refs",
         "contract_refs",
         "migration_refs",
+        "predicted_unit_refs",
         "test_refs",
         "decision_kinds",
         "size",
         "criticality",
     }
 )
+_REQUIRED_CASE_FIELDS = _ALLOWED_CASE_FIELDS - {"predicted_unit_refs"}
 _FORBIDDEN_TEXT_FIELDS = frozenset(
     {
         "code",
@@ -73,6 +75,7 @@ class RealCorpusCase:
     decision_kinds: tuple[str, ...]
     size: str
     criticality: str
+    predicted_unit_refs: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -101,6 +104,23 @@ class RealCorpus:
         }
 
 
+@dataclass(frozen=True)
+class RealCorpusEvaluation:
+    """Aggregate prediction quality while retaining only opaque corpus references."""
+
+    cases: tuple[RealCorpusCase, ...]
+    quality_by_stack: dict[str, dict[str, int | float | None]]
+
+    def as_dict(self) -> dict[str, int | dict[str, dict[str, int | float | None]]]:
+        evaluated_cases = sum(case.predicted_unit_refs is not None for case in self.cases)
+        return {
+            "cases": len(self.cases),
+            "evaluated_cases": evaluated_cases,
+            "pending_cases": len(self.cases) - evaluated_cases,
+            "quality_by_stack": self.quality_by_stack,
+        }
+
+
 def load_real_corpus(path: Path) -> RealCorpus:
     """Validate and load a local JSON manifest without accepting raw change data."""
     try:
@@ -124,11 +144,29 @@ def load_real_corpus(path: Path) -> RealCorpus:
     return RealCorpus(cases)
 
 
+def evaluate_real_corpus(corpus: RealCorpus) -> RealCorpusEvaluation:
+    """Measure predicted versus changed unit references for each stack.
+
+    A case without ``predicted_unit_refs`` is intentionally reported as pending:
+    treating it as an empty prediction would distort precision and recall.
+    """
+    cases_by_stack: dict[str, list[RealCorpusCase]] = {}
+    for case in corpus.cases:
+        cases_by_stack.setdefault(case.stack, []).append(case)
+    return RealCorpusEvaluation(
+        cases=corpus.cases,
+        quality_by_stack={
+            stack: _evaluate_stack(cases)
+            for stack, cases in sorted(cases_by_stack.items())
+        },
+    )
+
+
 def _parse_case(raw_case: object, index: int) -> RealCorpusCase:
     if not isinstance(raw_case, Mapping):
         raise CorpusValidationError(f"cases[{index}] must be an object")
     _reject_forbidden_fields(raw_case)
-    _require_exact_keys(raw_case, _ALLOWED_CASE_FIELDS, f"cases[{index}]")
+    _require_allowed_keys(raw_case, _REQUIRED_CASE_FIELDS, _ALLOWED_CASE_FIELDS, f"cases[{index}]")
     case_id = _require_reference(raw_case["id"], f"cases[{index}].id")
     stack = _require_choice(raw_case["stack"], SUPPORTED_STACKS, f"cases[{index}].stack")
     task_digest = _require_digest(raw_case["task_digest"], f"cases[{index}].task_digest")
@@ -145,6 +183,11 @@ def _parse_case(raw_case: object, index: int) -> RealCorpusCase:
         decision_kinds=_require_references(raw_case["decision_kinds"], f"cases[{index}].decision_kinds"),
         size=_require_choice(raw_case["size"], _SIZES, f"cases[{index}].size"),
         criticality=_require_choice(raw_case["criticality"], _CRITICALITIES, f"cases[{index}].criticality"),
+        predicted_unit_refs=(
+            _require_references(raw_case["predicted_unit_refs"], f"cases[{index}].predicted_unit_refs")
+            if "predicted_unit_refs" in raw_case
+            else None
+        ),
     )
 
 
@@ -163,6 +206,18 @@ def _require_exact_keys(value: Mapping[str, Any], expected: set[str] | frozenset
     actual = set(value)
     missing = expected - actual
     unexpected = actual - expected
+    if missing:
+        raise CorpusValidationError(f"{location} is missing fields: {', '.join(sorted(missing))}")
+    if unexpected:
+        raise CorpusValidationError(f"{location} has unsupported fields: {', '.join(sorted(unexpected))}")
+
+
+def _require_allowed_keys(
+    value: Mapping[str, Any], required: set[str] | frozenset[str], allowed: set[str] | frozenset[str], location: str,
+) -> None:
+    actual = set(value)
+    missing = required - actual
+    unexpected = actual - allowed
     if missing:
         raise CorpusValidationError(f"{location} is missing fields: {', '.join(sorted(missing))}")
     if unexpected:
@@ -194,3 +249,26 @@ def _require_choice(value: object, choices: frozenset[str], location: str) -> st
     if not isinstance(value, str) or value not in choices:
         raise CorpusValidationError(f"{location} must be one of: {', '.join(sorted(choices))}")
     return value
+
+
+def _evaluate_stack(cases: list[RealCorpusCase]) -> dict[str, int | float | None]:
+    evaluated = [case for case in cases if case.predicted_unit_refs is not None]
+    if not evaluated:
+        return {"cases": len(cases), "evaluated_cases": 0, "precision": None, "recall": None}
+    expected = {(case.id, reference) for case in evaluated for reference in case.changed_unit_refs}
+    predicted = {
+        (case.id, reference)
+        for case in evaluated
+        for reference in case.predicted_unit_refs or ()
+    }
+    true_positives = len(expected & predicted)
+    return {
+        "cases": len(cases),
+        "evaluated_cases": len(evaluated),
+        "precision": _ratio(true_positives, len(predicted)),
+        "recall": _ratio(true_positives, len(expected)),
+    }
+
+
+def _ratio(numerator: int, denominator: int) -> float:
+    return 1.0 if denominator == 0 else numerator / denominator

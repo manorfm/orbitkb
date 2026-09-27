@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from benchmark.real_corpus import CorpusValidationError, load_real_corpus
+from benchmark.real_corpus import (
+    CorpusValidationError,
+    evaluate_real_corpus,
+    load_real_corpus,
+)
 
 
 def _write_manifest(path: Path, cases: list[dict[str, object]]) -> Path:
@@ -67,3 +71,45 @@ def test_load_real_corpus_rejects_non_opaque_artifact_references(tmp_path: Path)
 
     with pytest.raises(CorpusValidationError, match="changed_unit_refs"):
         load_real_corpus(manifest)
+
+
+def test_real_corpus_evaluation_reports_precision_and_recall_by_stack(tmp_path: Path):
+    manifest = _write_manifest(
+        tmp_path / "corpus.json",
+        [
+            _valid_case(predicted_unit_refs=["unit-001", "unit-extra"]),
+            _valid_case(
+                id="ledger-reconcile-001",
+                stack="go",
+                changed_unit_refs=["unit-003"],
+                predicted_unit_refs=["unit-003"],
+            ),
+        ],
+    )
+
+    report = evaluate_real_corpus(load_real_corpus(manifest))
+
+    assert report.as_dict() == {
+        "cases": 2,
+        "evaluated_cases": 2,
+        "pending_cases": 0,
+        "quality_by_stack": {
+            "go": {"cases": 1, "evaluated_cases": 1, "precision": 1.0, "recall": 1.0},
+            "node-ts": {"cases": 1, "evaluated_cases": 1, "precision": 0.5, "recall": 0.5},
+        },
+    }
+
+
+def test_real_corpus_evaluation_marks_cases_without_predictions_as_pending(tmp_path: Path):
+    manifest = _write_manifest(tmp_path / "corpus.json", [_valid_case()])
+
+    report = evaluate_real_corpus(load_real_corpus(manifest))
+
+    assert report.as_dict() == {
+        "cases": 1,
+        "evaluated_cases": 0,
+        "pending_cases": 1,
+        "quality_by_stack": {
+            "node-ts": {"cases": 1, "evaluated_cases": 0, "precision": None, "recall": None},
+        },
+    }

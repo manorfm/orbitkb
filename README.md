@@ -409,6 +409,7 @@ Useful focused checks:
 make evaluate-static
 make evaluate-change-surface
 make validate-real-corpus CORPUS=/secure/path/real-change-corpus.json
+make evaluate-real-corpus CORPUS=/secure/path/real-change-corpus.json
 make benchmark-scale
 make integration-containers
 make readiness-audit
@@ -439,13 +440,18 @@ Each case has schema version `1` and only the following structured metadata:
 
 | Field | Purpose |
 | --- | --- |
-| `id`, `changed_unit_refs`, `contract_refs`, `migration_refs`, `test_refs` | Opaque lowercase references; maintain any mapping to real paths or symbols outside the manifest. |
+| `id`, `changed_unit_refs`, `predicted_unit_refs`, `contract_refs`, `migration_refs`, `test_refs` | Opaque lowercase references; maintain any mapping to real paths or symbols outside the manifest. |
 | `task_digest`, `kb_snapshot_digest` | SHA-256 digests that correlate a redacted request and KB snapshot without retaining either. |
 | `stack`, `size`, `criticality`, `decision_kinds` | Controlled categories for coverage and quality analysis. |
 
 The validator rejects task text, prompts, descriptions, diffs, source, file paths,
 symbols and decision text. This keeps the corpus suitable for measuring coverage by
 stack while preserving the privacy boundary required for real changes.
+
+When a reviewed case includes `predicted_unit_refs`, `make evaluate-real-corpus`
+reports precision and recall per stack against its `changed_unit_refs`. Cases without
+that field remain explicitly pending; they are never counted as empty predictions or
+quietly treated as successful evidence.
 
 Incremental indexing skips unchanged LLM-derived units by file hash. Static analysis
 also stores a versioned digest of every local artifact it reads (stack source files,

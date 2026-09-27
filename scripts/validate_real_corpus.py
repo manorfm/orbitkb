@@ -14,18 +14,28 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from benchmark.real_corpus import CorpusValidationError, load_real_corpus
+from benchmark.real_corpus import (
+    CorpusValidationError,
+    evaluate_real_corpus,
+    load_real_corpus,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate a redacted real-change corpus manifest.")
     parser.add_argument("--corpus", type=Path, required=True, help="Path to the local JSON corpus manifest")
+    parser.add_argument(
+        "--evaluate",
+        action="store_true",
+        help="Measure predicted versus changed unit references by stack",
+    )
     args = parser.parse_args(argv)
     try:
         corpus = load_real_corpus(args.corpus)
     except CorpusValidationError as error:
         parser.error(str(error))
-    print(json.dumps(corpus.as_dict(), sort_keys=True))
+    report = evaluate_real_corpus(corpus) if args.evaluate else corpus
+    print(json.dumps(report.as_dict(), sort_keys=True))
     return 0
 
 
