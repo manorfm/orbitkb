@@ -12,6 +12,13 @@ SKIP_DIRS = {
     "node_modules", ".venv", "venv", "env", "dist", "build", ".git", "target",
     "__pycache__", ".idea", ".gradle", "vendor", "bin", "obj", ".mypy_cache",
     ".pytest_cache", "coverage", ".next", ".turbo",
+    # Test code: never a real HTTP entrypoint or production persistence call (a
+    # mocked `repo.save()` is evidence of test isolation, not a real operation),
+    # and a real source of static-analysis crashes this project's own fixtures
+    # never exercised (backtick-named Kotlin test functions, long MockMvc
+    # assertion chains). "test"/"tests" is the Maven/Gradle/Python/Node
+    # convention; "__tests__" is Jest's.
+    "test", "tests", "__tests__",
 }
 
 MAX_FILE_BYTES = 300_000  # skip generated/huge files

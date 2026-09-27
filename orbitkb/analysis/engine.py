@@ -73,6 +73,23 @@ STATIC_ANALYSIS_INPUT_VERSION = "31"
 # function named by the last flushed DEBUG line are what actually pinpoint it.
 logger = logging.getLogger(__name__)
 
+# Sibling-file test conventions SKIP_DIRS can't catch (Go/Node/Python test files
+# live next to their source, not under a dedicated directory) -- same rationale
+# as SKIP_DIRS's own "test"/"tests"/"__tests__" entries: test code isn't
+# production behavior.
+_TEST_FILE_SUFFIXES = (
+    "_test.go",  # Go
+    ".test.ts", ".test.tsx", ".test.js", ".test.jsx",
+    ".spec.ts", ".spec.tsx", ".spec.js", ".spec.jsx",  # Node/TS (Jest/Jasmine/Mocha)
+)
+
+
+def _is_test_file(path: Path) -> bool:
+    name = path.name
+    if name.endswith(_TEST_FILE_SUFFIXES):
+        return True
+    return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py"))
+
 
 def _walk(node: Node):
     yield node
@@ -3528,6 +3545,7 @@ class StaticAnalysisEngine:
             for pattern in patterns
             for path in root.rglob(pattern)
             if not any(part in SKIP_DIRS for part in path.relative_to(root).parts)
+            and not _is_test_file(path)
         })
 
 
