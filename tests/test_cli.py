@@ -3,6 +3,7 @@ resolution so `index`/`update` never shell out to a real `claude`/`codex` CLI.
 """
 import argparse
 import faulthandler
+import gc
 import logging
 from pathlib import Path
 
@@ -546,3 +547,24 @@ def test_main_enables_faulthandler_for_native_crash_diagnostics(tmp_path: Path):
     cli.main(["list", "--db", str(db_path)])
 
     assert faulthandler.is_enabled()
+
+
+def test_main_disables_cyclic_gc_around_the_command_and_restores_it_after(tmp_path: Path, monkeypatch):
+    """A real SIGBUS was found happening *inside* the cyclic garbage collector's own
+    traversal (gc_collect_main -> subtype_traverse) of a long-lived, cached tree-sitter
+    `Tree` -- triggered automatically by the interpreter's allocation-count threshold,
+    not by any use-after-free on our end. `Tree`/`Node` objects hold no reference
+    cycles, so the cyclic collector buys nothing walking them; disabling it for the
+    command's duration sidesteps that call path entirely. Regular refcounting
+    (tp_dealloc, not gc_collect_main) still frees every object normally the instant its
+    refcount hits zero, so nothing leaks.
+    """
+    db_path = tmp_path / "test.db"
+    open_db(db_path)
+    calls = []
+    monkeypatch.setattr(gc, "disable", lambda: calls.append("disable"))
+    monkeypatch.setattr(gc, "enable", lambda: calls.append("enable"))
+
+    cli.main(["list", "--db", str(db_path)])
+
+    assert calls == ["disable", "enable"]

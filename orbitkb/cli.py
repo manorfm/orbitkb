@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import faulthandler
+import gc
 import json
 import logging
 import math
@@ -996,11 +997,23 @@ def main(argv: list[str] | None = None) -> int:
         print(_render_top_level_help(sub))
         return 0
     args = parser.parse_args(argv)
+    # A real SIGBUS was found happening *inside* the cyclic collector's own traversal
+    # (gc_collect_main -> subtype_traverse) of a long-lived, cached tree-sitter `Tree`,
+    # triggered automatically by the interpreter's allocation-count threshold -- not by
+    # any use-after-free on our end (that class of bug was fixed separately; this one
+    # crashed a `Tree` still alive and referenced). `Tree`/`Node` objects hold no
+    # reference cycles, so the cyclic collector buys nothing walking them; disabling it
+    # for the command's duration sidesteps that call path entirely. Regular refcounting
+    # (tp_dealloc, not gc_collect_main) still frees every object normally the instant
+    # its refcount hits zero, so nothing leaks.
+    gc.disable()
     try:
         return args.func(args)
     except KeyboardInterrupt:
         print("\ncancelado pelo usuário (Ctrl+C)", file=sys.stderr)
         return 130
+    finally:
+        gc.enable()
 
 
 if __name__ == "__main__":
