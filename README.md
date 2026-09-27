@@ -322,6 +322,8 @@ breaks. It retains only those counters and the advisory status, never a Git revi
 file path, diff, or change-unit ID.
 It separately counts ready plans awaiting their first closure review, so a zero-risk
 aggregate is not confused with a plan that has never been reviewed.
+It also flags closure reviews as potentially stale when the repository was indexed
+after that review; this is a prompt to reassess, not a finding that a change is wrong.
 An in-flight MCP operation records only its tool name, process ID and start time, then
 removes that ephemeral row when it finishes; task text, arguments, code and responses
 are never recorded for monitoring. If a local MCP process exits abruptly, the monitor

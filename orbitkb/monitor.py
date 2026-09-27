@@ -140,6 +140,10 @@ def render_snapshot(
         "  " + _paint(
             f"awaiting closure review: {plan_quality['unreviewed_ready_plans']}", "33", color,
         ),
+        "  " + _paint(
+            f"potentially stale closure reviews: {plan_quality['potentially_stale_reviews']}",
+            "33", color,
+        ),
         "  closures: " + " ".join([
             _paint(f"attention={closure_counts['needs_attention']}", "31", color),
             _paint(f"review={closure_counts['needs_review']}", "33", color),
@@ -254,6 +258,12 @@ def _plan_quality_summary(conn: sqlite3.Connection) -> dict[str, Any]:
                      WHERE summary.plan_id = plan.id
                  )"""
         ).fetchone()["count"]
+        potentially_stale_reviews = conn.execute(
+            """SELECT COUNT(*) AS count
+               FROM change_plan_closure_summaries AS summary
+               JOIN repositories AS repository ON repository.id = summary.repository_id
+               WHERE summary.recorded_at < repository.updated_at"""
+        ).fetchone()["count"]
     except sqlite3.OperationalError as exc:
         if "no such table: change_plan_closure_summaries" not in str(exc):
             raise
@@ -261,6 +271,7 @@ def _plan_quality_summary(conn: sqlite3.Connection) -> dict[str, Any]:
     closures = {row["status"]: row["count"] for row in rows}
     return {
         "unreviewed_ready_plans": unreviewed_ready_plans,
+        "potentially_stale_reviews": potentially_stale_reviews,
         "closures": {
             status: closures.get(status, 0)
             for status in ("needs_attention", "needs_review", "ready_for_manual_review")
@@ -283,6 +294,7 @@ def _plan_quality_summary(conn: sqlite3.Connection) -> dict[str, Any]:
 def _empty_plan_quality(unreviewed_ready_plans: int = 0) -> dict[str, Any]:
     return {
         "unreviewed_ready_plans": unreviewed_ready_plans,
+        "potentially_stale_reviews": 0,
         "closures": {
             "needs_attention": 0,
             "needs_review": 0,
