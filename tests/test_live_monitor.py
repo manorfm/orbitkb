@@ -178,6 +178,7 @@ def test_local_monitor_summarizes_latest_plan_closure_quality(tmp_path):
     snapshot = collect_snapshot(conn)
 
     assert snapshot["plan_quality"] == {
+        "unreviewed_ready_plans": 0,
         "closures": {"needs_attention": 1, "needs_review": 0, "ready_for_manual_review": 0},
         "coverage": {"planned_units": 4, "covered_units": 2, "omitted_units": 1, "unassessable_units": 1},
         "risks": {
@@ -189,6 +190,33 @@ def test_local_monitor_summarizes_latest_plan_closure_quality(tmp_path):
     rendered = render_snapshot(snapshot, color=False)
     assert "coverage: 2/4 covered, 1 omitted, 1 unassessable" in rendered
     assert "contracts: 2 at risk, 1 break" in rendered
+
+
+def test_local_monitor_separates_ready_plans_without_a_closure_review(tmp_path):
+    conn = open_db(tmp_path / "monitor.db")
+    reviewed_plan_id = change_plans.record_plan(conn, None, "ready", 2200, [], [])
+    change_plans.record_plan(conn, None, "ready", 2200, [], [])
+    change_plans.record_plan(conn, None, "needs_decision", 2200, [], [])
+    repository_id = repositories.ensure_repository(conn, "commerce", "/workspace/commerce")
+    change_closure_summaries.record_summary(conn, reviewed_plan_id, repository_id, {
+        "status": "ready_for_manual_review",
+        "coverage": {
+            "planned_units": 1,
+            "covered_units": 1,
+            "omitted_units": 0,
+            "unassessable_units": 0,
+        },
+        "risks": {
+            "files_outside_planned_surface": 0,
+            "public_error_contracts_at_risk": 0,
+            "public_error_contract_breaks": 0,
+        },
+    })
+
+    snapshot = collect_snapshot(conn)
+
+    assert snapshot["plan_quality"]["unreviewed_ready_plans"] == 1
+    assert "awaiting closure review: 1" in render_snapshot(snapshot, color=False)
 
 
 def test_local_monitor_reports_only_an_in_flight_agent_operation(tmp_path):
