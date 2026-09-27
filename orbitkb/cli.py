@@ -7,6 +7,7 @@ import math
 import os
 import sqlite3
 import sys
+import textwrap
 import time
 from pathlib import Path
 
@@ -614,11 +615,13 @@ Run `orbitkb <command> --help` for a runnable example of any single command.
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="orbitkb", epilog=_TOP_LEVEL_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+    # No `epilog=`/RawDescriptionHelpFormatter here: the top-level `-h`/`--help`/bare
+    # invocation is rendered by _render_top_level_help (main() intercepts it before
+    # parse_args ever runs), which folds _TOP_LEVEL_EPILOG in directly. Only each
+    # subcommand's own parser (below) still uses argparse's own help rendering.
+    parser = argparse.ArgumentParser(prog="orbitkb")
     parser.add_argument("--version", action="version", version=f"orbitkb {orbitkb.__version__}")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
 
     def add_backend_args(p: argparse.ArgumentParser) -> None:
         p.add_argument("--backend", choices=["claude", "codex"], default=None, help="LLM backend to shell out to headless (default: whichever CLI is on PATH)")
@@ -916,8 +919,72 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Grouping for the top-level `-h`/`--help` render only (see _render_top_level_help)
+# — purely a display concern, doesn't touch parsing/dispatch. Each subcommand's own
+# `--help` page is untouched (still argparse's default RawDescriptionHelpFormatter).
+_COMMAND_GROUPS: list[tuple[str, list[str]]] = [
+    ("Core Workflow", ["index", "update", "list", "status", "remove"]),
+    ("Docs & Backups", ["export", "backup", "restore"]),
+    (
+        "Change Impact (ask / verify)",
+        ["analyze", "context", "context-feedback", "context-query", "context-metrics", "context-verify", "verify"],
+    ),
+    ("Runtime Evidence", ["runtime-ingest", "runtime-divergence"]),
+    ("Operate", ["metrics", "setup", "serve"]),
+]
+
+_GLOBAL_OPTIONS: list[tuple[str, str]] = [
+    ("-h, --help", "Show this help message and exit."),
+    ("--version", "Show the installed version and exit."),
+]
+
+_HELP_LINE_WIDTH = 96
+
+
+def _subcommand_help_texts(sub: argparse._SubParsersAction) -> dict[str, str]:
+    """Each command's `help="..."` text (already passed to `add_parser(...)`) is
+    kept only on the subparsers action's own choice list, never on the subparser
+    itself — this is the same private attribute argparse's own default formatter
+    reads to build the "positional arguments" listing this function replaces."""
+    return {action.dest: action.help for action in sub._choices_actions}
+
+
+def _render_aligned_entries(entries: list[tuple[str, str]], column: int) -> list[str]:
+    lines = []
+    for name, text in entries:
+        wrapped = textwrap.wrap(text, width=max(_HELP_LINE_WIDTH - column, 20)) or [""]
+        lines.append(f"  {name.ljust(column - 2)}{wrapped[0]}")
+        lines.extend(" " * column + line for line in wrapped[1:])
+    return lines
+
+
+def _render_top_level_help(sub: argparse._SubParsersAction) -> str:
+    help_texts = _subcommand_help_texts(sub)
+    all_names = [name for _, names in _COMMAND_GROUPS for name in names]
+    column = max(len(name) for name in all_names) + 2 + 4  # 2-space margin + 4-space gap
+
+    lines = [
+        "usage: orbitkb [-h] [--version] <command> ...",
+        "",
+        "Global Options:",
+        *_render_aligned_entries(_GLOBAL_OPTIONS, column),
+        "",
+    ]
+    for title, names in _COMMAND_GROUPS:
+        lines.append(f"{title}:")
+        lines.extend(_render_aligned_entries([(name, help_texts[name]) for name in names], column))
+        lines.append("")
+
+    return "\n".join(lines) + "\n" + _TOP_LEVEL_EPILOG
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if not argv or argv[0] in ("-h", "--help"):
+        sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+        print(_render_top_level_help(sub))
+        return 0
     args = parser.parse_args(argv)
     try:
         return args.func(args)

@@ -352,6 +352,31 @@ def test_index_command_exposes_external_depth_budgets():
     assert (args.depth_timeout, args.depth_max_edges) == (7.0, 42)
 
 
+def test_top_level_help_groups_commands_into_labeled_sections(capsys):
+    try:
+        cli.main(["--help"])
+    except SystemExit:
+        pass
+    out = capsys.readouterr().out
+
+    for title, names in cli._COMMAND_GROUPS:
+        assert f"{title}:" in out
+        for name in names:
+            assert name in out
+
+    global_options_start = out.index("Global Options:")
+    core_workflow_start = out.index("Core Workflow:")
+    assert global_options_start < core_workflow_start
+    assert "-h, --help" in out[global_options_start:core_workflow_start]
+
+
+def test_bare_invocation_prints_grouped_help_instead_of_erroring(capsys):
+    exit_code = cli.main([])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out.startswith("usage: orbitkb")
+
+
 def test_version_flag_prints_the_installed_version(capsys):
     import orbitkb
 
