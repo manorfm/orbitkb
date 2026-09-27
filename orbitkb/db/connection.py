@@ -18,6 +18,19 @@ def open_db(db_path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
+def open_readonly_db(db_path: Path) -> sqlite3.Connection:
+    """Open an existing knowledge base without creating or migrating it.
+
+    Local monitoring must never contend with an indexer by attempting schema work
+    or writing its own state. SQLite's read-only URI mode also turns a missing
+    database into an explicit operator error instead of silently creating one.
+    """
+    conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only = ON")
+    return conn
+
+
 def _init_schema(conn: sqlite3.Connection) -> None:
     schema_sql = resources.files("orbitkb.db").joinpath("schema.sql").read_text()
     conn.executescript(schema_sql)

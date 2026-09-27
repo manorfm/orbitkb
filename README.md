@@ -266,6 +266,18 @@ a different policy.
 The default database is `~/.orbitkb/orbitkb.db`. Pass `--db <path>` to use another
 knowledge base.
 
+Use the local terminal monitor to inspect completed totals and any index run that is
+currently active. It opens the existing SQLite database in read-only mode and never
+starts a service, indexes code, or retains new data:
+
+```bash
+orbitkb metrics
+orbitkb metrics --watch --interval 1
+```
+
+`--watch` refreshes the terminal until `Ctrl+C`; when attached to a terminal it uses
+color in addition to explicit status text. Use `--no-color` for logs or plain output.
+
 Back up before destructive maintenance:
 
 ```bash

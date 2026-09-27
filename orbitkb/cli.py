@@ -3,15 +3,17 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sqlite3
 import sys
+import time
 from pathlib import Path
 
 import orbitkb
 from orbitkb.analysis.depth import DepthMode, resolve_depth_provider
 from orbitkb.cli_progress import RichProgressReporter
 from orbitkb.config import resolve_backend
-from orbitkb.db.connection import DEFAULT_DB_PATH, open_db
 from orbitkb.db.backup import backup_database, restore_database
+from orbitkb.db.connection import DEFAULT_DB_PATH, open_db, open_readonly_db
 from orbitkb.db.repositories import index_runs as index_runs_repo
 from orbitkb.db.repositories import indexed_files as indexed_files_repo
 from orbitkb.db.repositories import repositories as repositories_repo
@@ -21,12 +23,13 @@ from orbitkb.db.repositories import services as services_repo
 from orbitkb.db.repositories import verification as verification_repo
 from orbitkb.export.markdown import export_markdown
 from orbitkb.export.mermaid import export_mermaid
-from orbitkb.generation.backend_base import GenerationError
 from orbitkb.generation.architecture import recompute_architecture_view
+from orbitkb.generation.backend_base import GenerationError
 from orbitkb.generation.embeddings import try_create_default_backend
 from orbitkb.generation.orchestrator import DiscoveryError, index_path, index_service
 from orbitkb.generation.verification import verify_change_surface
 from orbitkb.mcp import queries as mcp_queries
+from orbitkb.monitor import collect_snapshot, render_snapshot
 from orbitkb.setup.actions import SetupAction
 
 
@@ -437,6 +440,27 @@ def _cmd_context_metrics(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_metrics(args: argparse.Namespace) -> int:
+    """Display local, redacted operational metrics without writing to SQLite."""
+    try:
+        conn = open_readonly_db(args.db)
+    except sqlite3.Error as exc:
+        print(f"error: cannot open local metrics database: {exc}", file=sys.stderr)
+        return 1
+    try:
+        color = not args.no_color and sys.stdout.isatty()
+        while True:
+            snapshot = collect_snapshot(conn)
+            if args.watch and sys.stdout.isatty():
+                print("\033[2J\033[H", end="")
+            print(render_snapshot(snapshot, color=color))
+            if not args.watch:
+                return 0
+            time.sleep(args.interval)
+    finally:
+        conn.close()
+
+
 def _cmd_context_verify(args: argparse.Namespace) -> int:
     conn = open_db(args.db)
     result = mcp_queries.verify_context_budget(conn, args.run_id, args.repository, args.since)
@@ -699,6 +723,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_context_metrics.add_argument("--epic-type", default=None, help="Filter metrics to one non-sensitive epic category")
     p_context_metrics.add_argument("--db", type=Path, default=DEFAULT_DB_PATH, help=f"SQLite database path (default: {DEFAULT_DB_PATH})")
     p_context_metrics.set_defaults(func=_cmd_context_metrics)
+
+    p_metrics = sub.add_parser(
+        "metrics", help="Show local operational metrics; add --watch for a live terminal view",
+    )
+    p_metrics.add_argument("--watch", action="store_true", help="Refresh the local read-only view until Ctrl+C")
+    p_metrics.add_argument("--interval", type=float, default=1.0, help="Seconds between refreshes in watch mode (default: 1.0)")
+    p_metrics.add_argument("--no-color", action="store_true", help="Disable ANSI colors")
+    p_metrics.add_argument("--db", type=Path, default=DEFAULT_DB_PATH, help=f"SQLite database path (default: {DEFAULT_DB_PATH})")
+    p_metrics.set_defaults(func=_cmd_metrics)
 
     p_context_verify = sub.add_parser(
         "context-verify", help="Compare delivered context cards with services changed in Git",
