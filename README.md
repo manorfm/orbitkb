@@ -300,6 +300,7 @@ indexes code, or retains new data:
 ```bash
 orbitkb metrics
 orbitkb metrics --watch --interval 1
+orbitkb metrics --watch --alerts-only
 ```
 
 `--watch` refreshes the terminal until `Ctrl+C`; it redraws only when persisted state
@@ -312,8 +313,10 @@ When plan quality has no actionable risk, the monitor collapses its detailed cov
 contract and surface lines into `quality risks: none`; those details reappear as soon
 as an actionable count is present.
 When any follow-up is needed, an `Action needed` line appears at the top with compact
-counts for validation, plan-review and closure follow-ups. It identifies no plan,
-repository, path, command or source content.
+counts for validation, plan-review, closure and quality follow-ups. It identifies no
+plan, repository, path, command or source content.
+Use `--alerts-only` to show that summary and only the validation or plan-quality
+sections with actionable counts; it prints `No alerts` when nothing needs follow-up.
 During `orbitkb index` or `orbitkb update`, it also shows the current normalized
 generation stage and completed/total unit count. It never displays source paths,
 endpoint names, prompts or generated content.

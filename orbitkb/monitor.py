@@ -90,8 +90,11 @@ def collect_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
 
 def render_snapshot(
     snapshot: dict[str, Any], color: bool, current_time: datetime | None = None,
+    alerts_only: bool = False,
 ) -> str:
     """Render a stable, human-readable snapshot without terminal dependencies."""
+    if alerts_only:
+        return _render_alert_snapshot(snapshot, color)
     indexing = snapshot["indexing"]
     agent = snapshot["agent"]
     validation = snapshot["validation"]
@@ -139,27 +142,8 @@ def render_snapshot(
             _paint_if_positive(f"failed={ci_reported['failed']}", ci_reported["failed"], "31", color),
         ]),
         "Plan quality",
-        "  review coverage: " + " ".join([
-            f"ready={plan_quality['ready_plans']}",
-            f"reviewed={plan_quality['reviewed_ready_plans']}",
-            _paint_if_positive(
-                f"awaiting={plan_quality['unreviewed_ready_plans']}",
-                plan_quality["unreviewed_ready_plans"], "33", color,
-            ),
-            _paint_if_positive(
-                f"potentially stale={plan_quality['potentially_stale_ready_plans']}",
-                plan_quality["potentially_stale_ready_plans"], "33", color,
-            ),
-        ]),
-        "  closures: " + " ".join([
-            _paint_if_positive(
-                f"attention={closure_counts['needs_attention']}", closure_counts["needs_attention"], "31", color,
-            ),
-            _paint_if_positive(
-                f"review={closure_counts['needs_review']}", closure_counts["needs_review"], "33", color,
-            ),
-            f"ready={closure_counts['ready_for_manual_review']}",
-        ]),
+        "  " + _review_coverage_line(plan_quality, color),
+        "  " + _closure_line(closure_counts, color),
     ])
     lines.extend(_plan_quality_detail_lines(coverage, risks, color))
     return "\n".join(lines)
@@ -173,17 +157,88 @@ def _paint_if_positive(text: str, value: int, code: str, enabled: bool) -> str:
     return _paint(text, code, enabled and value > 0)
 
 
+def _render_alert_snapshot(snapshot: dict[str, Any], color: bool) -> str:
+    validation = snapshot["validation"]
+    plan_quality = snapshot["plan_quality"]
+    action_summary = _action_summary(validation, plan_quality, color)
+    lines = [_paint("OrbitKB local monitor", "36", color), "─" * 40]
+    if action_summary is None:
+        lines.append("No alerts")
+        return "\n".join(lines)
+    lines.append(action_summary)
+    manual = validation["manual"]
+    ci_reported = validation["ci_reported"]
+    if _validation_action_count(validation):
+        lines.append("Validation")
+        if manual["pending"] or manual["failed"]:
+            lines.append("  manual checks: " + " ".join([
+                _paint_if_positive(f"pending={manual['pending']}", manual["pending"], "33", color),
+                _paint_if_positive(f"failed={manual['failed']}", manual["failed"], "31", color),
+            ]))
+        if ci_reported["failed"]:
+            lines.append(
+                "  CI reported: "
+                + _paint_if_positive(f"failed={ci_reported['failed']}", ci_reported["failed"], "31", color)
+            )
+    if (
+        _review_action_count(plan_quality)
+        or _closure_action_count(plan_quality["closures"])
+        or _has_quality_risks(plan_quality["coverage"], plan_quality["risks"])
+    ):
+        lines.append("Plan quality")
+        if _review_action_count(plan_quality):
+            lines.append("  " + _review_coverage_line(plan_quality, color))
+        closures = plan_quality["closures"]
+        if _closure_action_count(closures):
+            lines.append("  " + _closure_alert_line(closures, color))
+        lines.extend(_plan_quality_detail_lines(
+            plan_quality["coverage"], plan_quality["risks"], color, alerts_only=True,
+        ))
+    return "\n".join(lines)
+
+
+def _review_coverage_line(plan_quality: dict[str, Any], color: bool) -> str:
+    return "review coverage: " + " ".join([
+        f"ready={plan_quality['ready_plans']}",
+        f"reviewed={plan_quality['reviewed_ready_plans']}",
+        _paint_if_positive(
+            f"awaiting={plan_quality['unreviewed_ready_plans']}",
+            plan_quality["unreviewed_ready_plans"], "33", color,
+        ),
+        _paint_if_positive(
+            f"potentially stale={plan_quality['potentially_stale_ready_plans']}",
+            plan_quality["potentially_stale_ready_plans"], "33", color,
+        ),
+    ])
+
+
+def _closure_line(closures: dict[str, int], color: bool) -> str:
+    return "closures: " + " ".join([
+        _paint_if_positive(f"attention={closures['needs_attention']}", closures["needs_attention"], "31", color),
+        _paint_if_positive(f"review={closures['needs_review']}", closures["needs_review"], "33", color),
+        f"ready={closures['ready_for_manual_review']}",
+    ])
+
+
+def _closure_alert_line(closures: dict[str, int], color: bool) -> str:
+    values: list[str] = []
+    if closures["needs_attention"]:
+        values.append(_paint(f"attention={closures['needs_attention']}", "31", color))
+    if closures["needs_review"]:
+        values.append(_paint(f"review={closures['needs_review']}", "33", color))
+    return "closures: " + " ".join(values)
+
+
 def _action_summary(
     validation: dict[str, dict[str, int]], plan_quality: dict[str, Any], color: bool,
 ) -> str | None:
     manual = validation["manual"]
     ci_reported = validation["ci_reported"]
-    validation_count = manual["pending"] + manual["failed"] + ci_reported["failed"]
-    review_count = (
-        plan_quality["unreviewed_ready_plans"] + plan_quality["potentially_stale_ready_plans"]
-    )
+    validation_count = _validation_action_count(validation)
+    review_count = _review_action_count(plan_quality)
     closures = plan_quality["closures"]
-    closure_count = closures["needs_attention"] + closures["needs_review"]
+    closure_count = _closure_action_count(closures)
+    quality_count = _quality_risk_count(plan_quality["coverage"], plan_quality["risks"])
     parts: list[str] = []
     if validation_count:
         code = "31" if manual["failed"] or ci_reported["failed"] else "33"
@@ -193,21 +248,65 @@ def _action_summary(
     if closure_count:
         code = "31" if closures["needs_attention"] else "33"
         parts.append(_paint_if_positive(f"closures={closure_count}", closure_count, code, color))
+    if quality_count:
+        code = "31" if plan_quality["risks"]["public_error_contract_breaks"] else "33"
+        parts.append(_paint_if_positive(f"quality findings={quality_count}", quality_count, code, color))
     return f"Action needed: {' '.join(parts)}" if parts else None
 
 
-def _plan_quality_detail_lines(
-    coverage: dict[str, int], risks: dict[str, int], color: bool,
-) -> list[str]:
-    actionable_values = (
+def _validation_action_count(validation: dict[str, dict[str, int]]) -> int:
+    manual = validation["manual"]
+    return manual["pending"] + manual["failed"] + validation["ci_reported"]["failed"]
+
+
+def _review_action_count(plan_quality: dict[str, Any]) -> int:
+    return plan_quality["unreviewed_ready_plans"] + plan_quality["potentially_stale_ready_plans"]
+
+
+def _closure_action_count(closures: dict[str, int]) -> int:
+    return closures["needs_attention"] + closures["needs_review"]
+
+
+def _has_quality_risks(coverage: dict[str, int], risks: dict[str, int]) -> bool:
+    return _quality_risk_count(coverage, risks) > 0
+
+
+def _quality_risk_count(coverage: dict[str, int], risks: dict[str, int]) -> int:
+    return sum((
         coverage["omitted_units"],
         coverage["unassessable_units"],
         risks["files_outside_planned_surface"],
         risks["public_error_contracts_at_risk"],
         risks["public_error_contract_breaks"],
-    )
-    if not any(actionable_values):
-        return ["  quality risks: none"]
+    ))
+
+
+def _plan_quality_detail_lines(
+    coverage: dict[str, int], risks: dict[str, int], color: bool, alerts_only: bool = False,
+) -> list[str]:
+    if not _has_quality_risks(coverage, risks):
+        return [] if alerts_only else ["  quality risks: none"]
+    if alerts_only:
+        lines: list[str] = []
+        if coverage["omitted_units"] or coverage["unassessable_units"]:
+            values = [f"{coverage['covered_units']}/{coverage['planned_units']} covered"]
+            if coverage["omitted_units"]:
+                values.append(_paint(f"{coverage['omitted_units']} omitted", "33", color))
+            if coverage["unassessable_units"]:
+                values.append(_paint(f"{coverage['unassessable_units']} unassessable", "33", color))
+            lines.append("  coverage: " + ", ".join(values))
+        if risks["public_error_contracts_at_risk"] or risks["public_error_contract_breaks"]:
+            values = []
+            if risks["public_error_contracts_at_risk"]:
+                values.append(_paint(f"{risks['public_error_contracts_at_risk']} at risk", "33", color))
+            if risks["public_error_contract_breaks"]:
+                values.append(_paint(f"{risks['public_error_contract_breaks']} break", "31", color))
+            lines.append("  contracts: " + ", ".join(values))
+        if risks["files_outside_planned_surface"]:
+            lines.append("  " + _paint(
+                f"outside planned surface: {risks['files_outside_planned_surface']}", "33", color,
+            ))
+        return lines
     return [
         "  coverage: " + " ".join([
             f"{coverage['covered_units']}/{coverage['planned_units']} covered,",

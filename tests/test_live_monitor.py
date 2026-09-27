@@ -84,6 +84,23 @@ def test_metrics_command_prints_a_read_only_local_snapshot(tmp_path, capsys):
     assert "OrbitKB local monitor" in capsys.readouterr().out
 
 
+def test_metrics_alerts_only_hides_healthy_operational_details(tmp_path, capsys):
+    db_path = tmp_path / "monitor.db"
+    conn = open_db(db_path)
+    service_id = services.ensure_service(conn, "payments", "/workspace/payments", "node-ts")
+    index_runs.start_index_run(conn, service_id, "fake")
+
+    args = cli.build_parser().parse_args([
+        "metrics", "--alerts-only", "--db", str(db_path), "--no-color",
+    ])
+
+    assert cli._cmd_metrics(args) == 0
+    rendered = capsys.readouterr().out
+    assert "No alerts" in rendered
+    assert "Indexing" not in rendered
+    assert "Totals" not in rendered
+
+
 def test_metrics_watch_rejects_a_nonpositive_refresh_interval(tmp_path, capsys, monkeypatch):
     db_path = tmp_path / "monitor.db"
     open_db(db_path)
@@ -156,6 +173,10 @@ def test_local_monitor_summarizes_manual_and_reported_ci_validation(tmp_path):
     assert "manual checks: passed=1 pending=1 failed=0" in rendered
     assert "CI reported: passed=0 failed=1" in rendered
     assert rendered.index("Action needed: validation=2") < rendered.index("Indexing")
+    alerts_only = render_snapshot(snapshot, color=False, alerts_only=True)
+    assert "Action needed: validation=2" in alerts_only
+    assert "Validation" in alerts_only
+    assert "Indexing" not in alerts_only
 
 
 def test_local_monitor_summarizes_latest_plan_closure_quality(tmp_path):
@@ -194,8 +215,14 @@ def test_local_monitor_summarizes_latest_plan_closure_quality(tmp_path):
     }
     rendered = render_snapshot(snapshot, color=False)
     assert "Action needed: closures=1" in rendered
+    assert "quality findings=6" in rendered
     assert "coverage: 2/4 covered, 1 omitted, 1 unassessable" in rendered
     assert "contracts: 2 at risk, 1 break" in rendered
+    alerts_only = render_snapshot(snapshot, color=False, alerts_only=True)
+    assert "Plan quality" in alerts_only
+    assert "coverage: 2/4 covered, 1 omitted, 1 unassessable" in alerts_only
+    assert "contracts: 2 at risk, 1 break" in alerts_only
+    assert "Totals" not in alerts_only
 
 
 def test_local_monitor_separates_ready_plans_without_a_closure_review(tmp_path):

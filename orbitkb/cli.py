@@ -469,7 +469,7 @@ def _cmd_metrics(args: argparse.Namespace) -> int:
             if should_render_snapshot(snapshot, previous_state):
                 if args.watch and sys.stdout.isatty():
                     print("\033[2J\033[H", end="")
-                print(render_snapshot(snapshot, color=color))
+                print(render_snapshot(snapshot, color=color, alerts_only=args.alerts_only))
                 previous_state = snapshot_state_key(snapshot)
             if not args.watch:
                 return 0
@@ -751,6 +751,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_metrics.add_argument("--watch", action="store_true", help="Refresh the local read-only view until Ctrl+C")
     p_metrics.add_argument("--interval", type=float, default=1.0, help="Seconds between refreshes in watch mode (default: 1.0)")
+    p_metrics.add_argument("--alerts-only", action="store_true", help="Show only actionable validation and plan-quality alerts")
     p_metrics.add_argument("--no-color", action="store_true", help="Disable ANSI colors")
     p_metrics.add_argument("--db", type=Path, default=DEFAULT_DB_PATH, help=f"SQLite database path (default: {DEFAULT_DB_PATH})")
     p_metrics.set_defaults(func=_cmd_metrics)
