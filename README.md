@@ -320,10 +320,11 @@ aggregate plan-quality result for that plan/repository: coverage counts, units o
 or unassessable, files outside the planned surface, and public error-contract risks or
 breaks. It retains only those counters and the advisory status, never a Git revision,
 file path, diff, or change-unit ID.
-It separately counts ready plans awaiting their first closure review, so a zero-risk
-aggregate is not confused with a plan that has never been reviewed.
-It also flags closure reviews as potentially stale when the repository was indexed
-after that review; this is a prompt to reassess, not a finding that a change is wrong.
+Its `review coverage` line aggregates ready plans into reviewed and awaiting their
+first closure review, so a zero-risk aggregate is not confused with a plan that has
+never been reviewed. It also counts ready plans with a closure review potentially
+stale because the repository was indexed afterwards; this is a prompt to reassess,
+not a finding that a change is wrong.
 An in-flight MCP operation records only its tool name, process ID and start time, then
 removes that ephemeral row when it finishes; task text, arguments, code and responses
 are never recorded for monitoring. If a local MCP process exits abruptly, the monitor

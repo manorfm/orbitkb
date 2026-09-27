@@ -178,8 +178,10 @@ def test_local_monitor_summarizes_latest_plan_closure_quality(tmp_path):
     snapshot = collect_snapshot(conn)
 
     assert snapshot["plan_quality"] == {
+        "ready_plans": 1,
+        "reviewed_ready_plans": 1,
         "unreviewed_ready_plans": 0,
-        "potentially_stale_reviews": 0,
+        "potentially_stale_ready_plans": 0,
         "closures": {"needs_attention": 1, "needs_review": 0, "ready_for_manual_review": 0},
         "coverage": {"planned_units": 4, "covered_units": 2, "omitted_units": 1, "unassessable_units": 1},
         "risks": {
@@ -216,8 +218,24 @@ def test_local_monitor_separates_ready_plans_without_a_closure_review(tmp_path):
 
     snapshot = collect_snapshot(conn)
 
-    assert snapshot["plan_quality"]["unreviewed_ready_plans"] == 1
-    assert "awaiting closure review: 1" in render_snapshot(snapshot, color=False)
+    assert {
+        key: snapshot["plan_quality"][key]
+        for key in (
+            "ready_plans",
+            "reviewed_ready_plans",
+            "unreviewed_ready_plans",
+            "potentially_stale_ready_plans",
+        )
+    } == {
+        "ready_plans": 2,
+        "reviewed_ready_plans": 1,
+        "unreviewed_ready_plans": 1,
+        "potentially_stale_ready_plans": 0,
+    }
+    assert (
+        "review coverage: ready=2 reviewed=1 awaiting=1 potentially stale=0"
+        in render_snapshot(snapshot, color=False)
+    )
 
 
 def test_local_monitor_marks_closure_reviews_preceding_repository_indexing_as_stale(tmp_path):
@@ -246,8 +264,7 @@ def test_local_monitor_marks_closure_reviews_preceding_repository_indexing_as_st
 
     snapshot = collect_snapshot(conn)
 
-    assert snapshot["plan_quality"]["potentially_stale_reviews"] == 1
-    assert "potentially stale closure reviews: 1" in render_snapshot(snapshot, color=False)
+    assert snapshot["plan_quality"]["potentially_stale_ready_plans"] == 1
 
 
 def test_local_monitor_reports_only_an_in_flight_agent_operation(tmp_path):

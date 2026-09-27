@@ -458,9 +458,10 @@ remaining validation obligation. After a successful review, OrbitKB retains only
 latest numeric closure summary for that plan and repository (status, coverage and
 risk counters) for the local metrics monitor; it never retains the revision, file
 paths, diff, source content or change-unit identifiers from the assessment. The
-assessment remains advisory and is never an implementation gate. The monitor also
-counts ready plans without any recorded closure review separately from reviewed plans,
-and flags a summary as potentially stale when its repository was indexed afterwards.
+assessment remains advisory and is never an implementation gate. The monitor's review
+coverage aggregates ready plans into reviewed and not-yet-reviewed counts, and flags a
+ready plan as potentially stale when any of its repository summaries predates a later
+repository update.
 
 ## Compact change context
 
