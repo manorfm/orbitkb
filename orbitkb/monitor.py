@@ -104,8 +104,10 @@ def render_snapshot(
     lines = [
         _paint("OrbitKB local monitor", "36", color),
         "─" * 40,
-        "Indexing",
     ]
+    if action_summary := _action_summary(validation, plan_quality, color):
+        lines.append(action_summary)
+    lines.append("Indexing")
     if indexing["active"]:
         for active in indexing["active"]:
             status = _paint(f"running ({active['backend']})", "33", color)
@@ -169,6 +171,29 @@ def _paint(text: str, code: str, enabled: bool) -> str:
 
 def _paint_if_positive(text: str, value: int, code: str, enabled: bool) -> str:
     return _paint(text, code, enabled and value > 0)
+
+
+def _action_summary(
+    validation: dict[str, dict[str, int]], plan_quality: dict[str, Any], color: bool,
+) -> str | None:
+    manual = validation["manual"]
+    ci_reported = validation["ci_reported"]
+    validation_count = manual["pending"] + manual["failed"] + ci_reported["failed"]
+    review_count = (
+        plan_quality["unreviewed_ready_plans"] + plan_quality["potentially_stale_ready_plans"]
+    )
+    closures = plan_quality["closures"]
+    closure_count = closures["needs_attention"] + closures["needs_review"]
+    parts: list[str] = []
+    if validation_count:
+        code = "31" if manual["failed"] or ci_reported["failed"] else "33"
+        parts.append(_paint_if_positive(f"validation={validation_count}", validation_count, code, color))
+    if review_count:
+        parts.append(_paint_if_positive(f"plan reviews={review_count}", review_count, "33", color))
+    if closure_count:
+        code = "31" if closures["needs_attention"] else "33"
+        parts.append(_paint_if_positive(f"closures={closure_count}", closure_count, code, color))
+    return f"Action needed: {' '.join(parts)}" if parts else None
 
 
 def _plan_quality_detail_lines(

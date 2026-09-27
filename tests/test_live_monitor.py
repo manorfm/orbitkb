@@ -45,6 +45,7 @@ def test_local_monitor_reports_an_active_index_run_and_aggregate_usage(tmp_path)
     assert "Indexing" in rendered
     assert "payments  running (fake)" in rendered
     assert "runs: 1" in rendered
+    assert "Action needed:" not in rendered
 
 
 def test_local_monitor_reports_granular_active_index_progress(tmp_path):
@@ -154,6 +155,7 @@ def test_local_monitor_summarizes_manual_and_reported_ci_validation(tmp_path):
     rendered = render_snapshot(snapshot, color=False)
     assert "manual checks: passed=1 pending=1 failed=0" in rendered
     assert "CI reported: passed=0 failed=1" in rendered
+    assert rendered.index("Action needed: validation=2") < rendered.index("Indexing")
 
 
 def test_local_monitor_summarizes_latest_plan_closure_quality(tmp_path):
@@ -191,6 +193,7 @@ def test_local_monitor_summarizes_latest_plan_closure_quality(tmp_path):
         },
     }
     rendered = render_snapshot(snapshot, color=False)
+    assert "Action needed: closures=1" in rendered
     assert "coverage: 2/4 covered, 1 omitted, 1 unassessable" in rendered
     assert "contracts: 2 at risk, 1 break" in rendered
 
