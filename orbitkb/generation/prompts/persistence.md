@@ -23,3 +23,10 @@ plus a short type/meaning description) as visible in the evidence, and the concr
 database engine (postgres, mysql, mongodb, dynamodb, redis, elasticsearch, sqlite, or
 "unknown" if nothing above resolves it — never guess). Skip anything not clearly shown
 rather than guessing.
+
+When a field is a foreign key to another entity you're also returning in this same
+response (e.g. a `@ManyToOne`/`@JoinColumn`, a `ForeignKey(...)`, a `ref`/populated
+relation), set its `references` to that entity's exact name plus whether the field is
+also under a uniqueness constraint (one-to-one) or a regular foreign key
+(many-to-one). Leave `references` out entirely when the target entity isn't one of
+the ones returned here, or when the evidence doesn't clearly show a relationship.

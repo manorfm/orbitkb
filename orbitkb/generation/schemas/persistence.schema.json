@@ -19,7 +19,20 @@
               "type": "object",
               "properties": {
                 "field": {"type": "string"},
-                "type_desc": {"type": "string"}
+                "type_desc": {"type": "string"},
+                "references": {
+                  "type": "object",
+                  "description": "Only when this field is a foreign key to another entity returned in this same response — omit entirely otherwise, never guess.",
+                  "properties": {
+                    "target_entity": {"type": "string", "description": "The `name` of the referenced entity, exactly as returned above."},
+                    "unique": {
+                      "type": "boolean",
+                      "description": "true when this field is also under a uniqueness constraint (one-to-one with the target), false for a regular many-to-one foreign key."
+                    }
+                  },
+                  "required": ["target_entity", "unique"],
+                  "additionalProperties": false
+                }
               },
               "required": ["field", "type_desc"],
               "additionalProperties": false

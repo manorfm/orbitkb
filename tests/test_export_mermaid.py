@@ -114,6 +114,57 @@ def test_generate_er_diagram_lists_entity_fields(tmp_path: Path):
     assert "total" in diagram
 
 
+def test_generate_er_diagram_includes_relationship_lines_from_field_references(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    orders_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")
+    persistence_repo.replace_persistence_entities(
+        conn, orders_id,
+        [
+            {
+                "name": "orders", "kind": "sql_table", "engine": "postgres",
+                "schema_json": [
+                    {"field": "order_id", "type_desc": "string, order id"},
+                    {
+                        "field": "customer_id", "type_desc": "string, foreign key",
+                        "references": {"target_entity": "customers", "unique": False},
+                    },
+                ],
+            },
+            {
+                "name": "customers", "kind": "sql_table", "engine": "postgres",
+                "schema_json": [{"field": "id", "type_desc": "string, primary key"}],
+            },
+        ],
+        EVIDENCE,
+    )
+
+    diagram = generate_er_diagram(conn, "orders-service")
+
+    assert 'orders }o--|| customers : "customer_id"' in diagram
+    assert "No cross-entity relationships shown" not in diagram
+
+
+def test_generate_er_diagram_skips_a_reference_to_an_entity_not_in_this_diagram(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    orders_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")
+    persistence_repo.replace_persistence_entities(
+        conn, orders_id,
+        [{
+            "name": "orders", "kind": "sql_table", "engine": "postgres",
+            "schema_json": [{
+                "field": "customer_id", "type_desc": "string",
+                "references": {"target_entity": "customers", "unique": False},
+            }],
+        }],
+        EVIDENCE,
+    )
+
+    diagram = generate_er_diagram(conn, "orders-service")
+
+    assert "customers" not in diagram  # never fabricate a node for an unresolved reference
+    assert "No cross-entity relationships shown" in diagram
+
+
 def test_generate_er_diagram_for_unknown_service(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     assert generate_er_diagram(conn, "does-not-exist") is None

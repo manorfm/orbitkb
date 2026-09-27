@@ -99,25 +99,40 @@ def generate_topology_diagram(conn: sqlite3.Connection) -> str:
 
 def generate_er_diagram(conn: sqlite3.Connection, service_name: str) -> str | None:
     """One service's `erDiagram`: an entity block per persisted table/collection, with
-    its fields. No relationship lines between entities — the index doesn't track
-    foreign keys yet (see the project's documented gaps), so this never fabricates one;
-    it's a field-level reference, not a full ER diagram in the classic sense."""
+    its fields, plus a relationship line for every field whose LLM-inferred
+    `references` names another entity present in this same diagram — a reference to
+    an entity not in this diagram is skipped rather than fabricating a dangling node."""
     row = services_repo.get_service_by_name(conn, service_name)
     if row is None:
         return None
     entities = persistence_repo.list_persistence(conn, row["id"])
-    lines = [
-        "erDiagram",
-        "  %% No cross-entity relationships shown: the index doesn't track foreign keys yet.",
-    ]
+    entity_ids = {entity["name"]: _sanitize_ident(entity["name"]) for entity in entities}
+
+    lines = ["erDiagram"]
+    relationships: list[str] = []
     for entity in entities:
-        entity_id = _sanitize_ident(entity["name"])
+        entity_id = entity_ids[entity["name"]]
         lines.append(f"  {entity_id} {{")
         for field in json.loads(entity["schema_json"] or "[]"):
             type_token = _sanitize_ident((field.get("type_desc") or "string").split(",")[0].strip()) or "string"
             field_name = _sanitize_ident(field.get("field", "field"))
             lines.append(f"    {type_token} {field_name}")
         lines.append("  }")
+
+        for field in json.loads(entity["schema_json"] or "[]"):
+            reference = field.get("references")
+            if not reference:
+                continue
+            target_id = entity_ids.get(reference.get("target_entity"))
+            if target_id is None:
+                continue
+            crow_foot = "||--||" if reference.get("unique") else "}o--||"
+            relationships.append(f'  {entity_id} {crow_foot} {target_id} : "{field.get("field", "field")}"')
+
+    if relationships:
+        lines.extend(relationships)
+    else:
+        lines.insert(1, "  %% No cross-entity relationships shown: none of the evidence resolved to one.")
     return "\n".join(lines)
 
 
