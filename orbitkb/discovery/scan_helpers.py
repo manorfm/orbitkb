@@ -197,7 +197,7 @@ def provider_from_match(match: re.Match[str], exclude: str = "channel") -> str |
     return None
 
 
-_CALL_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+CALL_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 
 
 def resolve_local_calls(
@@ -217,7 +217,7 @@ def resolve_local_calls(
 
     `exclude_line_range` is the endpoint's own excerpt (start_line, end_line): a name whose
     definition falls inside it is the handler itself (its own `def`/signature line reads as
-    a "call" to `_CALL_RE`), not a real one-hop dependency, so it is skipped.
+    a "call" to `CALL_RE`), not a real one-hop dependency, so it is skipped.
     """
     text = read_text(path)
     if not text:
@@ -225,7 +225,7 @@ def resolve_local_calls(
     excerpts: list[CodeExcerpt] = []
     seen: set[str] = set(exclude_names)
     range_start, range_end = exclude_line_range
-    for match in _CALL_RE.finditer(excerpt_text):
+    for match in CALL_RE.finditer(excerpt_text):
         if len(excerpts) >= max_hops:
             break
         name = match.group(1)

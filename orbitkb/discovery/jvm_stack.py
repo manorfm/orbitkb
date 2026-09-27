@@ -10,6 +10,7 @@ from orbitkb.discovery.base import (
     PersistenceHint,
     ServiceHints,
 )
+from orbitkb.discovery.jvm_ast import resolve_kotlin_java_calls
 from orbitkb.discovery.scan_helpers import (
     ENDPOINT_AFTER,
     ENDPOINT_BEFORE,
@@ -17,7 +18,6 @@ from orbitkb.discovery.scan_helpers import (
     engine_hint_from_manifest,
     excerpt_around,
     find_matches,
-    resolve_local_calls,
 )
 
 _MANIFEST_FILES = ("pom.xml", "build.gradle", "build.gradle.kts")
@@ -71,16 +71,11 @@ _SPRING_DATA_REPO_RE = re.compile(r"interface\s+(\w+)\s+extends\s+\w*Repository"
 _CLASS_RE = re.compile(r"^\s*(?:public\s+|private\s+)?(?:class|interface)\s+(\w+)")
 
 
-def _def_pattern(name: str) -> re.Pattern[str]:
-    escaped = re.escape(name)
-    return re.compile(rf"^\s*fun\s+{escaped}\s*\(|^\s*[\w<>\[\],\s]+\s+{escaped}\s*\([^)]*\)\s*\{{", re.MULTILINE)
-
-
 def _endpoint_hint(method: str, path_value: str, file_path: Path, folder: Path, line_no: int) -> EndpointHint:
     excerpt = excerpt_around(file_path, folder, line_no, before=ENDPOINT_BEFORE, after=ENDPOINT_AFTER)
     component_hint = component_hint_for(file_path, line_no, _CLASS_RE)
-    extra_excerpts = resolve_local_calls(
-        file_path, folder, excerpt.text, _def_pattern, (excerpt.start_line, excerpt.end_line),
+    extra_excerpts = resolve_kotlin_java_calls(
+        file_path, folder, excerpt.text, (excerpt.start_line, excerpt.end_line),
     )
     return EndpointHint(
         method=method, path=path_value, component_hint=component_hint,

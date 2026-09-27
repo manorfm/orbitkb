@@ -70,6 +70,21 @@ def test_python_endpoint_resolves_a_locally_defined_helper_into_extra_excerpts()
     assert "def format_total" in endpoint.extra_excerpts[0].text
 
 
+COMPONENT_KOTLIN_ROOT = Path(__file__).resolve().parent / "fixtures" / "component_kotlin"
+
+
+def test_kotlin_endpoint_resolves_a_statically_imported_extension_function_into_extra_excerpts():
+    """RestaurantController.get() builds its response via `.out()`, a Kotlin
+    extension function statically imported from a separate mapper file
+    (out.kt) — the exact same-package-different-file mapper idiom that a
+    same-file-only regex heuristic can't follow."""
+    hints = JvmSpringDetector().collect_hints(COMPONENT_KOTLIN_ROOT)
+    endpoint = next(e for e in hints.endpoints if e.path == "/{id}")
+    assert len(endpoint.extra_excerpts) == 1
+    assert endpoint.extra_excerpts[0].file_path == "out.kt"
+    assert "fun Restaurant.out()" in endpoint.extra_excerpts[0].text
+
+
 def test_python_celery_task_is_tagged_as_an_abstracted_provider(tmp_path: Path):
     (tmp_path / "requirements.txt").write_text("celery\n")
     (tmp_path / "main.py").write_text("app = None\n")
