@@ -64,6 +64,7 @@ def collect_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
             "completed_units": progress["completed_units"],
             "total_units": progress["total_units"],
         })
+    validation = _validation_summary(conn)
     return {
         "indexing": {
             "active": active_indexing,
@@ -81,6 +82,7 @@ def collect_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
             "truncated_contexts": context["truncated"],
             "change_plans": {row["status"]: row["count"] for row in plan_rows},
         },
+        "validation": validation,
     }
 
 
@@ -90,6 +92,9 @@ def render_snapshot(
     """Render a stable, human-readable snapshot without terminal dependencies."""
     indexing = snapshot["indexing"]
     agent = snapshot["agent"]
+    validation = snapshot["validation"]
+    manual = validation["manual"]
+    ci_reported = validation["ci_reported"]
     lines = [
         _paint("OrbitKB local monitor", "36", color),
         "─" * 40,
@@ -115,6 +120,16 @@ def render_snapshot(
         f"  context tokens: {agent['context_tokens']}",
         f"  truncated briefings: {agent['truncated_contexts']}",
         f"  change plans: {_plan_statuses(agent['change_plans'])}",
+        "Validation",
+        "  manual checks: " + " ".join([
+            _paint(f"passed={manual['passed']}", "32", color),
+            _paint(f"pending={manual['pending']}", "33", color),
+            _paint(f"failed={manual['failed']}", "31", color),
+        ]),
+        "  CI reported: " + " ".join([
+            _paint(f"passed={ci_reported['passed']}", "32", color),
+            _paint(f"failed={ci_reported['failed']}", "31", color),
+        ]),
     ])
     return "\n".join(lines)
 
@@ -132,6 +147,59 @@ def _index_progress(active: dict[str, Any]) -> str:
         return ""
     stage = active["stage"]
     return f" · {stage} {active['completed_units']}/{active['total_units']}"
+
+
+def _validation_summary(conn: sqlite3.Connection) -> dict[str, dict[str, int]]:
+    ready_plans = conn.execute(
+        "SELECT id, change_units_json FROM change_plan_runs WHERE status = 'ready'"
+    ).fetchall()
+    expected_manual_checks: set[tuple[int, str, int]] = set()
+    for plan in ready_plans:
+        try:
+            change_units = json.loads(plan["change_units_json"])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(change_units, list):
+            continue
+        for unit in change_units:
+            if not isinstance(unit, dict) or not isinstance(unit.get("id"), str):
+                continue
+            checks = unit.get("validation")
+            if isinstance(checks, list):
+                expected_manual_checks.update(
+                    (plan["id"], unit["id"], index) for index, _check in enumerate(checks)
+                )
+    manual_results = {
+        (row["plan_id"], row["change_unit_id"], row["check_index"]): row["status"]
+        for row in conn.execute(
+            """SELECT result.plan_id, result.change_unit_id, result.check_index, result.status
+               FROM change_plan_manual_validation_results AS result
+               JOIN change_plan_runs AS plan ON plan.id = result.plan_id
+               WHERE plan.status = 'ready'"""
+        ).fetchall()
+    }
+    manual_statuses = [manual_results.get(check, "pending") for check in expected_manual_checks]
+    ci = conn.execute(
+        """SELECT result.status, COUNT(*) AS count
+           FROM change_plan_ci_validation_results AS result
+           JOIN change_plan_runs AS plan ON plan.id = result.plan_id
+           WHERE plan.status = 'ready'
+           GROUP BY result.status"""
+    ).fetchall()
+    ci_counts = {row["status"]: row["count"] for row in ci}
+    return {
+        "manual": {
+            "total": len(manual_statuses),
+            "passed": sum(status == "passed" for status in manual_statuses),
+            "failed": sum(status == "failed" for status in manual_statuses),
+            "pending": sum(status == "pending" for status in manual_statuses),
+        },
+        "ci_reported": {
+            "total": sum(ci_counts.values()),
+            "passed": ci_counts.get("passed", 0),
+            "failed": ci_counts.get("failed", 0),
+        },
+    }
 
 
 def snapshot_state_key(snapshot: dict[str, Any]) -> str:

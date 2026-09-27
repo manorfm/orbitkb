@@ -7,9 +7,12 @@ from orbitkb.cli_progress import LocalIndexProgressReporter
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import (
     change_plans,
+    ci_validation_results,
     context_telemetry,
     index_runs,
     local_activity,
+    manual_validation_results,
+    repositories,
     services,
 )
 from orbitkb.mcp.activity import track_local_activity
@@ -123,6 +126,33 @@ def test_local_monitor_reports_redacted_agent_context_and_change_plans(tmp_path)
     assert "Agent activity" in rendered
     assert "context briefings: 1" in rendered
     assert "change plans: needs_decision=1" in rendered
+
+
+def test_local_monitor_summarizes_manual_and_reported_ci_validation(tmp_path):
+    conn = open_db(tmp_path / "monitor.db")
+    plan_id = change_plans.record_plan(conn, None, "ready", 2200, [], [{
+        "id": "payments.validate", "validation": ["unit", "contract"],
+    }])
+    manual_validation_results.record_result(conn, plan_id, "payments.validate", 0, "passed")
+    repository_id = repositories.ensure_repository(conn, "commerce", "/workspace/commerce")
+    ci_validation_results.record_result(conn, plan_id, repository_id, {
+        "workflow_path": ".github/workflows/ci.yml",
+        "kind": "test",
+        "command": "pytest",
+        "start_line": 8,
+        "status": "failed",
+        "duration_ms": 1200,
+    })
+
+    snapshot = collect_snapshot(conn)
+
+    assert snapshot["validation"] == {
+        "manual": {"total": 2, "passed": 1, "failed": 0, "pending": 1},
+        "ci_reported": {"total": 1, "passed": 0, "failed": 1},
+    }
+    rendered = render_snapshot(snapshot, color=False)
+    assert "manual checks: passed=1 pending=1 failed=0" in rendered
+    assert "CI reported: passed=0 failed=1" in rendered
 
 
 def test_local_monitor_reports_only_an_in_flight_agent_operation(tmp_path):

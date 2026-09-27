@@ -309,6 +309,11 @@ logs or plain output; `--interval` must be greater than zero in watch mode.
 During `orbitkb index` or `orbitkb update`, it also shows the current normalized
 generation stage and completed/total unit count. It never displays source paths,
 endpoint names, prompts or generated content.
+
+The monitor also summarizes manual checks on ready plans as passed, pending or failed.
+CI shows only agent-reported passed/failed results: it intentionally does not label a
+workflow command as pending globally because a current indexed command cannot be
+proven to belong to every plan.
 An in-flight MCP operation records only its tool name, process ID and start time, then
 removes that ephemeral row when it finishes; task text, arguments, code and responses
 are never recorded for monitoring. If a local MCP process exits abruptly, the monitor
