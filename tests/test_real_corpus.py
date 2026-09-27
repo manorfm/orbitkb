@@ -8,9 +8,11 @@ import pytest
 
 from benchmark.real_corpus import (
     CorpusValidationError,
+    RealCorpusQualityGate,
     evaluate_real_corpus,
     load_real_corpus,
 )
+from scripts.validate_real_corpus import main as validate_real_corpus_main
 
 
 def _write_manifest(path: Path, cases: list[dict[str, object]]) -> Path:
@@ -112,4 +114,73 @@ def test_real_corpus_evaluation_marks_cases_without_predictions_as_pending(tmp_p
         "quality_by_stack": {
             "node-ts": {"cases": 1, "evaluated_cases": 0, "precision": None, "recall": None},
         },
+    }
+
+
+def test_real_corpus_quality_gate_requires_coverage_complete_evidence_and_minimum_metrics(tmp_path: Path):
+    manifest = _write_manifest(
+        tmp_path / "corpus.json",
+        [
+            _valid_case(predicted_unit_refs=["unit-001", "unit-extra"]),
+            _valid_case(
+                id="ledger-reconcile-001",
+                stack="go",
+                changed_unit_refs=["unit-003"],
+                predicted_unit_refs=["unit-003"],
+            ),
+        ],
+    )
+    report = evaluate_real_corpus(load_real_corpus(manifest))
+    gate = RealCorpusQualityGate(
+        required_stacks=frozenset({"go", "node-ts", "kotlin-spring"}),
+        minimum_cases_per_stack=2,
+        minimum_precision=0.75,
+        minimum_recall=0.75,
+    )
+
+    result = report.apply_gate(gate)
+
+    assert result.passed is False
+    assert result.as_dict()["violations"] == [
+        {"kind": "insufficient_cases", "observed": 1, "required": 2, "stack": "go"},
+        {"kind": "insufficient_cases", "observed": 0, "required": 2, "stack": "kotlin-spring"},
+        {"kind": "insufficient_cases", "observed": 1, "required": 2, "stack": "node-ts"},
+        {"kind": "minimum_precision", "observed": 0.5, "required": 0.75, "stack": "node-ts"},
+        {"kind": "minimum_recall", "observed": 0.5, "required": 0.75, "stack": "node-ts"},
+    ]
+
+
+def test_real_corpus_cli_runs_an_explicit_quality_gate(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    manifest = _write_manifest(
+        tmp_path / "corpus.json",
+        [_valid_case(predicted_unit_refs=["unit-001", "unit-002"])],
+    )
+
+    exit_code = validate_real_corpus_main(
+        [
+            "--corpus",
+            str(manifest),
+            "--evaluate",
+            "--gate",
+            "--required-stack",
+            "node-ts",
+            "--min-cases-per-stack",
+            "1",
+            "--min-precision",
+            "0.9",
+            "--min-recall",
+            "0.9",
+        ]
+    )
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "passed": True,
+        "requirements": {
+            "minimum_cases_per_stack": 1,
+            "minimum_precision": 0.9,
+            "minimum_recall": 0.9,
+            "required_stacks": ["node-ts"],
+        },
+        "violations": [],
     }

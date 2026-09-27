@@ -1,4 +1,4 @@
-.PHONY: help install dev hooks test coverage lint sast sca security dast verify benchmark-scale evaluate-static evaluate-change-surface validate-real-corpus evaluate-real-corpus integration-containers readiness-audit \
+.PHONY: help install dev hooks test coverage lint sast sca security dast verify benchmark-scale evaluate-static evaluate-change-surface validate-real-corpus evaluate-real-corpus gate-real-corpus integration-containers readiness-audit \
         build clean release release-patch release-minor release-major _release
 
 # Defaults to the project's own .venv when one exists, so `make verify`/
@@ -42,6 +42,7 @@ help:
 	@echo "  evaluate-change-surface Run deterministic change-surface candidate goldens"
 	@echo "  validate-real-corpus Validate a local, redacted real-change corpus (CORPUS=path)"
 	@echo "  evaluate-real-corpus Measure local corpus prediction quality (CORPUS=path)"
+	@echo "  gate-real-corpus Enforce explicit corpus quality targets (see README)"
 	@echo "  integration-containers Run opt-in RabbitMQ/Postgres/MongoDB/LocalStack container E2E"
 	@echo "  readiness-audit Report deterministic evidence and production conditions"
 	@echo "  build           Build sdist + wheel into dist/"
@@ -112,6 +113,14 @@ validate-real-corpus:
 evaluate-real-corpus:
 	@test -n "$(CORPUS)" || (echo "Set CORPUS to a local manifest path." >&2; exit 2)
 	$(PYTHON) scripts/validate_real_corpus.py --corpus "$(CORPUS)" --evaluate
+
+gate-real-corpus:
+	@test -n "$(CORPUS)" || (echo "Set CORPUS to a local manifest path." >&2; exit 2)
+	@test -n "$(REQUIRED_STACKS)" || (echo "Set REQUIRED_STACKS to supported stack names." >&2; exit 2)
+	@test -n "$(MIN_CASES_PER_STACK)" || (echo "Set MIN_CASES_PER_STACK." >&2; exit 2)
+	@test -n "$(MIN_PRECISION)" || (echo "Set MIN_PRECISION." >&2; exit 2)
+	@test -n "$(MIN_RECALL)" || (echo "Set MIN_RECALL." >&2; exit 2)
+	$(PYTHON) scripts/validate_real_corpus.py --corpus "$(CORPUS)" --evaluate --gate $(foreach stack,$(REQUIRED_STACKS),--required-stack "$(stack)") --min-cases-per-stack "$(MIN_CASES_PER_STACK)" --min-precision "$(MIN_PRECISION)" --min-recall "$(MIN_RECALL)"
 
 integration-containers:
 	ORBITKB_CONTAINER_E2E=1 $(PYTHON) -m pytest tests/test_container_integrations.py tests/test_container_cloud_integrations.py -v

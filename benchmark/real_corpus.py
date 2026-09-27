@@ -61,6 +61,77 @@ class CorpusValidationError(ValueError):
 
 
 @dataclass(frozen=True)
+class RealCorpusQualityGate:
+    """Explicit operator-defined thresholds for a privacy-safe corpus gate."""
+
+    required_stacks: frozenset[str]
+    minimum_cases_per_stack: int
+    minimum_precision: float
+    minimum_recall: float
+
+    def __post_init__(self) -> None:
+        if not self.required_stacks:
+            raise CorpusValidationError("required_stacks must not be empty")
+        unsupported = self.required_stacks - SUPPORTED_STACKS
+        if unsupported:
+            raise CorpusValidationError(f"unsupported required stacks: {', '.join(sorted(unsupported))}")
+        if (
+            not isinstance(self.minimum_cases_per_stack, int)
+            or isinstance(self.minimum_cases_per_stack, bool)
+            or self.minimum_cases_per_stack < 1
+        ):
+            raise CorpusValidationError("minimum_cases_per_stack must be at least 1")
+        for value, name in ((self.minimum_precision, "minimum_precision"), (self.minimum_recall, "minimum_recall")):
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 1:
+                raise CorpusValidationError(f"{name} must be between 0 and 1")
+
+    def as_dict(self) -> dict[str, int | float | list[str]]:
+        return {
+            "required_stacks": sorted(self.required_stacks),
+            "minimum_cases_per_stack": self.minimum_cases_per_stack,
+            "minimum_precision": self.minimum_precision,
+            "minimum_recall": self.minimum_recall,
+        }
+
+
+@dataclass(frozen=True)
+class RealCorpusGateViolation:
+    """One quality requirement that a stack did not meet."""
+
+    stack: str
+    kind: str
+    observed: int | float
+    required: int | float
+
+    def as_dict(self) -> dict[str, str | int | float]:
+        return {
+            "stack": self.stack,
+            "kind": self.kind,
+            "observed": self.observed,
+            "required": self.required,
+        }
+
+
+@dataclass(frozen=True)
+class RealCorpusGateResult:
+    """Structured gate decision safe for a local CI log."""
+
+    gate: RealCorpusQualityGate
+    violations: tuple[RealCorpusGateViolation, ...]
+
+    @property
+    def passed(self) -> bool:
+        return not self.violations
+
+    def as_dict(self) -> dict[str, bool | dict[str, int | float | list[str]] | list[dict[str, str | int | float]]]:
+        return {
+            "passed": self.passed,
+            "requirements": self.gate.as_dict(),
+            "violations": [violation.as_dict() for violation in self.violations],
+        }
+
+
+@dataclass(frozen=True)
 class RealCorpusCase:
     """A redacted, structured record of one reviewed real-world change."""
 
@@ -119,6 +190,32 @@ class RealCorpusEvaluation:
             "pending_cases": len(self.cases) - evaluated_cases,
             "quality_by_stack": self.quality_by_stack,
         }
+
+    def apply_gate(self, gate: RealCorpusQualityGate) -> RealCorpusGateResult:
+        """Evaluate explicit coverage and metric requirements without hidden defaults."""
+        violations: list[RealCorpusGateViolation] = []
+        for stack in sorted(gate.required_stacks):
+            metrics = self.quality_by_stack.get(stack)
+            cases = int(metrics["cases"]) if metrics else 0
+            evaluated_cases = int(metrics["evaluated_cases"]) if metrics else 0
+            if cases < gate.minimum_cases_per_stack:
+                violations.append(
+                    RealCorpusGateViolation(stack, "insufficient_cases", cases, gate.minimum_cases_per_stack)
+                )
+            if cases > evaluated_cases:
+                violations.append(RealCorpusGateViolation(stack, "pending_cases", cases - evaluated_cases, 0))
+            if not metrics or metrics["precision"] is None:
+                continue
+            precision = float(metrics["precision"])
+            recall = float(metrics["recall"])
+            if precision < gate.minimum_precision:
+                violations.append(
+                    RealCorpusGateViolation(stack, "minimum_precision", precision, gate.minimum_precision)
+                )
+            if recall < gate.minimum_recall:
+                violations.append(RealCorpusGateViolation(stack, "minimum_recall", recall, gate.minimum_recall))
+        return RealCorpusGateResult(gate, tuple(violations))
+
 
 
 def load_real_corpus(path: Path) -> RealCorpus:
