@@ -534,3 +534,26 @@ def test_index_service_logs_hint_collection_before_static_analysis(tmp_path: Pat
         "collecting hints" in record.message and detector.id in record.message
         for record in caplog.records
     )
+
+
+def test_index_service_survives_a_jvm_static_analysis_crash(tmp_path: Path, monkeypatch, caplog):
+    """A real SIGSEGV was reproduced on a real Kotlin/Spring service, deep inside
+    StaticAnalysisEngine.analyze()'s tree-sitter usage -- heap corruption in the
+    tree-sitter-kotlin native binding that no amount of Python-side lifetime
+    correctness eliminated (see orbitkb/discovery/isolation.py). collect_hints() and
+    analyze() are isolated in a subprocess for exactly this stack, so a crash there
+    degrades this one service instead of taking down the whole `orbitkb index` run.
+    """
+    conn = open_db(tmp_path / "test.db")
+    single_service_root = SAMPLE_ROOT / "inventory-service"
+    detector = detector_for(single_service_root)
+    assert detector is not None
+    assert detector.id == "jvm-spring"
+    monkeypatch.setattr(orchestrator, "run_isolated", lambda func, *args: (None, "crashed with signal SIGSEGV"))
+
+    with caplog.at_level(logging.WARNING, logger="orbitkb.generation.orchestrator"):
+        result = index_service(conn, "inventory-service", single_service_root, detector, FakeOrchestratorBackend())
+
+    assert result.status == "partial"
+    assert services_repo.get_service_by_name(conn, "inventory-service") is not None
+    assert any("crashed with signal SIGSEGV" in record.message for record in caplog.records)

@@ -9,6 +9,7 @@ from typing import Protocol
 
 from orbitkb.analysis.depth import DepthProvider, NoopDepthProvider
 from orbitkb.analysis.engine import STATIC_ANALYSIS_INPUT_VERSION, StaticAnalysisEngine
+from orbitkb.analysis.models import AnalysisResult
 from orbitkb.ci.scanner import scan_github_actions_commands
 from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import ci_commands as ci_commands_repo
@@ -36,6 +37,7 @@ from orbitkb.discovery.base import (
     StackDetector,
 )
 from orbitkb.discovery.hashing import file_hash, git_head_commit
+from orbitkb.discovery.isolation import run_isolated
 from orbitkb.discovery.registry import detector_by_id
 from orbitkb.discovery.scan_helpers import SKIP_DIRS, collect_config_excerpts
 from orbitkb.discovery.walker import ServiceCandidate, discover_services
@@ -522,6 +524,28 @@ UNIT_GENERATORS: tuple[UnitGenerator, ...] = (
 )
 
 
+# Isolation costs a fresh subprocess spawn per call, so it's scoped to the stack with
+# a proven native crash (tree-sitter-kotlin heap corruption, reproduced on a real
+# service -- see orbitkb/discovery/isolation.py), not applied blanket to every stack.
+_ISOLATED_STACKS = frozenset({"jvm-spring"})
+
+
+def _collect_hints_isolated(root: Path, stack: str) -> ServiceHints:
+    """`run_isolated()` target: builds its own detector rather than taking one as an
+    argument, since a detector instance isn't guaranteed picklable and native state
+    (a tree-sitter `Parser`) has to be constructed inside the subprocess anyway.
+    """
+    return detector_by_id(stack).collect_hints(root)
+
+
+def _analyze_isolated(root: Path, stack: str) -> AnalysisResult:
+    """`run_isolated()` target: builds its own engine (never pickled in) -- a
+    `StaticAnalysisEngine` holds tree-sitter `Language` objects, which wrap native
+    pointers and can't cross a process boundary.
+    """
+    return StaticAnalysisEngine(NoopDepthProvider()).analyze(root, stack)
+
+
 def _index_service_unlocked(
     conn: sqlite3.Connection,
     name: str,
@@ -538,7 +562,17 @@ def _index_service_unlocked(
     failures_root = failures_root or (Path.home() / ".orbitkb" / "failures")
     progress = progress or NullProgressReporter()
     logger.debug("collecting hints: %s (stack=%s) at %s", name, detector.id, root)
-    hints = detector.collect_hints(root)
+    hints_crash: str | None = None
+    if detector.id in _ISOLATED_STACKS:
+        hints, hints_crash = run_isolated(_collect_hints_isolated, root, detector.id)
+        if hints_crash is not None:
+            logger.warning(
+                "hint collection %s for %s (stack=%s); continuing with no hints",
+                hints_crash, name, detector.id,
+            )
+            hints = ServiceHints()
+    else:
+        hints = detector.collect_hints(root)
     component_groups = _group_endpoints_by_component(hints.endpoints)
     total_units = (
         1 + len(hints.endpoints) + len(component_groups)
@@ -560,10 +594,24 @@ def _index_service_unlocked(
         and snapshot["input_digest"] == static_digest
         and snapshot["analysis_version"] == STATIC_ANALYSIS_INPUT_VERSION
     )
+    analysis_crash: str | None = None
     if not static_analysis_is_current:
         if not cacheable_static_analysis:
             static_analysis_repo.delete_snapshot(conn, service_id)
-        flows_repo.replace_analysis(conn, service_id, static_engine.analyze(root, detector.id))
+            analysis = static_engine.analyze(root, detector.id)
+        elif detector.id in _ISOLATED_STACKS:
+            # Isolated only in the default (Noop) case: a real depth provider holds a
+            # live external MCP connection that can't be handed to a fresh subprocess.
+            analysis, analysis_crash = run_isolated(_analyze_isolated, root, detector.id)
+            if analysis_crash is not None:
+                logger.warning(
+                    "static analysis %s for %s (stack=%s); continuing with no analysis",
+                    analysis_crash, name, detector.id,
+                )
+                analysis = AnalysisResult()
+        else:
+            analysis = static_engine.analyze(root, detector.id)
+        flows_repo.replace_analysis(conn, service_id, analysis)
         if cacheable_static_analysis and static_digest is not None:
             if static_engine.input_digest(root, detector.id) == static_digest:
                 static_analysis_repo.replace_snapshot(
@@ -596,7 +644,7 @@ def _index_service_unlocked(
     )
 
     llm_calls = 0
-    had_failure = False
+    had_failure = hints_crash is not None or analysis_crash is not None
     # Files whose derived unit failed to generate this run. Their hash is deliberately
     # NOT persisted to indexed_files below, so next run sees them as "changed" again
     # and retries instead of silently skipping a permanently-broken unit forever.
@@ -629,9 +677,15 @@ def _index_service_unlocked(
     recompute_architecture_view(conn)
 
     status = "partial" if had_failure else "ok"
+    if hints_crash is not None or analysis_crash is not None:
+        run_error = f"hint collection {hints_crash or 'ok'}; static analysis {analysis_crash or 'ok'}"
+    elif had_failure:
+        run_error = "some units failed, see failures dir"
+    else:
+        run_error = None
     index_runs_repo.finish_index_run(
         conn, run_id, status, len(changed) + len(removed), llm_calls,
-        "some units failed, see failures dir" if had_failure else None,
+        run_error,
         input_tokens=total_usage.input_tokens, output_tokens=total_usage.output_tokens, cost_usd=total_usage.cost_usd,
     )
     progress.service_finished(name)
