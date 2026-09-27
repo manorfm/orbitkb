@@ -114,6 +114,49 @@ def test_metrics_watch_rejects_a_nonpositive_refresh_interval(tmp_path, capsys, 
     assert "interval must be greater than zero" in capsys.readouterr().err
 
 
+def test_metrics_watch_reads_interval_from_environment_and_cli_overrides_it(tmp_path, monkeypatch):
+    db_path = tmp_path / "monitor.db"
+    open_db(db_path)
+    monkeypatch.setenv("ORBITKB_METRICS_INTERVAL", "0.25")
+    observed_intervals: list[float] = []
+
+    def stop_after_sleep(interval: float) -> None:
+        observed_intervals.append(interval)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.time, "sleep", stop_after_sleep)
+    environment_args = cli.build_parser().parse_args([
+        "metrics", "--watch", "--db", str(db_path), "--no-color",
+    ])
+    with pytest.raises(KeyboardInterrupt):
+        cli._cmd_metrics(environment_args)
+
+    explicit_args = cli.build_parser().parse_args([
+        "metrics", "--watch", "--interval", "0.5", "--db", str(db_path), "--no-color",
+    ])
+    with pytest.raises(KeyboardInterrupt):
+        cli._cmd_metrics(explicit_args)
+
+    assert observed_intervals == [0.25, 0.5]
+
+
+def test_metrics_watch_rejects_an_invalid_environment_interval(tmp_path, capsys, monkeypatch):
+    db_path = tmp_path / "monitor.db"
+    open_db(db_path)
+    monkeypatch.setenv("ORBITKB_METRICS_INTERVAL", "not-a-number")
+    args = cli.build_parser().parse_args([
+        "metrics", "--watch", "--db", str(db_path), "--no-color",
+    ])
+    monkeypatch.setattr(
+        cli.time,
+        "sleep",
+        lambda _: (_ for _ in ()).throw(AssertionError("invalid interval must not start watch")),
+    )
+
+    assert cli._cmd_metrics(args) == 1
+    assert "ORBITKB_METRICS_INTERVAL must be a number" in capsys.readouterr().err
+
+
 def test_local_monitor_reports_redacted_agent_context_and_change_plans(tmp_path):
     conn = open_db(tmp_path / "monitor.db")
     context_telemetry.record_run(conn, {

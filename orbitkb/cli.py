@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
+import os
 import sqlite3
 import sys
 import time
@@ -40,6 +42,8 @@ from orbitkb.monitor import (
     snapshot_state_key,
 )
 from orbitkb.setup.actions import SetupAction
+
+_METRICS_INTERVAL_ENV = "ORBITKB_METRICS_INTERVAL"
 
 
 def _configure_verbose_logging(verbose: bool) -> None:
@@ -453,9 +457,12 @@ def _cmd_context_metrics(args: argparse.Namespace) -> int:
 
 def _cmd_metrics(args: argparse.Namespace) -> int:
     """Display local, redacted operational metrics without writing to SQLite."""
-    if args.watch and args.interval <= 0:
-        print("error: --interval must be greater than zero in --watch mode", file=sys.stderr)
-        return 1
+    if args.watch:
+        try:
+            interval = _resolve_metrics_watch_interval(args.interval)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
     try:
         conn = open_readonly_db(args.db)
     except sqlite3.Error as exc:
@@ -478,9 +485,23 @@ def _cmd_metrics(args: argparse.Namespace) -> int:
                 previous_state = snapshot_state_key(snapshot, alerts_only=args.alerts_only)
             if not args.watch:
                 return 0
-            time.sleep(args.interval)
+            time.sleep(interval)
     finally:
         conn.close()
+
+
+def _resolve_metrics_watch_interval(command_interval: float | None) -> float:
+    value = command_interval if command_interval is not None else os.environ.get(_METRICS_INTERVAL_ENV, "1.0")
+    try:
+        interval = float(value)
+    except (TypeError, ValueError) as exc:
+        source = "--interval" if command_interval is not None else _METRICS_INTERVAL_ENV
+        raise ValueError(f"{source} must be a number") from exc
+    if not math.isfinite(interval):
+        raise ValueError("interval must be finite in --watch mode")
+    if interval <= 0:
+        raise ValueError("interval must be greater than zero in --watch mode")
+    return interval
 
 
 def _cmd_context_verify(args: argparse.Namespace) -> int:
@@ -755,7 +776,12 @@ def build_parser() -> argparse.ArgumentParser:
         "metrics", help="Show local operational metrics; add --watch for a live terminal view",
     )
     p_metrics.add_argument("--watch", action="store_true", help="Refresh the local read-only view until Ctrl+C")
-    p_metrics.add_argument("--interval", type=float, default=1.0, help="Seconds between refreshes in watch mode (default: 1.0)")
+    p_metrics.add_argument(
+        "--interval",
+        type=float,
+        default=None,
+        help=f"Seconds between refreshes in watch mode (default: ${_METRICS_INTERVAL_ENV} or 1.0)",
+    )
     p_metrics.add_argument("--alerts-only", action="store_true", help="Show only actionable validation and plan-quality alerts")
     p_metrics.add_argument("--no-color", action="store_true", help="Disable ANSI colors")
     p_metrics.add_argument("--db", type=Path, default=DEFAULT_DB_PATH, help=f"SQLite database path (default: {DEFAULT_DB_PATH})")

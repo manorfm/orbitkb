@@ -307,6 +307,9 @@ orbitkb metrics --watch --alerts-only
 changes, except while an active operation needs its duration updated. When attached to
 a terminal it uses color in addition to explicit status text. Use `--no-color` for
 logs or plain output; `--interval` must be greater than zero in watch mode.
+`ORBITKB_METRICS_INTERVAL` can supply the watch interval when `--interval` is
+omitted; an explicit CLI value takes precedence, and either value must be finite and
+greater than zero.
 Within validation and plan quality, color is reserved for nonzero actionable states:
 pending or stale items use yellow, while failures and confirmed breaks use red.
 When plan quality has no actionable risk, the monitor collapses its detailed coverage,
