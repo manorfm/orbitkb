@@ -124,7 +124,7 @@ def test_metrics_help_includes_watch_interval_environment_examples(capsys):
     assert "ORBITKB_METRICS_MIN_INTERVAL=0.25 orbitkb metrics --watch --alerts-only" in help_text
 
 
-def test_metrics_watch_reads_interval_from_environment_and_cli_overrides_it(tmp_path, monkeypatch):
+def test_metrics_watch_reads_interval_from_environment_and_cli_overrides_it(tmp_path, monkeypatch, capsys):
     db_path = tmp_path / "monitor.db"
     open_db(db_path)
     monkeypatch.setenv("ORBITKB_METRICS_INTERVAL", "0.25")
@@ -148,6 +148,9 @@ def test_metrics_watch_reads_interval_from_environment_and_cli_overrides_it(tmp_
         cli._cmd_metrics(explicit_args)
 
     assert observed_intervals == [0.25, 0.5]
+    rendered = capsys.readouterr().out
+    assert "refresh: every 0.25s" in rendered
+    assert "refresh: every 0.5s" in rendered
 
 
 def test_metrics_watch_rejects_an_invalid_environment_interval(tmp_path, capsys, monkeypatch):

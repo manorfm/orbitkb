@@ -482,6 +482,7 @@ def _cmd_metrics(args: argparse.Namespace) -> int:
                     color=color,
                     alerts_only=args.alerts_only,
                     include_updated_at=args.alerts_only,
+                    watch_interval=interval if args.watch and not args.alerts_only else None,
                 ))
                 previous_state = snapshot_state_key(snapshot, alerts_only=args.alerts_only)
             if not args.watch:
