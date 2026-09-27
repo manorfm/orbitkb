@@ -11,6 +11,7 @@ from orbitkb.config import resolve_backend
 from orbitkb.db.connection import open_db
 from orbitkb.generation.backend_base import LLMBackend
 from orbitkb.mcp import queries
+from orbitkb.mcp.activity import track_local_activity
 
 
 def build_server(db_path: Path | None = None, backend: LLMBackend | None = None) -> MCPServer:
@@ -451,8 +452,9 @@ def build_server(db_path: Path | None = None, backend: LLMBackend | None = None)
         recall=...' from a real git check, 'feedback: N confirmed, M rejected' from
         self-reported outcomes, or 'no feedback yet') — historical precedent for
         whether a similarly-worded task actually panned out."""
-        with closing(_conn()) as conn:
-            return queries.find_change_surface(conn, resolved_backend, task, hint_services, repository)
+        with track_local_activity(db_path, "find_change_surface"):
+            with closing(_conn()) as conn:
+                return queries.find_change_surface(conn, resolved_backend, task, hint_services, repository)
 
     @mcp.tool()
     def get_change_context(
@@ -472,10 +474,11 @@ def build_server(db_path: Path | None = None, backend: LLMBackend | None = None)
         Pass repository when service names are duplicated; it scopes both inference
         and every compact card. Call this when an agent needs enough context to draft
         a plan in one response without filling its context window with full services."""
-        with closing(_conn()) as conn:
-            return queries.get_change_context(
-                conn, resolved_backend, task, hint_services, repository, max_services, epic_type,
-            )
+        with track_local_activity(db_path, "get_change_context"):
+            with closing(_conn()) as conn:
+                return queries.get_change_context(
+                    conn, resolved_backend, task, hint_services, repository, max_services, epic_type,
+                )
 
     @mcp.tool()
     def plan_change(
@@ -492,8 +495,9 @@ def build_server(db_path: Path | None = None, backend: LLMBackend | None = None)
         token_budget is capped at 2200 measured response tokens. The response labels
         whether its count came from the optional local tokenizer or byte estimate.
         """
-        with closing(_conn()) as conn:
-            return queries.plan_change(conn, resolved_backend, task, hint_services, repository, token_budget)
+        with track_local_activity(db_path, "plan_change"):
+            with closing(_conn()) as conn:
+                return queries.plan_change(conn, resolved_backend, task, hint_services, repository, token_budget)
 
     @mcp.tool()
     def refine_change_plan(plan_id: str, decisions: list[dict]) -> dict:
@@ -527,8 +531,9 @@ def build_server(db_path: Path | None = None, backend: LLMBackend | None = None)
         reaches a planned service, it also returns safe indexed test/build hints
         without executing them.
         """
-        with closing(_conn()) as conn:
-            return queries.assess_working_change(conn, plan_id, repository, since_commit)
+        with track_local_activity(db_path, "assess_working_change"):
+            with closing(_conn()) as conn:
+                return queries.assess_working_change(conn, plan_id, repository, since_commit)
 
     @mcp.tool()
     def record_ci_validation_result(

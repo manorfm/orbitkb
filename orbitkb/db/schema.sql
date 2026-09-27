@@ -638,6 +638,18 @@ CREATE TABLE IF NOT EXISTS change_plan_manual_validation_results (
 CREATE INDEX IF NOT EXISTS idx_change_plan_manual_validation_results_plan
     ON change_plan_manual_validation_results(plan_id, change_unit_id);
 
+-- Ephemeral local monitor state. Rows exist only while a bounded MCP operation
+-- is executing; task text, arguments, source and results are never persisted.
+CREATE TABLE IF NOT EXISTS local_activity_runs (
+    id         INTEGER PRIMARY KEY,
+    operation  TEXT NOT NULL CHECK (operation IN (
+        'find_change_surface', 'get_change_context', 'plan_change', 'assess_working_change'
+    )),
+    process_id INTEGER NOT NULL,
+    started_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_local_activity_runs_started ON local_activity_runs(started_at, id);
+
 -- A static snapshot is valid only for the exact analyzer input digest and parser
 -- version. It stores no source content and is invalidated by external depth facts.
 CREATE TABLE IF NOT EXISTS static_analysis_snapshots (

@@ -1,3 +1,5 @@
+import pytest
+
 from orbitkb import cli
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import (
@@ -6,6 +8,7 @@ from orbitkb.db.repositories import (
     index_runs,
     services,
 )
+from orbitkb.mcp.activity import track_local_activity
 from orbitkb.monitor import collect_snapshot, render_snapshot
 
 
@@ -65,6 +68,7 @@ def test_local_monitor_reports_redacted_agent_context_and_change_plans(tmp_path)
     snapshot = collect_snapshot(conn)
 
     assert snapshot["agent"] == {
+        "active_operations": [],
         "context_runs": 1,
         "context_tokens": 300,
         "truncated_contexts": 0,
@@ -74,3 +78,35 @@ def test_local_monitor_reports_redacted_agent_context_and_change_plans(tmp_path)
     assert "Agent activity" in rendered
     assert "context briefings: 1" in rendered
     assert "change plans: needs_decision=1" in rendered
+
+
+def test_local_monitor_reports_only_an_in_flight_agent_operation(tmp_path):
+    db_path = tmp_path / "monitor.db"
+    conn = open_db(db_path)
+
+    with track_local_activity(db_path, "plan_change"):
+        snapshot = collect_snapshot(conn)
+
+        assert snapshot["agent"]["active_operations"] == ["plan_change"]
+        assert "running now: plan_change" in render_snapshot(snapshot, color=False)
+
+    assert collect_snapshot(conn)["agent"]["active_operations"] == []
+
+
+def test_local_activity_is_removed_when_the_operation_fails(tmp_path):
+    db_path = tmp_path / "monitor.db"
+    conn = open_db(db_path)
+
+    with pytest.raises(RuntimeError, match="failed operation"):
+        with track_local_activity(db_path, "plan_change"):
+            raise RuntimeError("failed operation")
+
+    assert collect_snapshot(conn)["agent"]["active_operations"] == []
+
+
+def test_local_monitor_treats_missing_ephemeral_activity_table_as_idle(tmp_path):
+    conn = open_db(tmp_path / "legacy-monitor.db")
+    conn.execute("DROP TABLE local_activity_runs")
+    conn.commit()
+
+    assert collect_snapshot(conn)["agent"]["active_operations"] == []

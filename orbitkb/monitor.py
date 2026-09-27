@@ -8,6 +8,8 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from orbitkb.db.repositories import local_activity
+
 
 def collect_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     """Return the compact current state needed by the local terminal view."""
@@ -48,6 +50,7 @@ def collect_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
             "cost_usd": totals["cost_usd"],
         },
         "agent": {
+            "active_operations": local_activity.list_active(conn),
             "context_runs": context["runs"],
             "context_tokens": context["tokens"],
             "truncated_contexts": context["truncated"],
@@ -81,6 +84,7 @@ def render_snapshot(snapshot: dict[str, Any], color: bool) -> str:
         f"  tokens: {indexing['input_tokens']} in / {indexing['output_tokens']} out",
         f"  indexed cost: ${indexing['cost_usd']:.4f}",
         "Agent activity",
+        f"  running now: {', '.join(agent['active_operations']) or 'none'}",
         f"  context briefings: {agent['context_runs']}",
         f"  context tokens: {agent['context_tokens']}",
         f"  truncated briefings: {agent['truncated_contexts']}",

@@ -293,9 +293,9 @@ The default database is `~/.orbitkb/orbitkb.db`. Pass `--db <path>` to use anoth
 knowledge base.
 
 Use the local terminal monitor to inspect completed indexing totals, context-briefing
-and change-plan counts, and any index run currently active. It opens the existing
-SQLite database in read-only mode and never starts a service, indexes code, or
-retains new data:
+and change-plan counts, and any index run or bounded MCP operation currently active.
+It opens the existing SQLite database in read-only mode and never starts a service,
+indexes code, or retains new data:
 
 ```bash
 orbitkb metrics
@@ -304,6 +304,9 @@ orbitkb metrics --watch --interval 1
 
 `--watch` refreshes the terminal until `Ctrl+C`; when attached to a terminal it uses
 color in addition to explicit status text. Use `--no-color` for logs or plain output.
+An in-flight MCP operation records only its tool name, process ID and start time, then
+removes that ephemeral row when it finishes; task text, arguments, code and responses
+are never recorded for monitoring.
 
 Back up before destructive maintenance:
 
