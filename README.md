@@ -239,6 +239,32 @@ is explicit:
 orbitkb remove --repository retired-service
 ```
 
+## Generate documentation
+
+Turn the indexed knowledge base into static docs or diagrams — no LLM call, no
+extra cost beyond what `index`/`update` already paid for, useful for humans
+reading outside an MCP client (a wiki page, a PR description, an architecture
+review):
+
+```bash
+orbitkb export md --out docs/
+orbitkb export mermaid --out docs/
+```
+
+`export md` writes, per indexed service, `docs/<service>/index.md` (description,
+stack, dependencies with the reason and data each call needs, APIs, persistence,
+messaging, cloud integrations) and one `docs/<service>/apis/<method-path>.md` per
+detected API (response shape, calls it makes, validations/constraints).
+
+`export mermaid` writes `docs/topology.mmd` (system-wide service topology —
+dependencies, external/cloud nodes, architecture cycles highlighted) and one
+`docs/<service>.er.mmd` entity-relationship diagram per service, from detected
+persistence facts. Mermaid renders natively in GitHub/GitLab/most editors, and
+is plain text — versionable and diffable in a PR, unlike a generated image.
+
+Both accept `--service <name>` to export just one service instead of every
+indexed one.
+
 ## Safety and data handling
 
 - Source and configuration evidence is redacted before generation, storage, logs and

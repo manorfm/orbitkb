@@ -527,9 +527,14 @@ The orbitkb workflow is index -> ask -> verify:
   3. verify  Once the change ships, check whether the prediction was right
              against the real git diff, closing the feedback loop.
 
+Any time after indexing, `export` turns the same knowledge into static docs
+(Markdown) or diagrams (Mermaid) for humans reading outside an MCP client —
+no LLM call, no extra cost.
+
 Examples:
   orbitkb index ~/code/my-monorepo --repository-name my-monorepo
   orbitkb remove --repository retired-monorepo
+  orbitkb export md --out docs/
   orbitkb serve --backend claude
   orbitkb verify 3 --repository my-monorepo --since a1b2c3d
 
