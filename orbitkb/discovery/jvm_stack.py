@@ -11,7 +11,7 @@ from orbitkb.discovery.base import (
     PersistenceHint,
     ServiceHints,
 )
-from orbitkb.discovery.jvm_ast import resolve_kotlin_java_calls
+from orbitkb.discovery.jvm_ast import ParseCache, resolve_kotlin_java_calls
 from orbitkb.discovery.scan_helpers import (
     ENDPOINT_AFTER,
     ENDPOINT_BEFORE,
@@ -74,12 +74,14 @@ _SPRING_DATA_REPO_RE = re.compile(r"interface\s+(\w+)\s+extends\s+\w*Repository"
 _CLASS_RE = re.compile(r"^\s*(?:public\s+|private\s+)?(?:class|interface)\s+(\w+)")
 
 
-def _endpoint_hint(method: str, path_value: str, file_path: Path, folder: Path, line_no: int) -> EndpointHint:
+def _endpoint_hint(
+    method: str, path_value: str, file_path: Path, folder: Path, line_no: int, cache: ParseCache,
+) -> EndpointHint:
     logger.debug("building endpoint hint: %s %s (%s:%s)", method, path_value, file_path, line_no)
     excerpt = excerpt_around(file_path, folder, line_no, before=ENDPOINT_BEFORE, after=ENDPOINT_AFTER)
     component_hint = component_hint_for(file_path, line_no, _CLASS_RE)
     extra_excerpts = resolve_kotlin_java_calls(
-        file_path, folder, excerpt.text, (excerpt.start_line, excerpt.end_line),
+        file_path, folder, excerpt.text, (excerpt.start_line, excerpt.end_line), cache=cache,
     )
     return EndpointHint(
         method=method, path=path_value, component_hint=component_hint,
@@ -116,6 +118,7 @@ class JvmSpringDetector:
     def collect_hints(self, folder: Path) -> ServiceHints:
         logger.debug("scanning JVM/Spring hints: %s", folder)
         hints = ServiceHints()
+        cache = ParseCache()
         engine_hint = engine_hint_from_manifest(folder, _MANIFEST_FILES, _ENGINE_DRIVER_KEYWORDS)
         src = folder / "src" / "main"
         scan_root = src if src.is_dir() else folder
@@ -127,7 +130,9 @@ class JvmSpringDetector:
 
         for path, line_no, match in find_matches(scan_root, EXTENSIONS, _MAPPING_RE):
             annotation, route = match.group(1), match.group(2) or "/"
-            hints.endpoints.append(_endpoint_hint(_METHOD_BY_ANNOTATION[annotation], route, path, folder, line_no))
+            hints.endpoints.append(
+                _endpoint_hint(_METHOD_BY_ANNOTATION[annotation], route, path, folder, line_no, cache),
+            )
 
         for path, line_no, match in find_matches(scan_root, EXTENSIONS, _OUTBOUND_RE):
             hints.outbound_calls.append(

@@ -88,11 +88,41 @@ def _excerpt_from_node(node: Node, path: Path, folder: Path, source: bytes) -> C
     )
 
 
-def _find_in_package(folder: Path, package: str, name: str, exclude: Path) -> tuple[Tree, Node, Path, bytes] | None:
-    for candidate in iter_files(folder, EXTENSIONS):
+class ParseCache:
+    """Reused across every endpoint in one `collect_hints()` pass. Without it,
+    `resolve_kotlin_java_calls()` re-parses the *same* candidate files, and re-walks
+    the *same* folder via `iter_files()`, once per endpoint that can't resolve a call
+    locally -- for N endpoints all calling one shared helper, that's N full
+    tree-sitter parses of that one file, and N fresh `rglob()`s of the whole service.
+    Real services can have dozens of endpoints, so this isn't just wasted CPU: it's
+    thousands of avoidable native parse/free cycles on the exact code path (tree-sitter
+    `Tree`/`Node` objects, walked by `iter_files`'s directory recursion in between) a
+    real SIGBUS crash was found inside. Caching turns that into at most one parse and
+    one directory walk per file, for the lifetime of one `collect_hints()` call.
+    """
+
+    def __init__(self) -> None:
+        self._parsed: dict[Path, tuple[Tree, Node, bytes] | None] = {}
+        self._files: dict[Path, list[Path]] = {}
+
+    def parse(self, path: Path) -> tuple[Tree, Node, bytes] | None:
+        if path not in self._parsed:
+            self._parsed[path] = _parse(path)
+        return self._parsed[path]
+
+    def files(self, folder: Path) -> list[Path]:
+        if folder not in self._files:
+            self._files[folder] = list(iter_files(folder, EXTENSIONS))
+        return self._files[folder]
+
+
+def _find_in_package(
+    folder: Path, package: str, name: str, exclude: Path, cache: ParseCache,
+) -> tuple[Tree, Node, Path, bytes] | None:
+    for candidate in cache.files(folder):
         if candidate == exclude:
             continue
-        parsed = _parse(candidate)
+        parsed = cache.parse(candidate)
         if parsed is None:
             continue
         candidate_tree, candidate_root, candidate_source = parsed
@@ -110,15 +140,21 @@ def resolve_kotlin_java_calls(
     excerpt_text: str,
     exclude_line_range: tuple[int, int],
     max_hops: int = 3,
+    cache: ParseCache | None = None,
 ) -> list[CodeExcerpt]:
     """Same-file first (mirrors `resolve_local_calls`'s one-hop posture, just with
     exact AST boundaries instead of a fixed line window); when a called name isn't
     defined in this file but is explicitly imported (Kotlin's `import a.b.out` for a
     top-level/extension function, or Java's `import a.b.Util` behind a `Util.method()`
     call), follows it into the one file under `folder` whose package matches.
+
+    `cache` should be shared across every call made for the same `collect_hints()`
+    pass (see `ParseCache`); a fresh one is created when called standalone.
     """
+    if cache is None:
+        cache = ParseCache()
     logger.debug("resolving JVM/Kotlin calls for endpoint: %s (lines %s-%s)", path, *exclude_line_range)
-    parsed = _parse(path)
+    parsed = cache.parse(path)
     if parsed is None:
         return []
     # `_tree` is unread but must stay bound: `root` is a view into its memory (see `_parse`).
@@ -149,7 +185,7 @@ def resolve_kotlin_java_calls(
         fqn = imports.get(name)
         if fqn is None or "." not in fqn:
             continue
-        found = _find_in_package(folder, fqn.rsplit(".", 1)[0], name, exclude=path)
+        found = _find_in_package(folder, fqn.rsplit(".", 1)[0], name, exclude=path, cache=cache)
         if found is None:
             continue
         _found_tree, found_node, found_path, found_source = found  # kept bound, see `_tree` above
