@@ -460,7 +460,7 @@ def _cmd_metrics(args: argparse.Namespace) -> int:
     """Display local, redacted operational metrics without writing to SQLite."""
     if args.watch:
         try:
-            interval = _resolve_metrics_watch_interval(args.interval)
+            interval, interval_source = _resolve_metrics_watch_interval(args.interval)
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
@@ -483,6 +483,7 @@ def _cmd_metrics(args: argparse.Namespace) -> int:
                     alerts_only=args.alerts_only,
                     include_updated_at=args.alerts_only,
                     watch_interval=interval if args.watch and not args.alerts_only else None,
+                    watch_interval_source=interval_source if args.watch and not args.alerts_only else None,
                 ))
                 previous_state = snapshot_state_key(snapshot, alerts_only=args.alerts_only)
             if not args.watch:
@@ -492,8 +493,14 @@ def _cmd_metrics(args: argparse.Namespace) -> int:
         conn.close()
 
 
-def _resolve_metrics_watch_interval(command_interval: float | None) -> float:
-    value = command_interval if command_interval is not None else os.environ.get(_METRICS_INTERVAL_ENV, "1.0")
+def _resolve_metrics_watch_interval(command_interval: float | None) -> tuple[float, str]:
+    environment_value = os.environ.get(_METRICS_INTERVAL_ENV)
+    if command_interval is not None:
+        value, source = command_interval, "CLI"
+    elif environment_value is not None:
+        value, source = environment_value, "environment"
+    else:
+        value, source = "1.0", "default"
     try:
         interval = float(value)
     except (TypeError, ValueError) as exc:
@@ -506,7 +513,7 @@ def _resolve_metrics_watch_interval(command_interval: float | None) -> float:
     minimum = _resolve_metrics_min_interval()
     if minimum is not None and interval < minimum:
         raise ValueError(f"interval must be at least {minimum:g} seconds in --watch mode")
-    return interval
+    return interval, source
 
 
 def _resolve_metrics_min_interval() -> float | None:

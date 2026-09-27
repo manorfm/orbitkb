@@ -149,8 +149,25 @@ def test_metrics_watch_reads_interval_from_environment_and_cli_overrides_it(tmp_
 
     assert observed_intervals == [0.25, 0.5]
     rendered = capsys.readouterr().out
-    assert "refresh: every 0.25s" in rendered
-    assert "refresh: every 0.5s" in rendered
+    assert "refresh: every 0.25s (environment)" in rendered
+    assert "refresh: every 0.5s (CLI)" in rendered
+
+
+def test_metrics_watch_interval_reports_its_default_source(monkeypatch):
+    monkeypatch.delenv("ORBITKB_METRICS_INTERVAL", raising=False)
+    monkeypatch.delenv("ORBITKB_METRICS_MIN_INTERVAL", raising=False)
+
+    interval, source = cli._resolve_metrics_watch_interval(None)
+
+    assert interval == 1.0
+    assert source == "default"
+
+
+def test_metrics_watch_rejects_an_empty_environment_interval(monkeypatch):
+    monkeypatch.setenv("ORBITKB_METRICS_INTERVAL", "")
+
+    with pytest.raises(ValueError, match="ORBITKB_METRICS_INTERVAL must be a number"):
+        cli._resolve_metrics_watch_interval(None)
 
 
 def test_metrics_watch_rejects_an_invalid_environment_interval(tmp_path, capsys, monkeypatch):

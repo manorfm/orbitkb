@@ -314,8 +314,9 @@ Optionally set `ORBITKB_METRICS_MIN_INTERVAL` as a finite positive safety floor.
 requested interval below it fails before the watch starts, including an explicit
 `--interval`; it is never silently clamped.
 `orbitkb metrics --help` also shows runnable examples for both environment variables.
-In full `--watch` mode, the monitor prints `refresh: every …` using the effective
-interval after those rules; `--alerts-only` omits it to keep the filtered view focused.
+In full `--watch` mode, the monitor prints `refresh: every … (CLI|environment|default)`
+using the effective interval after those rules; `--alerts-only` omits it to keep the
+filtered view focused.
 Within validation and plan quality, color is reserved for nonzero actionable states:
 pending or stale items use yellow, while failures and confirmed breaks use red.
 When plan quality has no actionable risk, the monitor collapses its detailed coverage,
