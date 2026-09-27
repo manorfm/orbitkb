@@ -97,6 +97,7 @@ def test_metrics_alerts_only_hides_healthy_operational_details(tmp_path, capsys)
     assert cli._cmd_metrics(args) == 0
     rendered = capsys.readouterr().out
     assert "No alerts" in rendered
+    assert "updated:" in rendered
     assert "Indexing" not in rendered
     assert "Totals" not in rendered
 
@@ -441,6 +442,20 @@ def test_alerts_only_monitor_ignores_healthy_updates_and_hidden_activity(tmp_pat
     }
 
     assert should_render_snapshot(actionable_update, previous_state, alerts_only=True) is True
+
+
+def test_alerts_only_monitor_shows_its_last_render_time(tmp_path):
+    conn = open_db(tmp_path / "monitor.db")
+
+    rendered = render_snapshot(
+        collect_snapshot(conn),
+        color=False,
+        current_time=datetime(2026, 9, 27, 3, 45, 6, tzinfo=timezone.utc),
+        alerts_only=True,
+        include_updated_at=True,
+    )
+
+    assert "updated: 2026-09-27 03:45:06 UTC" in rendered
 
 
 def test_local_monitor_renders_active_operation_duration(tmp_path):

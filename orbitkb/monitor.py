@@ -90,11 +90,11 @@ def collect_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
 
 def render_snapshot(
     snapshot: dict[str, Any], color: bool, current_time: datetime | None = None,
-    alerts_only: bool = False,
+    alerts_only: bool = False, include_updated_at: bool = False,
 ) -> str:
     """Render a stable, human-readable snapshot without terminal dependencies."""
     if alerts_only:
-        return _render_alert_snapshot(snapshot, color)
+        return _render_alert_snapshot(snapshot, color, current_time, include_updated_at)
     indexing = snapshot["indexing"]
     agent = snapshot["agent"]
     validation = snapshot["validation"]
@@ -157,13 +157,17 @@ def _paint_if_positive(text: str, value: int, code: str, enabled: bool) -> str:
     return _paint(text, code, enabled and value > 0)
 
 
-def _render_alert_snapshot(snapshot: dict[str, Any], color: bool) -> str:
+def _render_alert_snapshot(
+    snapshot: dict[str, Any], color: bool, current_time: datetime | None, include_updated_at: bool,
+) -> str:
     validation = snapshot["validation"]
     plan_quality = snapshot["plan_quality"]
     action_summary = _action_summary(validation, plan_quality, color)
     lines = [_paint("OrbitKB local monitor", "36", color), "─" * 40]
     if action_summary is None:
         lines.append("No alerts")
+        if include_updated_at:
+            lines.append(_updated_at_line(current_time))
         return "\n".join(lines)
     lines.append(action_summary)
     manual = validation["manual"]
@@ -194,6 +198,8 @@ def _render_alert_snapshot(snapshot: dict[str, Any], color: bool) -> str:
         lines.extend(_plan_quality_detail_lines(
             plan_quality["coverage"], plan_quality["risks"], color, alerts_only=True,
         ))
+    if include_updated_at:
+        lines.append(_updated_at_line(current_time))
     return "\n".join(lines)
 
 
@@ -227,6 +233,15 @@ def _closure_alert_line(closures: dict[str, int], color: bool) -> str:
     if closures["needs_review"]:
         values.append(_paint(f"review={closures['needs_review']}", "33", color))
     return "closures: " + " ".join(values)
+
+
+def _updated_at_line(current_time: datetime | None) -> str:
+    timestamp = current_time or datetime.now(timezone.utc)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    else:
+        timestamp = timestamp.astimezone(timezone.utc)
+    return f"updated: {timestamp:%Y-%m-%d %H:%M:%S UTC}"
 
 
 def _action_summary(

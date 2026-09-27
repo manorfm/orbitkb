@@ -469,7 +469,12 @@ def _cmd_metrics(args: argparse.Namespace) -> int:
             if should_render_snapshot(snapshot, previous_state, alerts_only=args.alerts_only):
                 if args.watch and sys.stdout.isatty():
                     print("\033[2J\033[H", end="")
-                print(render_snapshot(snapshot, color=color, alerts_only=args.alerts_only))
+                print(render_snapshot(
+                    snapshot,
+                    color=color,
+                    alerts_only=args.alerts_only,
+                    include_updated_at=args.alerts_only,
+                ))
                 previous_state = snapshot_state_key(snapshot, alerts_only=args.alerts_only)
             if not args.watch:
                 return 0
