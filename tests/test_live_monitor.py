@@ -238,6 +238,36 @@ def test_local_monitor_separates_ready_plans_without_a_closure_review(tmp_path):
     )
 
 
+def test_local_monitor_colors_only_actionable_plan_quality_counts(tmp_path):
+    conn = open_db(tmp_path / "monitor.db")
+    reviewed_plan_id = change_plans.record_plan(conn, None, "ready", 2200, [], [])
+    repository_id = repositories.ensure_repository(conn, "commerce", "/workspace/commerce")
+    change_closure_summaries.record_summary(conn, reviewed_plan_id, repository_id, {
+        "status": "ready_for_manual_review",
+        "coverage": {
+            "planned_units": 1,
+            "covered_units": 1,
+            "omitted_units": 0,
+            "unassessable_units": 0,
+        },
+        "risks": {
+            "files_outside_planned_surface": 0,
+            "public_error_contracts_at_risk": 0,
+            "public_error_contract_breaks": 0,
+        },
+    })
+
+    healthy_quality = render_snapshot(collect_snapshot(conn), color=True).split("Plan quality\n", 1)[1]
+
+    assert "\033[" not in healthy_quality
+
+    change_plans.record_plan(conn, None, "ready", 2200, [], [])
+
+    actionable_quality = render_snapshot(collect_snapshot(conn), color=True).split("Plan quality\n", 1)[1]
+
+    assert "\033[33mawaiting=1\033[0m" in actionable_quality
+
+
 def test_local_monitor_marks_closure_reviews_preceding_repository_indexing_as_stale(tmp_path):
     conn = open_db(tmp_path / "monitor.db")
     plan_id = change_plans.record_plan(conn, None, "ready", 2200, [], [])

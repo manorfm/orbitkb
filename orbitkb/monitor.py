@@ -128,43 +128,67 @@ def render_snapshot(
         f"  change plans: {_plan_statuses(agent['change_plans'])}",
         "Validation",
         "  manual checks: " + " ".join([
-            _paint(f"passed={manual['passed']}", "32", color),
-            _paint(f"pending={manual['pending']}", "33", color),
-            _paint(f"failed={manual['failed']}", "31", color),
+            f"passed={manual['passed']}",
+            _paint_if_positive(f"pending={manual['pending']}", manual["pending"], "33", color),
+            _paint_if_positive(f"failed={manual['failed']}", manual["failed"], "31", color),
         ]),
         "  CI reported: " + " ".join([
-            _paint(f"passed={ci_reported['passed']}", "32", color),
-            _paint(f"failed={ci_reported['failed']}", "31", color),
+            f"passed={ci_reported['passed']}",
+            _paint_if_positive(f"failed={ci_reported['failed']}", ci_reported["failed"], "31", color),
         ]),
         "Plan quality",
         "  review coverage: " + " ".join([
             f"ready={plan_quality['ready_plans']}",
-            _paint(f"reviewed={plan_quality['reviewed_ready_plans']}", "32", color),
-            _paint(f"awaiting={plan_quality['unreviewed_ready_plans']}", "33", color),
-            _paint(
-                f"potentially stale={plan_quality['potentially_stale_ready_plans']}", "33", color,
+            f"reviewed={plan_quality['reviewed_ready_plans']}",
+            _paint_if_positive(
+                f"awaiting={plan_quality['unreviewed_ready_plans']}",
+                plan_quality["unreviewed_ready_plans"], "33", color,
+            ),
+            _paint_if_positive(
+                f"potentially stale={plan_quality['potentially_stale_ready_plans']}",
+                plan_quality["potentially_stale_ready_plans"], "33", color,
             ),
         ]),
         "  closures: " + " ".join([
-            _paint(f"attention={closure_counts['needs_attention']}", "31", color),
-            _paint(f"review={closure_counts['needs_review']}", "33", color),
-            _paint(f"ready={closure_counts['ready_for_manual_review']}", "32", color),
+            _paint_if_positive(
+                f"attention={closure_counts['needs_attention']}", closure_counts["needs_attention"], "31", color,
+            ),
+            _paint_if_positive(
+                f"review={closure_counts['needs_review']}", closure_counts["needs_review"], "33", color,
+            ),
+            f"ready={closure_counts['ready_for_manual_review']}",
         ]),
-        (
-            f"  coverage: {coverage['covered_units']}/{coverage['planned_units']} covered, "
-            f"{coverage['omitted_units']} omitted, {coverage['unassessable_units']} unassessable"
+        "  coverage: " + " ".join([
+            f"{coverage['covered_units']}/{coverage['planned_units']} covered,",
+            _paint_if_positive(f"{coverage['omitted_units']} omitted,", coverage["omitted_units"], "33", color),
+            _paint_if_positive(
+                f"{coverage['unassessable_units']} unassessable", coverage["unassessable_units"], "33", color,
+            ),
+        ]),
+        "  contracts: " + " ".join([
+            _paint_if_positive(
+                f"{risks['public_error_contracts_at_risk']} at risk,",
+                risks["public_error_contracts_at_risk"], "33", color,
+            ),
+            _paint_if_positive(
+                f"{risks['public_error_contract_breaks']} break",
+                risks["public_error_contract_breaks"], "31", color,
+            ),
+        ]),
+        "  " + _paint_if_positive(
+            f"outside planned surface: {risks['files_outside_planned_surface']}",
+            risks["files_outside_planned_surface"], "33", color,
         ),
-        (
-            f"  contracts: {risks['public_error_contracts_at_risk']} at risk, "
-            f"{risks['public_error_contract_breaks']} break"
-        ),
-        f"  outside planned surface: {risks['files_outside_planned_surface']}",
     ])
     return "\n".join(lines)
 
 
 def _paint(text: str, code: str, enabled: bool) -> str:
     return f"\033[{code}m{text}\033[0m" if enabled else text
+
+
+def _paint_if_positive(text: str, value: int, code: str, enabled: bool) -> str:
+    return _paint(text, code, enabled and value > 0)
 
 
 def _plan_statuses(statuses: dict[str, int]) -> str:

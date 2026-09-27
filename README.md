@@ -306,6 +306,8 @@ orbitkb metrics --watch --interval 1
 changes, except while an active operation needs its duration updated. When attached to
 a terminal it uses color in addition to explicit status text. Use `--no-color` for
 logs or plain output; `--interval` must be greater than zero in watch mode.
+Within validation and plan quality, color is reserved for nonzero actionable states:
+pending or stale items use yellow, while failures and confirmed breaks use red.
 During `orbitkb index` or `orbitkb update`, it also shows the current normalized
 generation stage and completed/total unit count. It never displays source paths,
 endpoint names, prompts or generated content.
