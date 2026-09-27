@@ -2,6 +2,7 @@
 resolution so `index`/`update` never shell out to a real `claude`/`codex` CLI.
 """
 import argparse
+import logging
 from pathlib import Path
 
 import pytest
@@ -74,6 +75,41 @@ def test_index_command_with_stack_override_bypasses_discovery(tmp_path: Path):
     assert exit_code == 0
     conn = open_db(db_path)
     assert services_repo.get_service_by_name(conn, "some-library-core") is not None
+
+
+def test_index_command_accepts_verbose_flag(tmp_path: Path):
+    args = _parse(["index", str(SAMPLE_ROOT), "--db", str(tmp_path / "t.db"), "--verbose"])
+
+    assert args.verbose is True
+
+
+def test_index_command_verbose_defaults_to_false(tmp_path: Path):
+    args = _parse(["index", str(SAMPLE_ROOT), "--db", str(tmp_path / "t.db")])
+
+    assert args.verbose is False
+
+
+def test_update_command_accepts_verbose_flag(tmp_path: Path):
+    args = _parse(["update", "--repository", "shop", "--db", str(tmp_path / "t.db"), "--verbose"])
+
+    assert args.verbose is True
+
+
+def test_configure_verbose_logging_raises_root_level_to_debug():
+    logging.getLogger().setLevel(logging.WARNING)
+    try:
+        cli._configure_verbose_logging(True)
+        assert logging.getLogger().getEffectiveLevel() == logging.DEBUG
+    finally:
+        logging.getLogger().setLevel(logging.WARNING)
+
+
+def test_configure_verbose_logging_does_nothing_when_false():
+    logging.getLogger().setLevel(logging.WARNING)
+
+    cli._configure_verbose_logging(False)
+
+    assert logging.getLogger().getEffectiveLevel() == logging.WARNING
 
 
 def test_update_command_reindexes_known_service(tmp_path: Path, capsys):

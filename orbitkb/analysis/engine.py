@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import logging
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -65,6 +66,12 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
 STATIC_ANALYSIS_INPUT_VERSION = "31"
+
+# Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
+# logger's level. A native crash (see _edges_for/_text) is not a catchable Python
+# exception -- there's no traceback to inspect after the fact -- so the file and
+# function named by the last flushed DEBUG line are what actually pinpoint it.
+logger = logging.getLogger(__name__)
 
 
 def _walk(node: Node):
@@ -520,6 +527,7 @@ class _FileAnalyzer:
 
     @staticmethod
     def _edges_for(function: _Function, path: Path, root: Path, source: bytes) -> list[FlowEdge]:
+        logger.debug("  analyzing function: %s (%s)", function.symbol, path.name)
         edges = []
         for node in _walk(function.body):
             if node.type not in {"call_expression", "method_invocation"}:
@@ -3456,6 +3464,7 @@ class StaticAnalysisEngine:
         result = AnalysisResult()
         files = self._source_files(root, patterns)
         for path in files:
+            logger.debug("analyzing file: %s", path)
             result.extend(analyzer.analyze(path, root))
         if stack in {"node-ts", "node-js"}:
             schema = "\n".join(path.read_text(encoding="utf-8", errors="ignore") for path in files if path.suffix in {".graphql", ".gql"})

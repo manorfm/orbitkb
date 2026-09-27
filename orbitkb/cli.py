@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -29,7 +30,18 @@ from orbitkb.mcp import queries as mcp_queries
 from orbitkb.setup.actions import SetupAction
 
 
+def _configure_verbose_logging(verbose: bool) -> None:
+    """`--verbose` names the exact file and function being analyzed at DEBUG
+    level (see analysis/engine.py). A native crash (a segfault, not a
+    catchable Python exception) leaves no traceback to inspect afterward --
+    the last flushed line here is what actually pinpoints it, without needing
+    the source file itself."""
+    if verbose:
+        logging.basicConfig(level=logging.DEBUG, format="%(message)s", stream=sys.stderr, force=True)
+
+
 def _cmd_index(args: argparse.Namespace) -> int:
+    _configure_verbose_logging(args.verbose)
     conn = open_db(args.db)
     backend = resolve_backend(args.backend, args.model, args.claude_bare, args.codex_api_key)
     embedding_backend = try_create_default_backend()
@@ -92,6 +104,7 @@ def _update_one_service(
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
+    _configure_verbose_logging(args.verbose)
     if args.service and args.repository:
         print("error: pass either a service name or --repository, not both", file=sys.stderr)
         return 1
@@ -550,6 +563,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_index.add_argument("--repository-name", default=None, help="Explicit repository name; avoids collisions when indexing several repos into one shared DB")
     p_index.add_argument("--force", action="store_true", help="Regenerate everything, ignoring file-hash skip")
+    p_index.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="Log every file and function being statically analyzed at DEBUG level (to stderr) — "
+             "for diagnosing a crash: the last line printed names exactly where it happened",
+    )
     add_backend_args(p_index)
     add_depth_args(p_index)
     p_index.set_defaults(func=_cmd_index)
@@ -567,6 +585,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Update every service in this repository instead of one by name (see `orbitkb list`)",
     )
     p_update.add_argument("--force", action="store_true", help="Regenerate everything, ignoring file-hash skip")
+    p_update.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="Log every file and function being statically analyzed at DEBUG level (to stderr) — "
+             "for diagnosing a crash: the last line printed names exactly where it happened",
+    )
     add_backend_args(p_update)
     add_depth_args(p_update)
     p_update.set_defaults(func=_cmd_update)
