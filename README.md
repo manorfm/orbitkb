@@ -317,6 +317,8 @@ counts for validation, plan-review, closure and quality follow-ups. It identifie
 plan, repository, path, command or source content.
 Use `--alerts-only` to show that summary and only the validation or plan-quality
 sections with actionable counts; it prints `No alerts` when nothing needs follow-up.
+With `--watch --alerts-only`, the terminal redraws only when that filtered alert view
+changes, ignoring healthy totals and background activity that the view omits.
 During `orbitkb index` or `orbitkb update`, it also shows the current normalized
 generation stage and completed/total unit count. It never displays source paths,
 endpoint names, prompts or generated content.

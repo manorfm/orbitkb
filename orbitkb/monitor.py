@@ -482,14 +482,21 @@ def _empty_plan_quality(ready_plan_count: int = 0) -> dict[str, Any]:
     }
 
 
-def snapshot_state_key(snapshot: dict[str, Any]) -> str:
-    """Return a stable key for state changes, excluding render-only elapsed time."""
+def snapshot_state_key(snapshot: dict[str, Any], alerts_only: bool = False) -> str:
+    """Return a stable key for visible state changes, excluding elapsed time."""
+    if alerts_only:
+        return render_snapshot(snapshot, color=False, alerts_only=True)
     return json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
 
 
-def should_render_snapshot(snapshot: dict[str, Any], previous_state: str | None) -> bool:
+def should_render_snapshot(
+    snapshot: dict[str, Any], previous_state: str | None, alerts_only: bool = False,
+) -> bool:
     """Refresh on a state transition, or once per interval while duration advances."""
-    return previous_state != snapshot_state_key(snapshot) or bool(snapshot["agent"]["active_operations"])
+    return (
+        previous_state != snapshot_state_key(snapshot, alerts_only=alerts_only)
+        or (not alerts_only and bool(snapshot["agent"]["active_operations"]))
+    )
 
 
 def _active_operations(operations: list[dict[str, str]], current_time: datetime | None) -> str:

@@ -418,6 +418,31 @@ def test_monitor_redraws_only_for_state_changes_unless_work_is_active(tmp_path):
     assert should_render_snapshot(active, previous_state=snapshot_state_key(active)) is True
 
 
+def test_alerts_only_monitor_ignores_healthy_updates_and_hidden_activity(tmp_path):
+    conn = open_db(tmp_path / "monitor.db")
+    idle = collect_snapshot(conn)
+    previous_state = snapshot_state_key(idle, alerts_only=True)
+    healthy_update = {
+        **idle,
+        "indexing": {**idle["indexing"], "runs": 1},
+        "agent": {**idle["agent"], "active_operations": [{
+            "operation": "plan_change", "started_at": "2026-09-27T00:00:00+00:00",
+        }]},
+    }
+
+    assert should_render_snapshot(healthy_update, previous_state, alerts_only=True) is False
+
+    actionable_update = {
+        **healthy_update,
+        "validation": {
+            **healthy_update["validation"],
+            "manual": {"total": 1, "passed": 0, "pending": 1, "failed": 0},
+        },
+    }
+
+    assert should_render_snapshot(actionable_update, previous_state, alerts_only=True) is True
+
+
 def test_local_monitor_renders_active_operation_duration(tmp_path):
     conn = open_db(tmp_path / "monitor.db")
     snapshot = collect_snapshot(conn)
