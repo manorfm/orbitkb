@@ -158,6 +158,32 @@ def render_snapshot(
             ),
             f"ready={closure_counts['ready_for_manual_review']}",
         ]),
+    ])
+    lines.extend(_plan_quality_detail_lines(coverage, risks, color))
+    return "\n".join(lines)
+
+
+def _paint(text: str, code: str, enabled: bool) -> str:
+    return f"\033[{code}m{text}\033[0m" if enabled else text
+
+
+def _paint_if_positive(text: str, value: int, code: str, enabled: bool) -> str:
+    return _paint(text, code, enabled and value > 0)
+
+
+def _plan_quality_detail_lines(
+    coverage: dict[str, int], risks: dict[str, int], color: bool,
+) -> list[str]:
+    actionable_values = (
+        coverage["omitted_units"],
+        coverage["unassessable_units"],
+        risks["files_outside_planned_surface"],
+        risks["public_error_contracts_at_risk"],
+        risks["public_error_contract_breaks"],
+    )
+    if not any(actionable_values):
+        return ["  quality risks: none"]
+    return [
         "  coverage: " + " ".join([
             f"{coverage['covered_units']}/{coverage['planned_units']} covered,",
             _paint_if_positive(f"{coverage['omitted_units']} omitted,", coverage["omitted_units"], "33", color),
@@ -179,16 +205,7 @@ def render_snapshot(
             f"outside planned surface: {risks['files_outside_planned_surface']}",
             risks["files_outside_planned_surface"], "33", color,
         ),
-    ])
-    return "\n".join(lines)
-
-
-def _paint(text: str, code: str, enabled: bool) -> str:
-    return f"\033[{code}m{text}\033[0m" if enabled else text
-
-
-def _paint_if_positive(text: str, value: int, code: str, enabled: bool) -> str:
-    return _paint(text, code, enabled and value > 0)
+    ]
 
 
 def _plan_statuses(statuses: dict[str, int]) -> str:

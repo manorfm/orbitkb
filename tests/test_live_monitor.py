@@ -260,6 +260,9 @@ def test_local_monitor_colors_only_actionable_plan_quality_counts(tmp_path):
     healthy_quality = render_snapshot(collect_snapshot(conn), color=True).split("Plan quality\n", 1)[1]
 
     assert "\033[" not in healthy_quality
+    assert "quality risks: none" in healthy_quality
+    assert "\n  coverage:" not in healthy_quality
+    assert "\n  contracts:" not in healthy_quality
 
     change_plans.record_plan(conn, None, "ready", 2200, [], [])
 

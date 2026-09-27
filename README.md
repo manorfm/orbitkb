@@ -308,6 +308,9 @@ a terminal it uses color in addition to explicit status text. Use `--no-color` f
 logs or plain output; `--interval` must be greater than zero in watch mode.
 Within validation and plan quality, color is reserved for nonzero actionable states:
 pending or stale items use yellow, while failures and confirmed breaks use red.
+When plan quality has no actionable risk, the monitor collapses its detailed coverage,
+contract and surface lines into `quality risks: none`; those details reappear as soon
+as an actionable count is present.
 During `orbitkb index` or `orbitkb update`, it also shows the current normalized
 generation stage and completed/total unit count. It never displays source paths,
 endpoint names, prompts or generated content.
