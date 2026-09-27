@@ -1,6 +1,6 @@
 [project]
 name = "orbitkb"
-version = "2.85.0"
+version = "2.86.0"
 description = "Task-aware change intelligence for AI coding agents, served via MCP."
 readme = "README.md"
 license = "Apache-2.0"
