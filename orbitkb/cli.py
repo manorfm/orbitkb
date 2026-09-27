@@ -44,6 +44,7 @@ from orbitkb.monitor import (
 from orbitkb.setup.actions import SetupAction
 
 _METRICS_INTERVAL_ENV = "ORBITKB_METRICS_INTERVAL"
+_METRICS_MIN_INTERVAL_ENV = "ORBITKB_METRICS_MIN_INTERVAL"
 
 
 def _configure_verbose_logging(verbose: bool) -> None:
@@ -501,7 +502,25 @@ def _resolve_metrics_watch_interval(command_interval: float | None) -> float:
         raise ValueError("interval must be finite in --watch mode")
     if interval <= 0:
         raise ValueError("interval must be greater than zero in --watch mode")
+    minimum = _resolve_metrics_min_interval()
+    if minimum is not None and interval < minimum:
+        raise ValueError(f"interval must be at least {minimum:g} seconds in --watch mode")
     return interval
+
+
+def _resolve_metrics_min_interval() -> float | None:
+    value = os.environ.get(_METRICS_MIN_INTERVAL_ENV)
+    if value is None:
+        return None
+    try:
+        minimum = float(value)
+    except ValueError as exc:
+        raise ValueError(f"{_METRICS_MIN_INTERVAL_ENV} must be a number") from exc
+    if not math.isfinite(minimum):
+        raise ValueError(f"{_METRICS_MIN_INTERVAL_ENV} must be finite")
+    if minimum <= 0:
+        raise ValueError(f"{_METRICS_MIN_INTERVAL_ENV} must be greater than zero")
+    return minimum
 
 
 def _cmd_context_verify(args: argparse.Namespace) -> int:

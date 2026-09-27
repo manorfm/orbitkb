@@ -157,6 +157,48 @@ def test_metrics_watch_rejects_an_invalid_environment_interval(tmp_path, capsys,
     assert "ORBITKB_METRICS_INTERVAL must be a number" in capsys.readouterr().err
 
 
+def test_metrics_watch_enforces_an_optional_minimum_interval(tmp_path, capsys, monkeypatch):
+    db_path = tmp_path / "monitor.db"
+    open_db(db_path)
+    monkeypatch.setenv("ORBITKB_METRICS_INTERVAL", "0.1")
+    monkeypatch.setenv("ORBITKB_METRICS_MIN_INTERVAL", "0.25")
+    args = cli.build_parser().parse_args([
+        "metrics", "--watch", "--db", str(db_path), "--no-color",
+    ])
+    monkeypatch.setattr(
+        cli.time,
+        "sleep",
+        lambda _: (_ for _ in ()).throw(AssertionError("below-minimum interval must not start watch")),
+    )
+
+    assert cli._cmd_metrics(args) == 1
+    assert "interval must be at least 0.25 seconds" in capsys.readouterr().err
+
+    explicit_args = cli.build_parser().parse_args([
+        "metrics", "--watch", "--interval", "0.1", "--db", str(db_path), "--no-color",
+    ])
+
+    assert cli._cmd_metrics(explicit_args) == 1
+    assert "interval must be at least 0.25 seconds" in capsys.readouterr().err
+
+
+def test_metrics_watch_rejects_an_invalid_minimum_interval(tmp_path, capsys, monkeypatch):
+    db_path = tmp_path / "monitor.db"
+    open_db(db_path)
+    monkeypatch.setenv("ORBITKB_METRICS_MIN_INTERVAL", "not-a-number")
+    args = cli.build_parser().parse_args([
+        "metrics", "--watch", "--interval", "0.5", "--db", str(db_path), "--no-color",
+    ])
+    monkeypatch.setattr(
+        cli.time,
+        "sleep",
+        lambda _: (_ for _ in ()).throw(AssertionError("invalid minimum must not start watch")),
+    )
+
+    assert cli._cmd_metrics(args) == 1
+    assert "ORBITKB_METRICS_MIN_INTERVAL must be a number" in capsys.readouterr().err
+
+
 def test_local_monitor_reports_redacted_agent_context_and_change_plans(tmp_path):
     conn = open_db(tmp_path / "monitor.db")
     context_telemetry.record_run(conn, {

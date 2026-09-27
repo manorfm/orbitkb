@@ -310,6 +310,9 @@ logs or plain output; `--interval` must be greater than zero in watch mode.
 `ORBITKB_METRICS_INTERVAL` can supply the watch interval when `--interval` is
 omitted; an explicit CLI value takes precedence, and either value must be finite and
 greater than zero.
+Optionally set `ORBITKB_METRICS_MIN_INTERVAL` as a finite positive safety floor. A
+requested interval below it fails before the watch starts, including an explicit
+`--interval`; it is never silently clamped.
 Within validation and plan quality, color is reserved for nonzero actionable states:
 pending or stale items use yellow, while failures and confirmed breaks use red.
 When plan quality has no actionable risk, the monitor collapses its detailed coverage,
