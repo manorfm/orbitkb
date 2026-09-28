@@ -136,6 +136,33 @@ def test_java_spring_analyzer_extracts_a_secured_requirement(tmp_path: Path):
     ]
 
 
+def test_jvm_spring_analyzer_extracts_a_filter_chain_route_requirement(tmp_path: Path):
+    (tmp_path / "SecurityConfig.kt").write_text(
+        '''@Configuration
+class SecurityConfig {
+    @Bean
+    fun filterChain(http: HttpSecurity): SecurityFilterChain {
+        http {
+            authorizeHttpRequests {
+                authorize(HttpMethod.POST, "/orders/{id}/cancel", hasRole("ADMIN"))
+                authorize(anyRequest, authenticated)
+            }
+        }
+        return http.build()
+    }
+}
+''',
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(r.route_pattern, r.method, r.requirement, r.roles) for r in result.security_requirements] == [
+        ("/orders/{id}/cancel", "POST", "hasRole", ("ADMIN",)),
+        ("**", None, "authenticated", ()),
+    ]
+
+
 def test_jvm_spring_analyzer_links_feign_invocation_with_a_path_parameter_in_the_mapping(tmp_path: Path):
     """The Feign interface body used to be captured with a naive `.*?}` regex, which
     stopped at the FIRST `}` anywhere in the body -- including one inside a route's

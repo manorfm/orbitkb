@@ -44,6 +44,7 @@ from orbitkb.analysis.jvm_grpc_analyzer import (
     kotlin_grpc_handlers,
 )
 from orbitkb.analysis.jvm_scanner import find_matching_brace
+from orbitkb.analysis.jvm_security_analyzer import spring_filter_chain_security_requirements
 from orbitkb.analysis.models import (
     AnalysisResult,
     CloudFact,
@@ -3111,6 +3112,7 @@ class StaticAnalysisEngine:
         if stack == "jvm-spring":
             result.static_service_calls.extend(_spring_feign_service_calls(result, files))
             result.configuration_bindings.extend(_feign_client_url_bindings(files, root))
+            result.security_requirements.extend(spring_filter_chain_security_requirements(files, root))
         result.edges.extend(self._depth_provider.enrich(root, result))
         return result
 

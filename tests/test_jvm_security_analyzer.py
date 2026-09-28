@@ -5,7 +5,12 @@ cross-file concern.
 """
 from __future__ import annotations
 
-from orbitkb.analysis.jvm_security_analyzer import method_security_requirement
+from pathlib import Path
+
+from orbitkb.analysis.jvm_security_analyzer import (
+    method_security_requirement,
+    spring_filter_chain_security_requirements,
+)
 from orbitkb.analysis.models import Evidence
 
 EVIDENCE = Evidence("OrdersController.kt", 12, 14)
@@ -72,3 +77,73 @@ def test_secured_with_multiple_roles():
 
 def test_no_security_annotation_returns_none():
     assert method_security_requirement("x", "@GetMapping(\"/orders\")", EVIDENCE) is None
+
+
+def _write_filter_chain(tmp_path: Path, body: str) -> Path:
+    path = tmp_path / "SecurityConfig.kt"
+    path.write_text(
+        f'''@Configuration
+class SecurityConfig {{
+    @Bean
+    fun filterChain(http: HttpSecurity): SecurityFilterChain {{
+        http {{
+            authorizeHttpRequests {{
+{body}
+            }}
+        }}
+        return http.build()
+    }}
+}}
+''',
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_filter_chain_extracts_a_bare_authenticated_rule_for_any_request(tmp_path: Path):
+    path = _write_filter_chain(tmp_path, "                authorize(anyRequest, authenticated)")
+
+    requirements = spring_filter_chain_security_requirements([path], tmp_path)
+
+    assert [(r.route_pattern, r.method, r.requirement, r.roles) for r in requirements] == [
+        ("**", None, "authenticated", ()),
+    ]
+
+
+def test_filter_chain_extracts_a_pattern_with_an_http_method_and_role_call(tmp_path: Path):
+    path = _write_filter_chain(
+        tmp_path,
+        '                authorize(HttpMethod.POST, "/restaurants/{id}/destinations", hasRole("MANAGER"))',
+    )
+
+    requirements = spring_filter_chain_security_requirements([path], tmp_path)
+
+    assert [(r.route_pattern, r.method, r.requirement, r.roles) for r in requirements] == [
+        ("/restaurants/{id}/destinations", "POST", "hasRole", ("MANAGER",)),
+    ]
+
+
+def test_filter_chain_marks_a_custom_authorization_manager_without_a_resolvable_policy(tmp_path: Path):
+    path = _write_filter_chain(
+        tmp_path,
+        '                authorize("/clusters/{clusterId}/**", ClusterAccessAuthorizationManager(unknownPolicy()))',
+    )
+
+    requirements = spring_filter_chain_security_requirements([path], tmp_path)
+
+    assert [(r.route_pattern, r.requirement, r.roles) for r in requirements] == [
+        ("/clusters/{clusterId}/**", "custom:ClusterAccessAuthorizationManager", ()),
+    ]
+
+
+def test_filter_chain_ignores_a_dynamic_route_pattern(tmp_path: Path):
+    path = _write_filter_chain(tmp_path, "                authorize(someComputedPattern, authenticated)")
+
+    assert spring_filter_chain_security_requirements([path], tmp_path) == []
+
+
+def test_filter_chain_ignores_files_that_never_mention_security_filter_chain(tmp_path: Path):
+    path = tmp_path / "OrdersController.kt"
+    path.write_text("class OrdersController { fun authorize(x: String) {} }", encoding="utf-8")
+
+    assert spring_filter_chain_security_requirements([path], tmp_path) == []
