@@ -353,6 +353,24 @@ def list_static_security_requirements(conn: sqlite3.Connection, service_id: int)
     ).fetchall()
 
 
+def list_static_security_requirements_in_declaration_order(
+    conn: sqlite3.Connection, service_id: int,
+) -> list[sqlite3.Row]:
+    """Same rows as `list_static_security_requirements`, ordered as originally
+    declared (insertion order) rather than alphabetically -- needed to correlate
+    a route to the requirement that actually governs it, since Spring Security
+    itself evaluates `authorizeHttpRequests` rules in declaration order and stops
+    at the first match; a later, broader rule (e.g. a trailing catch-all) must
+    never be preferred over an earlier, more specific one just because it sorts
+    first alphabetically.
+    """
+    return conn.execute(
+        """SELECT route_pattern, method, symbol, requirement, roles_json, file_path, start_line, end_line
+           FROM static_security_requirements WHERE service_id = ? ORDER BY id""",
+        (service_id,),
+    ).fetchall()
+
+
 def list_static_cloud_facts(conn: sqlite3.Connection, service_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         """SELECT provider, resource_type, service_name, operation, operation_kind, sdk, target_name,

@@ -429,6 +429,49 @@ def classify_endpoint_kind(path: str) -> str:
     return "rest"
 
 
+def _route_segments_match(security_segment: str, api_segment: str) -> bool:
+    if security_segment == "*" or security_segment.startswith("{") or api_segment.startswith("{"):
+        return True
+    return security_segment == api_segment
+
+
+def route_pattern_covers(security_pattern: str, api_path: str) -> bool:
+    """Whether a Spring Security Ant-style route pattern (from a
+    `SecurityFilterChain`'s `authorizeHttpRequests` block, e.g.
+    `"/restaurants/{id}/**"`) covers a specific API's own declared route (e.g.
+    `"/restaurants/{id}/cancel"`) -- structural segment matching: a `{var}`/`*`
+    segment in either pattern matches any single segment (path-variable names
+    never need to agree between the two), and a trailing `**` matches any
+    remaining depth, including none.
+    """
+    security_segments = [s for s in security_pattern.split("/") if s]
+    api_segments = [s for s in api_path.split("/") if s]
+    for i, security_segment in enumerate(security_segments):
+        if security_segment == "**":
+            return True
+        if i >= len(api_segments) or not _route_segments_match(security_segment, api_segments[i]):
+            return False
+    return len(api_segments) == len(security_segments)
+
+
+def _security_shape_for_api(requirements: list[sqlite3.Row], method: str, path: str) -> dict | None:
+    """The first (declaration-order) route-level `SecurityRequirement` whose
+    pattern covers this API and method -- matching Spring Security's own
+    first-match-wins evaluation of `authorizeHttpRequests` rules. Method-level
+    `@PreAuthorize`/`@Secured` requirements aren't correlated here yet: `apis`
+    doesn't store the underlying symbol a requirement's own `symbol` would need
+    to match against.
+    """
+    for req in requirements:
+        if req["route_pattern"] is None:
+            continue
+        if req["method"] is not None and req["method"] != method:
+            continue
+        if route_pattern_covers(req["route_pattern"], path):
+            return {"requirement": req["requirement"], "roles": json.loads(req["roles_json"])}
+    return None
+
+
 def describe_api(conn: sqlite3.Connection, service: str, method: str, path: str, repository: str | None = None) -> dict:
     row, service_error = _resolve_service(conn, service, repository)
     if service_error:
@@ -440,6 +483,7 @@ def describe_api(conn: sqlite3.Connection, service: str, method: str, path: str,
     validations = apis_repo.list_validations_for_api(conn, api["id"])
     response_shape = json.loads(api["response_shape"] or "[]")
     request_shape = json.loads(api["request_shape"] or "[]")
+    security_requirements = flows_repo.list_static_security_requirements_in_declaration_order(conn, row["id"])
     return {
         "service": row["name"], "repository": row["repository_name"],
         "method": api["method"],
@@ -456,6 +500,7 @@ def describe_api(conn: sqlite3.Connection, service: str, method: str, path: str,
             "endpoint_kind": classify_endpoint_kind(api["path"]),
             "request": {"body": request_shape},
             "response": {"body": response_shape},
+            "security": _security_shape_for_api(security_requirements, api["method"], api["path"]),
         },
     }
 

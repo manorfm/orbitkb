@@ -2,8 +2,10 @@
 response_shape treatment (see db/repositories/apis.py upsert_api)."""
 from pathlib import Path
 
+from orbitkb.analysis.models import AnalysisResult, Evidence, SecurityRequirement
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import apis as apis_repo
+from orbitkb.db.repositories import flows as flows_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.mcp import queries
 
@@ -52,6 +54,7 @@ def test_describe_api_includes_a_compact_api_shape_block(tmp_path: Path):
         "endpoint_kind": "rest",
         "request": {"body": request_shape},
         "response": {"body": response_shape},
+        "security": None,
     }
 
 
@@ -62,3 +65,60 @@ def test_describe_api_classifies_a_health_check_path():
     assert classify_endpoint_kind("/actuator/health") == "health_check"
     assert classify_endpoint_kind("/internal/orders") == "internal"
     assert classify_endpoint_kind("/orders/{id}/cancel") == "rest"
+
+
+def test_route_pattern_covers_matches_a_trailing_double_star():
+    from orbitkb.mcp.queries import route_pattern_covers
+
+    assert route_pattern_covers("/restaurants/{id}/**", "/restaurants/{restaurantId}/destinations")
+    assert route_pattern_covers("/restaurants/{id}/**", "/restaurants/{id}")
+    assert not route_pattern_covers("/restaurants/{id}/**", "/clusters/{id}")
+
+
+def test_route_pattern_covers_requires_equal_length_without_a_double_star():
+    from orbitkb.mcp.queries import route_pattern_covers
+
+    assert route_pattern_covers("/orders/{id}/cancel", "/orders/{orderId}/cancel")
+    assert not route_pattern_covers("/orders/{id}/cancel", "/orders/{id}/cancel/confirm")
+    assert not route_pattern_covers("/orders/{id}", "/orders/{id}/cancel")
+
+
+def test_route_pattern_covers_any_request_wildcard():
+    from orbitkb.mcp.queries import route_pattern_covers
+
+    assert route_pattern_covers("**", "/anything/at/all")
+    assert route_pattern_covers("**", "/")
+
+
+def test_describe_api_includes_the_first_matching_security_requirement(tmp_path: Path):
+    """Spring Security evaluates authorizeHttpRequests rules in declaration order
+    and stops at the first match -- a specific POST rule declared before a
+    broader catch-all must win over the catch-all for the route it covers.
+    """
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "menu-manager", "/tmp/menu-manager", "jvm-spring")
+    apis_repo.upsert_api(conn, service_id, "POST", "/restaurants/{id}/destinations", "s", "d", [], [])
+    evidence = Evidence("SecurityConfig.kt", 1, 1)
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(security_requirements=[
+        SecurityRequirement(
+            "/restaurants/{id}/destinations", "POST", None,
+            "custom:RestaurantAccessAuthorizationManager", ("MANAGER",), evidence,
+        ),
+        SecurityRequirement("**", None, None, "authenticated", (), evidence),
+    ]))
+
+    result = queries.describe_api(conn, "menu-manager", "POST", "/restaurants/{id}/destinations")
+
+    assert result["api_shape"]["security"] == {
+        "requirement": "custom:RestaurantAccessAuthorizationManager", "roles": ["MANAGER"],
+    }
+
+
+def test_describe_api_security_is_none_when_no_requirement_covers_the_route(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")
+    apis_repo.upsert_api(conn, service_id, "GET", "/orders", "s", "d", [], [])
+
+    result = queries.describe_api(conn, "orders-service", "GET", "/orders")
+
+    assert result["api_shape"]["security"] is None

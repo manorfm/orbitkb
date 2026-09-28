@@ -205,3 +205,23 @@ def test_static_security_requirements_are_replaced_with_the_flow_snapshot(tmp_pa
 
     flows.replace_analysis(conn, service_id, AnalysisResult())
     assert flows.list_static_security_requirements(conn, service_id) == []
+
+
+def test_static_security_requirements_in_declaration_order_are_not_sorted_alphabetically(tmp_path):
+    """`/zebras/**` sorts alphabetically before `/apples/**`'s specific rule below
+    it -- declaration order must survive that, since Spring Security evaluates
+    authorizeHttpRequests rules in the order they're declared, not alphabetically.
+    """
+    conn = open_db(tmp_path / "security-requirements-order.db")
+    service_id = services.ensure_service(conn, "menu-manager", "/repos/menu-manager", "jvm-spring")
+    evidence = Evidence("SecurityConfig.kt", 10, 10)
+
+    flows.replace_analysis(conn, service_id, AnalysisResult(security_requirements=[
+        SecurityRequirement("/zebras/{id}/destinations", "POST", None, "hasRole", ("MANAGER",), evidence),
+        SecurityRequirement("/apples/**", None, None, "authenticated", (), evidence),
+    ]))
+
+    rows = flows.list_static_security_requirements_in_declaration_order(conn, service_id)
+    assert [row["route_pattern"] for row in rows] == ["/zebras/{id}/destinations", "/apples/**"]
+    alphabetical = flows.list_static_security_requirements(conn, service_id)
+    assert [row["route_pattern"] for row in alphabetical] == ["/apples/**", "/zebras/{id}/destinations"]
