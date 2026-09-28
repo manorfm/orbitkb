@@ -17,9 +17,7 @@ from typing import ClassVar
 from urllib.parse import urlparse
 
 import tree_sitter_go
-import tree_sitter_java
 import tree_sitter_javascript
-import tree_sitter_kotlin
 import tree_sitter_typescript
 import yaml
 from tree_sitter import Language, Node, Parser
@@ -39,6 +37,12 @@ from orbitkb.analysis.cloud_taxonomy import (
 )
 from orbitkb.analysis.depth import DepthProvider, NoopDepthProvider
 from orbitkb.analysis.go_imports import parse_go_import_declarations
+from orbitkb.analysis.jvm_grpc_analyzer import (
+    jvm_grpc_client_bindings,
+    jvm_grpc_handlers,
+    kotlin_grpc_client_bindings,
+    kotlin_grpc_handlers,
+)
 from orbitkb.analysis.models import (
     AnalysisResult,
     CloudFact,
@@ -746,25 +750,6 @@ def _go_literal_http_status(value: str) -> int | None:
     return _HTTP_STATUS_CODES.get(name)
 
 
-_JVM_GRPC_SERVICE_IMPORT = re.compile(
-    r"^\s*import\s+net\.devh\.boot\.grpc\.server\.service\.GrpcService(?=\s|;|$)\s*;?", re.MULTILINE,
-)
-_JVM_GRPC_IMPL_BASE = re.compile(
-    r"\bextends\s+(?:[\w.]+\.)?(?P<service>[A-Za-z_]\w*)Grpc\.\w*ImplBase\b",
-)
-_KOTLIN_GRPC_IMPL_BASE = re.compile(
-    r":\s+(?:[\w.]+\.)?(?P<service>[A-Za-z_]\w*)GrpcKt\.\w*CoroutineImplBase\s*\(",
-)
-_KOTLIN_JAVA_GRPC_IMPL_BASE = re.compile(
-    r":\s+(?:[\w.]+\.)?(?P<service>[A-Za-z_]\w*)Grpc\.\w*ImplBase\s*\(",
-)
-_JVM_GRPC_STUB_FIELD = re.compile(
-    r"\b(?P<service>[A-Za-z_]\w*)Grpc\.[A-Za-z_]\w*Stub\s+(?P<member>[A-Za-z_]\w*)\b",
-)
-_KOTLIN_GRPC_STUB_PROPERTY = re.compile(
-    r"\b(?:val|var)\s+(?P<member>[A-Za-z_]\w*)\s*:\s*(?:[A-Za-z_]\w*\.)*"
-    r"(?P<service>[A-Za-z_]\w*)Grpc(?:Kt)?\.[A-Za-z_]\w*Stub\b",
-)
 _GO_GRPC_UNIMPLEMENTED_SERVER = re.compile(
     r"\b(?:[A-Za-z_]\w*\.)?Unimplemented(?P<service>[A-Za-z_]\w*)Server\b",
 )
@@ -774,167 +759,6 @@ _GO_GRPC_CLIENT_TYPE = re.compile(
 _GO_GRPC_CLIENT_FACTORY = re.compile(
     r"^(?P<package>[A-Za-z_]\w*)\.New(?P<service>[A-Za-z_]\w*)Client$",
 )
-
-
-def _jvm_grpc_handlers(files: list[Path], root: Path) -> list[GrpcHandler]:
-    """Return direct Java ``@GrpcService`` implementations of generated bases."""
-    parser = Parser(Language(tree_sitter_java.language()))
-    handlers: list[GrpcHandler] = []
-    for path in files:
-        if path.suffix != ".java":
-            continue
-        source = path.read_bytes()
-        if _JVM_GRPC_SERVICE_IMPORT.search(source.decode("utf-8", errors="ignore")) is None:
-            continue
-        tree = parser.parse(source)
-        for class_node in (node for node in _walk(tree.root_node) if node.type == "class_declaration"):
-            annotations = _class_annotations(class_node, source)
-            base = _JVM_GRPC_IMPL_BASE.search(_text(class_node, source))
-            class_name = class_node.child_by_field_name("name")
-            class_body = class_node.child_by_field_name("body")
-            if "@GrpcService" not in annotations or base is None or class_name is None or class_body is None:
-                continue
-            service = base.group("service")
-            for method in class_body.named_children:
-                if method.type != "method_declaration" or "@Override" not in _class_annotations(method, source):
-                    continue
-                method_name = method.child_by_field_name("name")
-                if method_name is None:
-                    continue
-                handlers.append(GrpcHandler(
-                    service, _text(method_name, source),
-                    f"{_text(class_name, source)}.{_text(method_name, source)}", _evidence(path, root, method),
-                ))
-    return handlers
-
-
-def _kotlin_grpc_handlers(files: list[Path], root: Path) -> list[GrpcHandler]:
-    """Return direct Kotlin ``@GrpcService`` implementations of generated bases."""
-    parser = Parser(Language(tree_sitter_kotlin.language()))
-    handlers: list[GrpcHandler] = []
-    for path in files:
-        if path.suffix != ".kt":
-            continue
-        source = path.read_bytes()
-        if _JVM_GRPC_SERVICE_IMPORT.search(source.decode("utf-8", errors="ignore")) is None:
-            continue
-        tree = parser.parse(source)
-        for class_node in (node for node in _walk(tree.root_node) if node.type == "class_declaration"):
-            annotations = _class_annotations(class_node, source)
-            class_source = _text(class_node, source)
-            base = _KOTLIN_GRPC_IMPL_BASE.search(class_source) or _KOTLIN_JAVA_GRPC_IMPL_BASE.search(class_source)
-            class_name = class_node.child_by_field_name("name")
-            class_body = next((node for node in class_node.named_children if node.type == "class_body"), None)
-            if "@GrpcService" not in annotations or base is None or class_name is None or class_body is None:
-                continue
-            service = base.group("service")
-            for method in class_body.named_children:
-                if method.type != "function_declaration":
-                    continue
-                modifiers = next((node for node in method.named_children if node.type == "modifiers"), None)
-                if modifiers is None or "override" not in _text(modifiers, source):
-                    continue
-                method_name = method.child_by_field_name("name")
-                if method_name is None:
-                    continue
-                handlers.append(GrpcHandler(
-                    service, _text(method_name, source),
-                    f"{_text(class_name, source)}.{_text(method_name, source)}", _evidence(path, root, method),
-                ))
-    return handlers
-
-
-def _jvm_grpc_client_bindings(files: list[Path], root: Path) -> list[GrpcClientBinding]:
-    """Return direct Java fields typed as generated gRPC stubs."""
-    parser = Parser(Language(tree_sitter_java.language()))
-    bindings: list[GrpcClientBinding] = []
-    for path in files:
-        if path.suffix != ".java":
-            continue
-        source = path.read_bytes()
-        tree = parser.parse(source)
-        for class_node in (node for node in _walk(tree.root_node) if node.type == "class_declaration"):
-            class_name = class_node.child_by_field_name("name")
-            class_body = class_node.child_by_field_name("body")
-            if class_name is None or class_body is None:
-                continue
-            for field in class_body.named_children:
-                if field.type != "field_declaration":
-                    continue
-                matches = list(_JVM_GRPC_STUB_FIELD.finditer(_text(field, source)))
-                if len(matches) != 1:
-                    continue
-                match = matches[0]
-                bindings.append(GrpcClientBinding(
-                    _text(class_name, source), match.group("member"), match.group("service"), _evidence(path, root, field),
-                ))
-    return bindings
-
-
-def _kotlin_grpc_client_bindings(files: list[Path], root: Path) -> list[GrpcClientBinding]:
-    """Return direct Kotlin properties typed as generated Java or coroutine gRPC stubs."""
-    parser = Parser(Language(tree_sitter_kotlin.language()))
-    bindings: list[GrpcClientBinding] = []
-    inheritances: list[tuple[str, str, Evidence]] = []
-    for path in files:
-        if path.suffix != ".kt":
-            continue
-        source = path.read_bytes()
-        tree = parser.parse(source)
-        for class_node in (node for node in _walk(tree.root_node) if node.type == "class_declaration"):
-            class_name = class_node.child_by_field_name("name")
-            class_body = next((node for node in class_node.named_children if node.type == "class_body"), None)
-            if class_name is None:
-                continue
-            class_name_text = _text(class_name, source)
-            superclass = _kotlin_direct_superclass(class_node, source)
-            if superclass is not None:
-                inheritances.append((class_name_text, superclass, _evidence(path, root, class_node)))
-            declarations = []
-            if class_body is not None:
-                declarations.extend(
-                    node for node in class_body.named_children if node.type == "property_declaration"
-                )
-            primary_constructor = next(
-                (node for node in class_node.named_children if node.type == "primary_constructor"), None,
-            )
-            if primary_constructor is not None:
-                declarations.extend(
-                    node for node in _walk(primary_constructor) if node.type == "class_parameter"
-                )
-            for declaration in declarations:
-                matches = list(_KOTLIN_GRPC_STUB_PROPERTY.finditer(_text(declaration, source)))
-                if len(matches) != 1:
-                    continue
-                match = matches[0]
-                bindings.append(GrpcClientBinding(
-                    class_name_text, match.group("member"), match.group("service"),
-                    _evidence(path, root, declaration),
-                ))
-    parent_members: dict[tuple[str, str], list[GrpcClientBinding]] = {}
-    for binding in bindings:
-        parent_members.setdefault((binding.owner, binding.member), []).append(binding)
-    direct_members = set(parent_members)
-    for child, parent, evidence in inheritances:
-        for (owner, member), candidates in parent_members.items():
-            if owner == parent and (child, member) not in direct_members and len(candidates) == 1:
-                binding = candidates[0]
-                bindings.append(GrpcClientBinding(child, member, binding.service, evidence))
-    return bindings
-
-
-def _kotlin_direct_superclass(class_node: Node, source: bytes) -> str | None:
-    """Return one unqualified superclass invoked directly by a Kotlin class."""
-    delegations = next(
-        (node for node in class_node.named_children if node.type == "delegation_specifiers"), None,
-    )
-    if delegations is None:
-        return None
-    specifications = [node for node in delegations.named_children if node.type == "delegation_specifier"]
-    if len(specifications) != 1:
-        return None
-    match = re.fullmatch(r"\s*(?P<name>[A-Za-z_]\w*)\s*\([^()]*\)\s*", _text(specifications[0], source))
-    return match.group("name") if match else None
 
 
 def _go_grpc_handlers(files: list[Path], root: Path) -> list[GrpcHandler]:
@@ -2362,11 +2186,6 @@ def _spring_return_type(declaration: str, kotlin: bool) -> str | None:
     return match.group(1).rstrip("?") if match else None
 
 
-def _class_annotations(class_node: Node, source: bytes) -> str:
-    modifiers = next((node for node in class_node.named_children if node.type == "modifiers"), None)
-    return _text(modifiers, source) if modifiers else ""
-
-
 def _spring_route_prefix(annotations: str) -> str | None:
     match = re.search(r'@RequestMapping\s*\(\s*(?:value\s*=\s*)?"([^"]+)"', annotations)
     return match.group(1) if match else None
@@ -3260,7 +3079,7 @@ class StaticAnalysisEngine:
         """Cross-file analysis that needs every file's result already merged (gRPC
         handler/client linking, Spring Data classification, contract enrichment, the
         bounded flow resolver...). Kept separate from `analyze_files` so a crash here
-        -- it still touches tree-sitter for jvm-spring/go -- only costs this
+        -- it still touches tree-sitter for go's gRPC linking -- only costs this
         enrichment pass, not the per-file symbols/edges already collected.
         """
         if stack in {"node-ts", "node-js"}:
@@ -3273,10 +3092,10 @@ class StaticAnalysisEngine:
             result.edges = _classify_spring_data_query_operations(
                 result.edges, result.injections, _spring_data_query_methods(files),
             )
-            result.grpc_handlers.extend(_jvm_grpc_handlers(files, root))
-            result.grpc_handlers.extend(_kotlin_grpc_handlers(files, root))
-            result.grpc_client_bindings.extend(_jvm_grpc_client_bindings(files, root))
-            result.grpc_client_bindings.extend(_kotlin_grpc_client_bindings(files, root))
+            result.grpc_handlers.extend(jvm_grpc_handlers(files, root))
+            result.grpc_handlers.extend(kotlin_grpc_handlers(files, root))
+            result.grpc_client_bindings.extend(jvm_grpc_client_bindings(files, root))
+            result.grpc_client_bindings.extend(kotlin_grpc_client_bindings(files, root))
         if stack == "go":
             result.grpc_handlers.extend(_go_grpc_handlers(files, root))
             result.grpc_client_bindings.extend(_go_grpc_client_bindings(files, root))

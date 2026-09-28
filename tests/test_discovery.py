@@ -86,6 +86,39 @@ def test_kotlin_endpoint_resolves_a_statically_imported_extension_function_into_
     assert "fun Restaurant.out()" in endpoint.extra_excerpts[0].text
 
 
+def test_kotlin_endpoint_with_a_return_typed_let_chain_resolves_the_static_import(tmp_path: Path):
+    """A real controller shape from the repository this rewrite was validated
+    against: a return-type-annotated expression body (`: MenuOut =`) whose value is
+    a multi-line `.let { ... }` chain ending in a statically-imported extension
+    function call (`.out()`) -- distinct from the single-line case already covered
+    by `component_kotlin`'s fixture, and the exact shape a real bug in
+    `_end_of_expression_body` (fixed alongside this test) truncated to nothing.
+    """
+    (tmp_path / "out.kt").write_text(
+        "package com.example.out\n\nfun Menu.out() = MenuOut(id)\n\ndata class MenuOut(val id: String)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "MenuController.kt").write_text(
+        "package com.example\n\n"
+        "import com.example.out.out\n\n"
+        "@RestController\n"
+        "class MenuController(private val menuService: MenuService) {\n"
+        "    @GetMapping(\"/menus/{id}\")\n"
+        "    fun get(@PathVariable id: String): MenuOut =\n"
+        "        logger.info(\"get menu $id\")\n"
+        "            .let { menuService.get(id).out() }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    hints = JvmSpringDetector().collect_hints(tmp_path)
+
+    endpoint = next(e for e in hints.endpoints if e.path == "/menus/{id}")
+    assert len(endpoint.extra_excerpts) == 1
+    assert endpoint.extra_excerpts[0].file_path == "out.kt"
+    assert "fun Menu.out()" in endpoint.extra_excerpts[0].text
+
+
 def test_jvm_collect_hints_logs_before_and_during_call_resolution(caplog):
     """A real crash used to happen inside this exact call chain
     (JvmSpringDetector.collect_hints -> _endpoint_hint -> resolve_kotlin_java_calls),

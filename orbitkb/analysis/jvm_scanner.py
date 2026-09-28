@@ -14,8 +14,12 @@ from dataclasses import dataclass
 
 _CLASS_KEYWORD_RE = re.compile(r"\bclass\s+(?P<name>[A-Za-z_]\w*)")
 _ANNOTATION_LINE_RE = re.compile(r"^[ \t]*(?:@[\w.]+(?:\([^\n]*\))?[ \t]*)+$")
+# `override`/`suspend` are function/property modifiers, not class ones, but a class
+# declaration never has them right before it either way -- one shared list works for
+# both `find_classes`'s and `find_functions`'s use of `_preceding_annotations_and_modifiers`.
 _MODIFIER_LINE_RE = re.compile(
-    r"^[ \t]*(?:public|private|protected|internal|open|abstract|final|sealed|data|inner|annotation|static)[ \t]*$"
+    r"^[ \t]*(?:public|private|protected|internal|open|abstract|final|sealed|data|inner"
+    r"|annotation|static|override|suspend)[ \t]*$"
 )
 
 
@@ -120,7 +124,11 @@ def _find_header_end(text: str, start: int) -> int:
     skipping over any `(...)`/`[...]` along the way (parameter lists, superclass
     constructor calls, annotation arguments, array types). Returns -1 if a top-level
     `;` or `=` is hit first (an abstract/interface member, or a Kotlin expression-body
-    function) or the text ends first.
+    function), or a top-level newline is hit with neither `{` nor a supertype `:`
+    clause following it -- a brace-less Kotlin class (primary-constructor-only, e.g.
+    `class Foo(val x: String)`) declared with more code after it, where a bare
+    bracket-depth scan would otherwise run on into that next declaration and mistake
+    ITS `{` for this one's body -- or the text ends first.
     """
     depth = 0
     i = start
@@ -141,13 +149,19 @@ def _find_header_end(text: str, start: int) -> int:
             return i
         elif depth == 0 and ch in ";=":
             return -1
+        elif depth == 0 and ch == "\n":
+            j = i + 1
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            if j < n and text[j] not in "{:":
+                return -1
         i += 1
     return -1
 
 
 _INLINE_PREFIX_TOKEN = (
     r"@[\w.]+(?:\([^\n]*?\))?|public|private|protected|internal|open|abstract"
-    r"|final|sealed|data|inner|annotation|static"
+    r"|final|sealed|data|inner|annotation|static|override|suspend"
 )
 _INLINE_PREFIX_RE = re.compile(rf"(?:{_INLINE_PREFIX_TOKEN})(?:\s+(?:{_INLINE_PREFIX_TOKEN}))*")
 
@@ -366,32 +380,42 @@ def _end_of_expression_body(text: str, start: int, limit: int) -> int:
     top-level newline, UNLESS the following line continues the same fluent chain
     (starts with `.` or `?.`) -- a `WebClient`-style multi-line chain
     (`= client.get()\\n    .retrieve()\\n    .bodyToMono(...)`) is one expression,
-    not one statement per line.
+    not one statement per line -- or the expression simply hasn't started yet (the
+    common `fun foo(): T =\\n    firstRealToken...` style, `=` followed immediately
+    by a newline with no content of its own): a newline with nothing but whitespace
+    before it since `start` is leading whitespace, not the expression's end.
     """
     depth = 0
     i = start
+    seen_content = False
     while i < limit:
         ch = text[i]
         if ch == '"':
             i = _skip_string(text, i)
+            seen_content = True
             continue
         if ch == "'":
             i = _skip_char_literal(text, i)
+            seen_content = True
             continue
         if ch in "([{":
             depth += 1
+            seen_content = True
         elif ch in ")]}":
             if depth == 0:
                 return i
             depth -= 1
+            seen_content = True
         elif ch == "\n" and depth == 0:
             j = i + 1
             while j < limit and text[j] in " \t\r\n":
                 j += 1
-            if j < limit and (text[j] == "." or text[j : j + 2] == "?."):
+            if j < limit and (not seen_content or text[j] == "." or text[j : j + 2] == "?."):
                 i = j
                 continue
             return i
+        elif ch not in " \t\r":
+            seen_content = True
         i += 1
     return limit
 

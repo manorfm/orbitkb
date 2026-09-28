@@ -94,6 +94,32 @@ def test_find_classes_does_not_get_confused_by_a_brace_inside_a_string_in_the_bo
     assert [c.name for c in classes] == ["Foo", "Bar"]
 
 
+def test_find_classes_gives_a_brace_less_class_an_empty_body_even_when_another_class_follows():
+    """A primary-constructor-only Kotlin class (no `{}` at all) followed by more code
+    used to have its header scan run straight through into the next class's own `{`,
+    mistaking it for its own body -- corrupting both classes' extraction.
+    """
+    source = (
+        "open class BaseClient(\n"
+        "  protected val stub: Stub,\n"
+        ")\n"
+        "\n"
+        "class CheckoutService(stub: Stub) : BaseClient(stub) {\n"
+        "  fun checkout() {}\n"
+        "}\n"
+    )
+    classes = find_classes(source)
+
+    assert [c.name for c in classes] == ["BaseClient", "CheckoutService"]
+    base = classes[0]
+    assert base.body_end < base.body_start  # empty body: no members to find inside it
+    assert "protected val stub: Stub" in base.header
+    checkout = classes[1]
+    assert "BaseClient(stub)" in checkout.header
+    assert source[checkout.body_start] == "{"
+    assert source[checkout.body_end] == "}"
+
+
 def test_find_functions_locates_kotlin_block_and_expression_body_functions():
     class_body = (
         "{\n"
@@ -108,6 +134,44 @@ def test_find_functions_locates_kotlin_block_and_expression_body_functions():
     assert [f.name for f in functions] == ["blockBody", "exprBody"]
     assert "return x + 1" in functions[0].text
     assert functions[1].text.strip().startswith("fun exprBody")
+
+
+def test_find_functions_handles_a_return_typed_expression_body_through_a_let_chain():
+    """A pattern taken from a real Spring controller that used to crash tree-sitter-
+    kotlin on this exact repo: a return-type-annotated expression body (`: MenuOut =`)
+    whose value is a multi-line `.let { ... }` chain -- the `{` there opens a lambda
+    literal, not a function body, and must be depth-tracked like any other bracket
+    rather than mistaken for (or confused with) the function's own body.
+    """
+    class_body = (
+        "{\n"
+        "    fun get(id: String): MenuOut =\n"
+        "        logger.info(\"get menu $id\")\n"
+        "            .let { menuService.get(id).out() }\n\n"
+        "    fun next() {}\n"
+        "}\n"
+    )
+    functions = find_functions(class_body, 0, len(class_body), kotlin=True)
+
+    assert [f.name for f in functions] == ["get", "next"]
+    get = functions[0]
+    assert "logger.info" in get.text
+    assert get.text.rstrip().endswith("}")  # captures through the .let{} lambda's own close
+    calls = [callee for callee, _offset in find_calls(get.text[get.body_offset :])]
+    assert "menuService.get" in calls
+    assert "out" in calls
+
+
+def test_find_calls_extracts_a_call_inside_a_safe_call_let_lambda():
+    """`?.let { ... }` (a real pattern from this repo's Feign error decoder) must not
+    hide the call inside its lambda -- find_calls has no concept of lambda scope, it
+    just scans for `identifier(` text, so this should already work, but the safe-call
+    `?.` operator right before `.let` is worth locking in explicitly.
+    """
+    text = 'fun decode(body: String?): JsonNode? = body?.let { objectMapper.readTree(it) }'
+    calls = [callee for callee, _offset in find_calls(text)]
+
+    assert "objectMapper.readTree" in calls
 
 
 def test_find_functions_locates_java_methods_and_skips_the_constructor():
