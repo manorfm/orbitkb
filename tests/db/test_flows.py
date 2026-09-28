@@ -8,6 +8,7 @@ from orbitkb.analysis.models import (
     FlowEdge,
     MessageContract,
     MigrationFact,
+    SecurityRequirement,
 )
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import flows, services
@@ -173,3 +174,34 @@ def test_static_feature_flags_are_replaced_with_the_flow_snapshot(tmp_path):
 
     flows.replace_analysis(conn, service_id, AnalysisResult())
     assert flows.list_static_feature_flags(conn, service_id) == []
+
+
+def test_static_security_requirements_are_replaced_with_the_flow_snapshot(tmp_path):
+    conn = open_db(tmp_path / "security-requirements.db")
+    service_id = services.ensure_service(conn, "menu-manager", "/repos/menu-manager", "jvm-spring")
+    route_evidence = Evidence("SecurityConfig.kt", 52, 55)
+    method_evidence = Evidence("OrdersController.kt", 12, 12)
+
+    flows.replace_analysis(conn, service_id, AnalysisResult(security_requirements=[
+        SecurityRequirement(
+            "/restaurants/{restaurantId}/**", "POST", None,
+            "custom:RestaurantAccessAuthorizationManager", ("OWNER", "PARTNER"), route_evidence,
+        ),
+        SecurityRequirement(None, None, "OrdersController.cancel", "hasRole", ("ADMIN",), method_evidence),
+    ]))
+
+    assert [dict(row) for row in flows.list_static_security_requirements(conn, service_id)] == [
+        {
+            "route_pattern": None, "method": None, "symbol": "OrdersController.cancel",
+            "requirement": "hasRole", "roles_json": '["ADMIN"]',
+            "file_path": "OrdersController.kt", "start_line": 12, "end_line": 12,
+        },
+        {
+            "route_pattern": "/restaurants/{restaurantId}/**", "method": "POST", "symbol": None,
+            "requirement": "custom:RestaurantAccessAuthorizationManager", "roles_json": '["OWNER", "PARTNER"]',
+            "file_path": "SecurityConfig.kt", "start_line": 52, "end_line": 55,
+        },
+    ]
+
+    flows.replace_analysis(conn, service_id, AnalysisResult())
+    assert flows.list_static_security_requirements(conn, service_id) == []

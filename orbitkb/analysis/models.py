@@ -196,6 +196,27 @@ class CloudFact:
     evidence: Evidence
 
 
+@dataclass(frozen=True)
+class SecurityRequirement:
+    """One authorization rule proven either for a route pattern (a Spring Security
+    `SecurityFilterChain`'s `authorizeHttpRequests` block) or for a specific symbol
+    (`@PreAuthorize`/`@Secured`) -- exactly one of `route_pattern` or `symbol` is
+    set, never both. Deliberately not a boolean formula: `roles` lists every role
+    literal the requirement's own code names (resolving one hop into a local
+    policy function when the requirement is a custom `AuthorizationManager`), not
+    a proof of how they combine -- an arbitrary custom `AuthorizationManager`'s
+    actual runtime logic is not a local, deterministic fact, so it's surfaced as
+    `requirement="custom:<ClassName>"` with whatever roles could be resolved
+    rather than guessed at further."""
+
+    route_pattern: str | None
+    method: str | None
+    symbol: str | None
+    requirement: str
+    roles: tuple[str, ...]
+    evidence: Evidence
+
+
 @dataclass
 class AnalysisResult:
     entrypoints: list[EntryPoint] = field(default_factory=list)
@@ -215,6 +236,7 @@ class AnalysisResult:
     configuration_bindings: list[ConfigurationBinding] = field(default_factory=list)
     feature_flags: list[FeatureFlag] = field(default_factory=list)
     cloud_facts: list[CloudFact] = field(default_factory=list)
+    security_requirements: list[SecurityRequirement] = field(default_factory=list)
 
     def extend(self, other: AnalysisResult) -> None:
         self.entrypoints.extend(other.entrypoints)
@@ -234,3 +256,4 @@ class AnalysisResult:
         self.configuration_bindings.extend(other.configuration_bindings)
         self.feature_flags.extend(other.feature_flags)
         self.cloud_facts.extend(other.cloud_facts)
+        self.security_requirements.extend(other.security_requirements)

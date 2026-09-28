@@ -165,6 +165,27 @@ CREATE TABLE IF NOT EXISTS static_feature_flags (
 CREATE INDEX IF NOT EXISTS idx_static_feature_flags_service
     ON static_feature_flags(service_id);
 
+-- One authorization rule, proven either for a route pattern (a SecurityFilterChain's
+-- authorizeHttpRequests block: route_pattern/method set, symbol NULL) or for a specific
+-- symbol (@PreAuthorize/@Secured: symbol set, route_pattern/method NULL). roles_json is
+-- a best-effort, possibly empty list resolved from the requirement's own code -- never a
+-- proof of how a custom AuthorizationManager's roles actually combine at runtime.
+CREATE TABLE IF NOT EXISTS static_security_requirements (
+    id            INTEGER PRIMARY KEY,
+    service_id    INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+    route_pattern TEXT,
+    method        TEXT,
+    symbol        TEXT,
+    requirement   TEXT NOT NULL,
+    roles_json    TEXT NOT NULL,
+    file_path     TEXT NOT NULL,
+    start_line    INTEGER NOT NULL,
+    end_line      INTEGER NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_static_security_requirements_service
+    ON static_security_requirements(service_id);
+
 -- `provider` is the concrete message broker/vendor (kafka, rabbitmq, sqs, sns,
 -- service_bus, activemq, nats), inferred by the LLM from real code the same way
 -- service_calls.target_kind is — 'unknown' means the code only showed a

@@ -22,6 +22,7 @@ def replace_analysis(conn: sqlite3.Connection, service_id: int, analysis: Analys
     conn.execute("DELETE FROM static_configuration_bindings WHERE service_id = ?", (service_id,))
     conn.execute("DELETE FROM static_feature_flags WHERE service_id = ?", (service_id,))
     conn.execute("DELETE FROM static_cloud_facts WHERE service_id = ?", (service_id,))
+    conn.execute("DELETE FROM static_security_requirements WHERE service_id = ?", (service_id,))
     indexed_at = now()
     entrypoint_ids: dict[str, int] = {}
     persisted_entrypoints: list[tuple[EntryPoint, int]] = []
@@ -157,6 +158,19 @@ def replace_analysis(conn: sqlite3.Connection, service_id: int, analysis: Analys
             (service_id, fact.provider, fact.resource_type, fact.service_name, fact.operation,
              fact.operation_kind, fact.sdk, fact.target_name, fact.evidence.file_path,
              fact.evidence.start_line, fact.evidence.end_line, indexed_at),
+        )
+    for requirement in analysis.security_requirements:
+        conn.execute(
+            """INSERT INTO static_security_requirements
+               (service_id, route_pattern, method, symbol, requirement, roles_json,
+                file_path, start_line, end_line, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                service_id, requirement.route_pattern, requirement.method, requirement.symbol,
+                requirement.requirement, json.dumps(list(requirement.roles)),
+                requirement.evidence.file_path, requirement.evidence.start_line,
+                requirement.evidence.end_line, indexed_at,
+            ),
         )
 
 
@@ -326,6 +340,15 @@ def list_static_feature_flags(conn: sqlite3.Connection, service_id: int) -> list
     return conn.execute(
         """SELECT source, key, provider, file_path, start_line, end_line
            FROM static_feature_flags WHERE service_id = ? ORDER BY key, source""",
+        (service_id,),
+    ).fetchall()
+
+
+def list_static_security_requirements(conn: sqlite3.Connection, service_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT route_pattern, method, symbol, requirement, roles_json, file_path, start_line, end_line
+           FROM static_security_requirements WHERE service_id = ?
+           ORDER BY route_pattern, method, symbol""",
         (service_id,),
     ).fetchall()
 
