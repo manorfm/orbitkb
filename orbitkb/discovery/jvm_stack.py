@@ -89,6 +89,33 @@ def _endpoint_hint(
     )
 
 
+def endpoint_matches(scan_root: Path) -> list[tuple[str, str, Path, int]]:
+    """(method, route, path, line_no) for every `@XMapping` annotation -- pure regex,
+    no tree-sitter, always safe to run directly (never needs isolating).
+    """
+    return [
+        (_METHOD_BY_ANNOTATION[match.group(1)], match.group(2) or "/", path, line_no)
+        for path, line_no, match in find_matches(scan_root, EXTENSIONS, _MAPPING_RE)
+    ]
+
+
+def endpoint_hints_for_matches(
+    matches: list[tuple[str, str, Path, int]], folder: Path, cache: ParseCache | None = None,
+) -> list[EndpointHint]:
+    """The tree-sitter-touching half of building endpoint hints -- isolable per batch
+    (`orchestrator.py` runs this for a slice of `matches` at a time for jvm-spring, so
+    a native crash resolving one endpoint's calls only costs that batch's endpoints,
+    not the whole service's hints). `cache` should be shared across one batch's
+    matches (see `ParseCache`); a fresh one is created when called standalone.
+    """
+    if cache is None:
+        cache = ParseCache()
+    return [
+        _endpoint_hint(method, route, path, folder, line_no, cache)
+        for method, route, path, line_no in matches
+    ]
+
+
 def _has_spring_boot_dependency(folder: Path) -> bool:
     pom = folder / "pom.xml"
     if pom.is_file() and "spring-boot" in pom.read_text(encoding="utf-8", errors="ignore"):
@@ -115,24 +142,31 @@ class JvmSpringDetector:
                 return True
         return False
 
+    @staticmethod
+    def scan_root(folder: Path) -> Path:
+        src = folder / "src" / "main"
+        return src if src.is_dir() else folder
+
     def collect_hints(self, folder: Path) -> ServiceHints:
+        hints = self.collect_hints_without_endpoints(folder)
+        hints.endpoints = endpoint_hints_for_matches(endpoint_matches(self.scan_root(folder)), folder)
+        return hints
+
+    def collect_hints_without_endpoints(self, folder: Path) -> ServiceHints:
+        """Everything `collect_hints()` builds except `hints.endpoints` -- pure regex,
+        no tree-sitter, so it never needs isolating. Split out so a caller (see
+        `orchestrator.py`'s isolation for jvm-spring) can always get this part, even
+        when endpoint resolution -- the only tree-sitter-touching part -- crashes.
+        """
         logger.debug("scanning JVM/Spring hints: %s", folder)
         hints = ServiceHints()
-        cache = ParseCache()
         engine_hint = engine_hint_from_manifest(folder, _MANIFEST_FILES, _ENGINE_DRIVER_KEYWORDS)
-        src = folder / "src" / "main"
-        scan_root = src if src.is_dir() else folder
+        scan_root = self.scan_root(folder)
 
         entry_matches = find_matches(scan_root, EXTENSIONS, re.compile(r"@SpringBootApplication"))
         if entry_matches:
             path, line_no, _m = entry_matches[0]
             hints.entry_excerpt = excerpt_around(path, folder, line_no, context=20)
-
-        for path, line_no, match in find_matches(scan_root, EXTENSIONS, _MAPPING_RE):
-            annotation, route = match.group(1), match.group(2) or "/"
-            hints.endpoints.append(
-                _endpoint_hint(_METHOD_BY_ANNOTATION[annotation], route, path, folder, line_no, cache),
-            )
 
         for path, line_no, match in find_matches(scan_root, EXTENSIONS, _OUTBOUND_RE):
             hints.outbound_calls.append(

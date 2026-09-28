@@ -38,6 +38,7 @@ from orbitkb.discovery.base import (
 )
 from orbitkb.discovery.hashing import file_hash, git_head_commit
 from orbitkb.discovery.isolation import run_isolated
+from orbitkb.discovery.jvm_stack import endpoint_matches
 from orbitkb.discovery.registry import detector_by_id
 from orbitkb.discovery.scan_helpers import SKIP_DIRS, collect_config_excerpts
 from orbitkb.discovery.walker import ServiceCandidate, discover_services
@@ -529,21 +530,41 @@ UNIT_GENERATORS: tuple[UnitGenerator, ...] = (
 # service -- see orbitkb/discovery/isolation.py), not applied blanket to every stack.
 _ISOLATED_STACKS = frozenset({"jvm-spring"})
 
+# Isolating the *whole* service in one subprocess call means one unlucky file out of
+# hundreds costs every other file's result too -- confirmed on a real service where a
+# single crash zeroed out all 573 files' worth of hints and analysis. Batching bounds
+# that blast radius to one batch, and since the corruption is heap churn accumulated
+# over many native parses in one process (not tied to specific file content), smaller
+# batches likely also lower the odds of hitting it in the first place.
+_ISOLATION_BATCH_SIZE = 25
 
-def _collect_hints_isolated(root: Path, stack: str) -> ServiceHints:
-    """`run_isolated()` target: builds its own detector rather than taking one as an
-    argument, since a detector instance isn't guaranteed picklable and native state
-    (a tree-sitter `Parser`) has to be constructed inside the subprocess anyway.
+
+def _chunk(items: list, size: int) -> list[list]:
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+def _endpoint_hints_batch_isolated(
+    matches: list[tuple[str, str, Path, int]], folder: Path,
+) -> list[EndpointHint]:
+    """`run_isolated()` target for one batch of endpoint matches."""
+    from orbitkb.discovery.jvm_stack import endpoint_hints_for_matches
+
+    return endpoint_hints_for_matches(matches, folder)
+
+
+def _analyze_files_batch_isolated(paths: list[Path], root: Path, stack: str) -> AnalysisResult:
+    """`run_isolated()` target for one batch of files: builds its own engine (never
+    pickled in) -- a `StaticAnalysisEngine` holds tree-sitter `Language` objects,
+    which wrap native pointers and can't cross a process boundary.
     """
-    return detector_by_id(stack).collect_hints(root)
+    return StaticAnalysisEngine(NoopDepthProvider()).analyze_files(paths, root, stack)
 
 
-def _analyze_isolated(root: Path, stack: str) -> AnalysisResult:
-    """`run_isolated()` target: builds its own engine (never pickled in) -- a
-    `StaticAnalysisEngine` holds tree-sitter `Language` objects, which wrap native
-    pointers and can't cross a process boundary.
+def _analyze_enrich_isolated(result: AnalysisResult, files: list[Path], root: Path, stack: str) -> AnalysisResult:
+    """`run_isolated()` target for the cross-file enrichment pass, run once after all
+    file batches: it also touches tree-sitter (gRPC handler linking) for jvm-spring.
     """
-    return StaticAnalysisEngine(NoopDepthProvider()).analyze(root, stack)
+    return StaticAnalysisEngine(NoopDepthProvider()).enrich(result, files, root, stack)
 
 
 def _index_service_unlocked(
@@ -564,13 +585,27 @@ def _index_service_unlocked(
     logger.debug("collecting hints: %s (stack=%s) at %s", name, detector.id, root)
     hints_crash: str | None = None
     if detector.id in _ISOLATED_STACKS:
-        hints, hints_crash = run_isolated(_collect_hints_isolated, root, detector.id)
-        if hints_crash is not None:
-            logger.warning(
-                "hint collection %s for %s (stack=%s); continuing with no hints",
-                hints_crash, name, detector.id,
-            )
-            hints = ServiceHints()
+        # The regex-only hints (routes aside) never touch tree-sitter, so they're
+        # never isolated -- a crash resolving one batch of endpoints must not cost
+        # persistence/messaging/outbound hints that were never at risk.
+        hints = detector.collect_hints_without_endpoints(root)
+        matches = endpoint_matches(detector.scan_root(root))
+        batches = _chunk(matches, _ISOLATION_BATCH_SIZE)
+        endpoints: list[EndpointHint] = []
+        crashed_batches = 0
+        for batch in batches:
+            batch_result, crash = run_isolated(_endpoint_hints_batch_isolated, batch, root)
+            if crash is not None:
+                crashed_batches += 1
+                logger.warning(
+                    "endpoint hint batch %s for %s (stack=%s, %d endpoints); skipping this batch",
+                    crash, name, detector.id, len(batch),
+                )
+                continue
+            endpoints.extend(batch_result)
+        hints.endpoints = endpoints
+        if crashed_batches:
+            hints_crash = f"{crashed_batches} of {len(batches)} endpoint batches crashed"
     else:
         hints = detector.collect_hints(root)
     component_groups = _group_endpoints_by_component(hints.endpoints)
@@ -602,13 +637,30 @@ def _index_service_unlocked(
         elif detector.id in _ISOLATED_STACKS:
             # Isolated only in the default (Noop) case: a real depth provider holds a
             # live external MCP connection that can't be handed to a fresh subprocess.
-            analysis, analysis_crash = run_isolated(_analyze_isolated, root, detector.id)
-            if analysis_crash is not None:
+            files = static_engine.list_files(root, detector.id)
+            file_batches = _chunk(files, _ISOLATION_BATCH_SIZE)
+            merged = AnalysisResult()
+            crashed_batches = 0
+            for batch in file_batches:
+                batch_result, crash = run_isolated(_analyze_files_batch_isolated, batch, root, detector.id)
+                if crash is not None:
+                    crashed_batches += 1
+                    logger.warning(
+                        "static analysis batch %s for %s (stack=%s, %d files); skipping this batch",
+                        crash, name, detector.id, len(batch),
+                    )
+                    continue
+                merged.extend(batch_result)
+            analysis, enrich_crash = run_isolated(_analyze_enrich_isolated, merged, files, root, detector.id)
+            if enrich_crash is not None:
                 logger.warning(
-                    "static analysis %s for %s (stack=%s); continuing with no analysis",
-                    analysis_crash, name, detector.id,
+                    "static analysis enrichment %s for %s (stack=%s); using per-file results without it",
+                    enrich_crash, name, detector.id,
                 )
-                analysis = AnalysisResult()
+                analysis = merged
+            if crashed_batches or enrich_crash is not None:
+                hint = f"{crashed_batches} of {len(file_batches)} file batches crashed" if file_batches else "0 of 0 file batches crashed"
+                analysis_crash = hint + ("; enrichment crashed" if enrich_crash is not None else "")
         else:
             analysis = static_engine.analyze(root, detector.id)
         flows_repo.replace_analysis(conn, service_id, analysis)

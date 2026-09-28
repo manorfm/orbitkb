@@ -6,6 +6,8 @@ that into a detectable, non-fatal outcome for the parent.
 """
 from __future__ import annotations
 
+import time
+
 from orbitkb.discovery.isolation import run_isolated
 
 
@@ -20,6 +22,11 @@ def _boom() -> None:
 def _segfault() -> None:
     import faulthandler
     faulthandler._sigsegv()
+
+
+def _hang() -> None:
+    while True:
+        time.sleep(1)
 
 
 def test_run_isolated_returns_the_function_result_on_success():
@@ -43,3 +50,15 @@ def test_run_isolated_detects_a_native_crash_without_crashing_the_caller():
     assert result is None
     assert reason is not None
     assert "signal" in reason.lower()
+
+
+def test_run_isolated_kills_a_hung_subprocess_instead_of_blocking_forever():
+    """Corrupted heap state doesn't only crash -- reproduced directly against a real
+    service, it hung a subprocess indefinitely (sleeping, zero CPU, no signal, never
+    returning). `process.join()` alone waits forever in that case; `timeout` bounds it.
+    """
+    result, reason = run_isolated(_hang, timeout=1)
+
+    assert result is None
+    assert reason is not None
+    assert "timed out" in reason.lower()

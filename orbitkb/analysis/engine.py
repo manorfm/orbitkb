@@ -3475,16 +3475,39 @@ class StaticAnalysisEngine:
             "python": (_PythonCliAnalyzer(), ("*.py",)),
         }
 
-    def analyze(self, root: Path, stack: str) -> AnalysisResult:
+    def list_files(self, root: Path, stack: str) -> list[Path]:
+        """The file listing alone -- a plain `rglob`, no parsing -- so a caller can
+        split it into batches before touching any native parser (see `analyze_files`).
+        """
+        configured = self._analyzers.get(stack)
+        if configured is None:
+            return []
+        _analyzer, patterns = configured
+        return self._source_files(root, patterns)
+
+    def analyze_files(self, paths: list[Path], root: Path, stack: str) -> AnalysisResult:
+        """Just the per-file AST pass, over exactly the given `paths` (a subset of
+        `list_files`'s result is fine) -- no cross-file enrichment. This is the unit
+        `orchestrator.py` isolates per batch for jvm-spring: a native crash parsing
+        one file only has to cost that batch's files, not the whole service's.
+        """
         configured = self._analyzers.get(stack)
         if configured is None:
             return AnalysisResult()
-        analyzer, patterns = configured
+        analyzer, _patterns = configured
         result = AnalysisResult()
-        files = self._source_files(root, patterns)
-        for path in files:
+        for path in paths:
             logger.debug("analyzing file: %s", path)
             result.extend(analyzer.analyze(path, root))
+        return result
+
+    def enrich(self, result: AnalysisResult, files: list[Path], root: Path, stack: str) -> AnalysisResult:
+        """Cross-file analysis that needs every file's result already merged (gRPC
+        handler/client linking, Spring Data classification, contract enrichment, the
+        bounded flow resolver...). Kept separate from `analyze_files` so a crash here
+        -- it still touches tree-sitter for jvm-spring/go -- only costs this
+        enrichment pass, not the per-file symbols/edges already collected.
+        """
         if stack in {"node-ts", "node-js"}:
             schema = "\n".join(path.read_text(encoding="utf-8", errors="ignore") for path in files if path.suffix in {".graphql", ".gql"})
             result.contracts.update(_GraphqlContractExtractor().contracts(schema))
@@ -3518,6 +3541,11 @@ class StaticAnalysisEngine:
             result.static_service_calls.extend(_spring_feign_service_calls(result, files))
         result.edges.extend(self._depth_provider.enrich(root, result))
         return result
+
+    def analyze(self, root: Path, stack: str) -> AnalysisResult:
+        files = self.list_files(root, stack)
+        result = self.analyze_files(files, root, stack)
+        return self.enrich(result, files, root, stack)
 
     def input_digest(self, root: Path, stack: str) -> str | None:
         """Return a versioned digest of every local artifact this analyzer reads."""
