@@ -43,6 +43,7 @@ from orbitkb.analysis.jvm_grpc_analyzer import (
     kotlin_grpc_client_bindings,
     kotlin_grpc_handlers,
 )
+from orbitkb.analysis.jvm_scanner import find_matching_brace
 from orbitkb.analysis.models import (
     AnalysisResult,
     CloudFact,
@@ -3109,6 +3110,7 @@ class StaticAnalysisEngine:
         result = BoundedFlowResolver().resolve(result)
         if stack == "jvm-spring":
             result.static_service_calls.extend(_spring_feign_service_calls(result, files))
+            result.configuration_bindings.extend(_feign_client_url_bindings(files, root))
         result.edges.extend(self._depth_provider.enrich(root, result))
         return result
 
@@ -3150,10 +3152,19 @@ class StaticAnalysisEngine:
 
 
 _FEIGN_CLIENT_PATTERN = re.compile(
-    r'@FeignClient\s*\(\s*(?:name|value)\s*=\s*"(?P<service>[^"]+)"[^)]*\)\s*'
+    # The service name is `name=`/`value=` (keyword) OR the bare first argument
+    # (positional) -- both are valid Spring syntax; a real Kotlin/Spring service
+    # this project was traced against uses positional for both of its clients.
+    # `extra_args` (e.g. a `url = ...` attribute) is captured separately so a
+    # caller can search just the annotation's own arguments, not the whole
+    # interface body that follows. Stops right at the opening `{`: the body itself
+    # is found with `find_matching_brace` (see `_feign_endpoints`), not a naive
+    # `.*?}` -- a route's own path parameter (`@GetMapping("/x/{id}")`) contains a
+    # `}` that a non-brace-aware regex mistakes for the interface's own close,
+    # truncating the body before every mapping declared after that point.
+    r'@FeignClient\s*\(\s*(?:(?:name|value)\s*=\s*)?"(?P<service>[^"]+)"(?P<extra_args>[^)]*)\)\s*'
     r'(?P<annotations>(?:@\w+(?:\s*\([^)]*\))?\s*)*)'
-    r'(?:public\s+)?interface\s+(?P<client>\w+)\s*\{(?P<body>.*?)\}',
-    re.DOTALL,
+    r'(?:public\s+)?interface\s+(?P<client>\w+)\s*\{',
 )
 _FEIGN_METHOD_PATTERN = re.compile(
     r'@(?P<mapping>GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\s*'
@@ -3218,13 +3229,43 @@ def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], tuple[str, str,
             service = client_match.group("service")
             client = client_match.group("client")
             route_prefix = _spring_route_prefix(client_match.group("annotations"))
-            for method_match in _FEIGN_METHOD_PATTERN.finditer(client_match.group("body")):
+            brace_open = client_match.end() - 1
+            brace_close = find_matching_brace(source, brace_open)
+            body = source[brace_open + 1 : brace_close]
+            for method_match in _FEIGN_METHOD_PATTERN.finditer(body):
                 endpoints[(client, method_match.group("method"))] = (
                     service,
                     SPRING_ROUTE_ANNOTATION_TO_METHOD[method_match.group("mapping")],
                     _join_route(route_prefix, method_match.group("path")),
                 )
     return endpoints
+
+
+def _feign_client_url_bindings(files: list[Path], root: Path) -> list[ConfigurationBinding]:
+    """A literal ``${key}`` bound to a Feign client's ``url`` attribute -- as real
+    a configuration dependency as an ``@Value`` field, just read from a different
+    annotation attribute (see ``_spring_value_property_binding``, same posture:
+    only a resolvable placeholder becomes a fact).
+    """
+    bindings: list[ConfigurationBinding] = []
+    for path in files:
+        if path.suffix not in {".java", ".kt"}:
+            continue
+        source = path.read_text(encoding="utf-8", errors="ignore")
+        for client_match in _FEIGN_CLIENT_PATTERN.finditer(source):
+            url_match = _FEIGN_CLIENT_URL.search(client_match.group("extra_args"))
+            if url_match is None:
+                continue
+            key = url_match.group("key")
+            line = source.count("\n", 0, client_match.start()) + 1
+            bindings.append(ConfigurationBinding(
+                source=client_match.group("client"),
+                key=key,
+                kind="property",
+                sensitive=_SENSITIVE_CONFIGURATION_KEY.search(key) is not None,
+                evidence=Evidence(path.relative_to(root).as_posix(), line, line),
+            ))
+    return bindings
 
 
 _REST_TEMPLATE_CALL_PATTERN = re.compile(
@@ -3783,10 +3824,25 @@ _PROPERTY_CONFIGURATION_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{0,127}")
 _SENSITIVE_CONFIGURATION_KEY = re.compile(
     r"(?:password|secret|token|api[_-]?key|credential|private[_-]?key)", re.IGNORECASE,
 )
+
+
+def _spring_placeholder_literal(group_name: str) -> str:
+    """Regex fragment matching one Spring ``${key}`` (optionally ``${key:default}``)
+    placeholder written as a single Kotlin/Java string literal -- tolerant of the
+    three ways Kotlin needs to spell it so the leading ``$`` isn't parsed as
+    string-template interpolation: plain ``"${key}"`` (Java, or Kotlin with
+    nothing to escape), single-backslash ``"\\${key}"``, and Kotlin's newer
+    multi-dollar ``$$"${key}"`` string literal. Only one placeholder filling the
+    whole string counts -- SpEL and composed/multi-placeholder values never
+    identify a single key locally and must not match.
+    """
+    return rf'\$*"\\?\$\{{(?P<{group_name}>{_PROPERTY_CONFIGURATION_KEY.pattern})(?::[^{{}}"]*)?\}}"'
+
+
 _SPRING_VALUE_PROPERTY = re.compile(
-    r'@Value\s*\(\s*(?:value\s*=\s*)?"\$\{'
-    r'(?P<key>[A-Za-z_][A-Za-z0-9_.-]{0,127})(?::[^{}"]*)?\}"\s*\)',
+    r'@Value\s*\(\s*(?:value\s*=\s*)?' + _spring_placeholder_literal("key") + r'\s*\)',
 )
+_FEIGN_CLIENT_URL = re.compile(r'\burl\s*=\s*' + _spring_placeholder_literal("key"))
 _SPRING_CONFIGURATION_PROPERTIES = re.compile(
     r'@ConfigurationProperties\s*\(\s*(?:(?:prefix|value)\s*=\s*)?'
     r'"(?P<prefix>[A-Za-z_][A-Za-z0-9_.-]{0,127})"\s*\)',

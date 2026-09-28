@@ -97,6 +97,39 @@ class OrdersController(private val useCase: CreateOrderUseCase) {
     assert any(edge.kind == "invokes" and edge.target == "useCase.execute" for edge in result.edges)
 
 
+def test_jvm_spring_analyzer_links_feign_invocation_with_a_path_parameter_in_the_mapping(tmp_path: Path):
+    """The Feign interface body used to be captured with a naive `.*?}` regex, which
+    stopped at the FIRST `}` anywhere in the body -- including one inside a route's
+    own `{id}` path-parameter placeholder, truncating the body before the real
+    closing brace and silently losing every mapping in it. Found tracing a real
+    endpoint whose Feign client mapping is `@GetMapping("/restaurants/{id}", ...)`.
+    """
+    (tmp_path / "RestaurantClient.kt").write_text(
+        '''@FeignClient("restaurant", url = $$"${provider.restaurant-client.url}")
+interface RestaurantClient {
+    @GetMapping("/restaurants/{id}", consumes = [MediaType.APPLICATION_JSON_VALUE])
+    fun getRestaurant(@PathVariable("id") id: ULID): RestaurantResponse
+}
+''',
+        encoding="utf-8",
+    )
+    (tmp_path / "RestaurantProvider.kt").write_text(
+        '''class RestaurantProvider(private val restaurantClient: RestaurantClient) {
+    fun getRestaurant(id: ULID): Restaurant {
+        return restaurantClient.getRestaurant(id).toDomain()
+    }
+}
+''',
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(call.source, call.target_service, call.protocol, call.target_method, call.target_path) for call in result.static_service_calls] == [
+        ("RestaurantProvider.getRestaurant", "restaurant", "http", "GET", "/restaurants/{id}"),
+    ]
+
+
 def test_jvm_spring_analyzer_links_feign_invocation_to_declared_target_endpoint(tmp_path: Path):
     (tmp_path / "InventoryClient.java").write_text(
         '''@FeignClient(name = "inventory")
@@ -181,6 +214,132 @@ interface InventoryClient {
     assert [(call.target_service, call.target_method, call.target_path) for call in result.static_service_calls] == [
         ("inventory", "POST", "/v1/reservations"),
     ]
+
+
+def test_jvm_spring_analyzer_links_a_positional_feign_client_invocation(tmp_path: Path):
+    """`@FeignClient("inventory", url = ...)` -- the service name given positionally,
+    no `name=`/`value=` keyword -- is valid Spring syntax the pattern didn't
+    recognize (found tracing a real endpoint in a Kotlin/Spring service that uses
+    exactly this style for both of its Feign clients).
+    """
+    (tmp_path / "InventoryClient.kt").write_text(
+        '''@FeignClient("inventory", url = $$"${provider.inventory-client.url}")
+interface InventoryClient {
+  @PostMapping("/reservations")
+  fun reserve(request: ReserveRequest): Reservation
+}
+''',
+        encoding="utf-8",
+    )
+    (tmp_path / "CheckoutService.kt").write_text(
+        '''class CheckoutService(private val inventoryClient: InventoryClient) {
+  fun checkout(request: ReserveRequest): Receipt {
+    val reservation = inventoryClient.reserve(request)
+    return Receipt(reservation)
+  }
+}
+''',
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(call.source, call.target_service, call.protocol, call.target_method, call.target_path) for call in result.static_service_calls] == [
+        ("CheckoutService.checkout", "inventory", "http", "POST", "/reservations"),
+    ]
+
+
+def test_jvm_spring_analyzer_ignores_a_dynamic_positional_feign_client_name(tmp_path: Path):
+    """A non-literal positional name (a constant reference, not a string literal)
+    must not become a fact -- same "only a literal proves it" posture as the
+    keyword form already has.
+    """
+    (tmp_path / "InventoryClient.kt").write_text(
+        '''@FeignClient(INVENTORY_SERVICE_NAME)
+interface InventoryClient {
+  @PostMapping("/reservations")
+  fun reserve(request: ReserveRequest): Reservation
+}
+''',
+        encoding="utf-8",
+    )
+    (tmp_path / "CheckoutService.kt").write_text(
+        '''class CheckoutService(private val inventoryClient: InventoryClient) {
+  fun checkout(request: ReserveRequest): Receipt {
+    val reservation = inventoryClient.reserve(request)
+    return Receipt(reservation)
+  }
+}
+''',
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert result.static_service_calls == []
+
+
+def test_jvm_spring_analyzer_extracts_a_feign_client_url_as_a_configuration_binding(tmp_path: Path):
+    """A Feign client's `url` attribute names the actual config key the client's
+    base URL comes from -- as real a configuration dependency as an `@Value`
+    field, but never modeled as one until now (found tracing the same real
+    Kotlin/Spring service as the positional-syntax gap above, which spells this
+    exact placeholder with Kotlin's multi-dollar string literal: `$$"${...}"`).
+    """
+    (tmp_path / "InventoryClient.kt").write_text(
+        '''@FeignClient("inventory", url = $$"${provider.inventory-client.url}")
+interface InventoryClient {
+  @PostMapping("/reservations")
+  fun reserve(request: ReserveRequest): Reservation
+}
+''',
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(b.source, b.key, b.kind, b.sensitive) for b in result.configuration_bindings] == [
+        ("InventoryClient", "provider.inventory-client.url", "property", False),
+    ]
+
+
+def test_jvm_spring_analyzer_extracts_a_feign_client_url_written_with_a_backslash_escape(tmp_path: Path):
+    """Kotlin's older escaping style for the same fact: `"\\${key}"` (a literal
+    backslash before the `$`, so the compiler doesn't parse `${...}` as string-
+    template interpolation) -- must resolve to the same key as the plain and
+    multi-dollar forms.
+    """
+    (tmp_path / "InventoryClient.kt").write_text(
+        '''@FeignClient("inventory", url = "\\${provider.inventory-client.url}")
+interface InventoryClient {
+  @PostMapping("/reservations")
+  fun reserve(request: ReserveRequest): Reservation
+}
+''',
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(b.source, b.key) for b in result.configuration_bindings] == [
+        ("InventoryClient", "provider.inventory-client.url"),
+    ]
+
+
+def test_jvm_spring_analyzer_ignores_a_feign_client_with_no_url_attribute(tmp_path: Path):
+    (tmp_path / "InventoryClient.java").write_text(
+        '''@FeignClient(name = "inventory")
+interface InventoryClient {
+  @PostMapping("/reservations")
+  Reservation reserve(ReserveRequest request);
+}
+''',
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert result.configuration_bindings == []
 
 
 def test_jvm_spring_analyzer_links_injected_rest_template_to_a_literal_service_endpoint(tmp_path: Path):
