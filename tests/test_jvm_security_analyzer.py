@@ -136,6 +136,40 @@ def test_filter_chain_marks_a_custom_authorization_manager_without_a_resolvable_
     ]
 
 
+def test_filter_chain_resolves_roles_through_a_local_zero_arg_policy_function(tmp_path: Path):
+    """The real, common pattern this was built for: a custom AuthorizationManager
+    constructed from a local, zero-arg policy function (in its own file) that
+    itself just names a set of literal roles -- one hop, not a general call
+    graph, but enough to surface the roles a real service actually gates on.
+    """
+    (tmp_path / "AuthorizationPolicy.kt").write_text(
+        '''internal data class AuthorizationPolicy(
+    val accountRoles: Set<String>,
+    val platformRoles: Set<String>,
+)
+
+internal fun administrationPolicy() = AuthorizationPolicy(
+    accountRoles = setOf("OWNER", "PARTNER", "ACCOUNT_ADMIN"),
+    platformRoles = setOf("ADMIN", "SERVICE"),
+)
+''',
+        encoding="utf-8",
+    )
+    filter_chain = _write_filter_chain(
+        tmp_path,
+        '                authorize("/clusters/{clusterId}/**", '
+        "ClusterAccessAuthorizationManager(administrationPolicy()))",
+    )
+
+    requirements = spring_filter_chain_security_requirements(
+        [filter_chain, tmp_path / "AuthorizationPolicy.kt"], tmp_path,
+    )
+
+    assert [(r.requirement, r.roles) for r in requirements] == [
+        ("custom:ClusterAccessAuthorizationManager", ("OWNER", "PARTNER", "ACCOUNT_ADMIN", "ADMIN", "SERVICE")),
+    ]
+
+
 def test_filter_chain_ignores_a_dynamic_route_pattern(tmp_path: Path):
     path = _write_filter_chain(tmp_path, "                authorize(someComputedPattern, authenticated)")
 

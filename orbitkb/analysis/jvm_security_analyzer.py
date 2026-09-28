@@ -92,17 +92,42 @@ _DSL_ROLE_CALL = re.compile(
 _DSL_BARE_KEYWORDS = frozenset({"authenticated", "permitAll", "denyAll"})
 _HTTP_METHOD_ARG = re.compile(r"^HttpMethod\.(?P<method>[A-Z]+)$")
 _STRING_LITERAL_ARG = re.compile(r'^"(?P<value>[^"]*)"$')
-# A custom `AuthorizationManager`, e.g. `RestaurantAccessAuthorizationManager(administrationPolicy())`
-# -- one hop of role resolution into a local zero-arg policy function is handled
-# by the caller (`spring_filter_chain_security_requirements`), which has the
-# whole-service file list this module-level parser deliberately doesn't need.
+# A custom `AuthorizationManager`, e.g. `RestaurantAccessAuthorizationManager(administrationPolicy())`.
+# One hop of role resolution into a local, zero-arg Kotlin policy function
+# (`fun administrationPolicy() = AuthorizationPolicy(accountRoles = setOf("OWNER", ...), ...)`,
+# a real, common pattern for keeping a policy's roles in one place instead of
+# repeating them at every route) -- every double-quoted literal in that
+# function's own body becomes a candidate role. Not a proof of how the manager
+# actually combines them (see module docstring); just what its own code names.
 _CONSTRUCTOR_CALL = re.compile(r"^(?P<class_name>[A-Za-z_]\w*)\s*\((?P<args>.*)\)$", re.DOTALL)
+_ZERO_ARG_CALL = re.compile(r"^(?P<fn>[A-Za-z_]\w*)\s*\(\s*\)$")
+_ZERO_ARG_FUNCTION_SIGNATURE = re.compile(r"^fun\s+\w+\(\s*\)")
 
 
-def _dsl_requirement(expr: str) -> tuple[str, tuple[str, ...]]:
+def _index_zero_arg_policy_functions(files: list[Path]) -> dict[str, tuple[str, ...]]:
+    """name -> every double-quoted string literal in one local, zero-arg Kotlin
+    function's body/expression -- the candidate roles for whichever
+    `AuthorizationManager` constructor calls it. The first definition of a given
+    name wins; a real duplicate top-level name is already ambiguous Kotlin.
+    """
+    roles_by_name: dict[str, tuple[str, ...]] = {}
+    for path in files:
+        if path.suffix != ".kt":
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for function_match in find_functions(text, 0, len(text), kotlin=True):
+            if function_match.name in roles_by_name or not _ZERO_ARG_FUNCTION_SIGNATURE.match(function_match.text):
+                continue
+            body = function_match.text[function_match.body_offset :]
+            roles_by_name[function_match.name] = tuple(_DOUBLE_QUOTED.findall(body))
+    return roles_by_name
+
+
+def _dsl_requirement(expr: str, policy_roles: dict[str, tuple[str, ...]]) -> tuple[str, tuple[str, ...]]:
     """(requirement, roles) for one `authorize(...)` requirement argument --
     a bare DSL keyword, a recognized role/authority call, a custom
-    `AuthorizationManager` constructor call (roles resolved by the caller), or
+    `AuthorizationManager` constructor call (roles resolved one hop via
+    `policy_roles`, see `_index_zero_arg_policy_functions`), or
     `("custom:<expr>", ())` for anything else.
     """
     expr = expr.strip()
@@ -113,7 +138,12 @@ def _dsl_requirement(expr: str) -> tuple[str, tuple[str, ...]]:
         return call_match.group("fn"), tuple(_DOUBLE_QUOTED.findall(call_match.group("args")))
     constructor_match = _CONSTRUCTOR_CALL.match(expr)
     if constructor_match:
-        return f"custom:{constructor_match.group('class_name')}", ()
+        roles: list[str] = []
+        for arg in split_top_level(constructor_match.group("args"), ","):
+            zero_arg_match = _ZERO_ARG_CALL.match(arg.strip())
+            if zero_arg_match:
+                roles.extend(policy_roles.get(zero_arg_match.group("fn"), ()))
+        return f"custom:{constructor_match.group('class_name')}", tuple(dict.fromkeys(roles))
     return f"custom:{expr}", ()
 
 
@@ -155,6 +185,7 @@ def spring_filter_chain_security_requirements(files: list[Path], root: Path) -> 
     `authorizeHttpRequests` DSL block, across the service's own files -- the bean
     can live in any file, not necessarily one already known to hold an endpoint.
     """
+    policy_roles = _index_zero_arg_policy_functions(files)
     requirements: list[SecurityRequirement] = []
     for path in files:
         if path.suffix not in {".java", ".kt"}:
@@ -178,7 +209,7 @@ def spring_filter_chain_security_requirements(files: list[Path], root: Path) -> 
                     if parsed is None:
                         continue
                     method, pattern, requirement_expr = parsed
-                    requirement, roles = _dsl_requirement(requirement_expr)
+                    requirement, roles = _dsl_requirement(requirement_expr, policy_roles)
                     line = function_match.start_line + function_match.text.count(
                         "\n", 0, function_match.body_offset + call_match.start(),
                     )
