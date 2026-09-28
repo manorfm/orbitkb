@@ -39,7 +39,7 @@ from orbitkb.db.repositories import security_findings as security_findings_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.discovery.hashing import git_working_changed_files_with_status
-from orbitkb.export.mermaid import generate_topology_diagram
+from orbitkb.export.mermaid import generate_entrypoint_sequence, generate_topology_diagram
 from orbitkb.generation import change_surface
 from orbitkb.generation.architecture import diff_architecture_runs
 from orbitkb.generation.backend_base import LLMBackend
@@ -103,6 +103,10 @@ MAX_RUNTIME_CONFIGURATION_FILTER_DIMENSIONS = 4
 MAX_INLINE_WORKLOAD_EVIDENCE = 5
 DEFAULT_FLOW_EDGE_LIMIT = 50
 MAX_FLOW_EDGE_LIMIT = 200
+# A sequence diagram becomes unreadable well before max_edges' own ceiling does --
+# deliberately smaller and not caller-configurable, since it only trims how much
+# of the already-fetched `edges` gets rendered as a diagram, never what's fetched.
+SEQUENCE_DIAGRAM_EDGE_LIMIT = 20
 DEFAULT_PLAN_TOKEN_BUDGET = 2200
 MAX_PLAN_TOKEN_BUDGET = 2200
 MAX_PLAN_CI_VALIDATION_COMMANDS = 3
@@ -564,6 +568,9 @@ def describe_entrypoint(
         ],
         "contract": flows_repo.get_entrypoint_contract(conn, entrypoint["id"]),
         "smells": find_entrypoint_smells(entrypoint, edges),
+        "sequence_mermaid": generate_entrypoint_sequence(
+            edges[:SEQUENCE_DIAGRAM_EDGE_LIMIT], entrypoint["symbol"], f"{entrypoint['method']} {entrypoint['name']}",
+        ),
     }
 
 

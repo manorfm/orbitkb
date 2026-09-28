@@ -166,6 +166,37 @@ def generate_topology_diagram(
     return "\n".join(lines)
 
 
+def generate_entrypoint_sequence(edges: list, entrypoint_symbol: str, entrypoint_label: str) -> str:
+    """Mermaid `sequenceDiagram` for one entrypoint's bounded flow -- the same
+    edge rows `describe_entrypoint` already computes (`flows_repo.list_reachable_edges`,
+    BFS-ordered), just rendered as a diagram instead of a flat list, no new data.
+    Every persistence edge (`reads`/`writes`) collapses into one shared `DB`
+    participant regardless of which table/repository it names, since a real flow
+    can touch several without each needing its own lane; every other edge keeps
+    its own real symbol as the participant, so the diagram shows exactly what the
+    flow list does, only laid out as a sequence.
+    """
+    lines = ["sequenceDiagram"]
+    participant_ids: dict[str, str] = {}
+
+    def participant(label: str) -> str:
+        if label not in participant_ids:
+            participant_ids[label] = f"p{len(participant_ids)}"
+            lines.append(f"    participant {participant_ids[label]} as {label}")
+        return participant_ids[label]
+
+    # The only symbol that ever needs a friendlier label than its own name is
+    # the entrypoint itself -- every other symbol is shown exactly as resolved.
+    symbol_labels = {entrypoint_symbol: entrypoint_label}
+    participant(entrypoint_label)
+    for edge in edges:
+        from_id = participant(symbol_labels.get(edge["from_symbol"], edge["from_symbol"]))
+        to_label = "DB" if edge["kind"] in {"reads", "writes"} else edge["to_symbol"]
+        to_id = participant(to_label)
+        lines.append(f"    {from_id}->>{to_id}: {edge['kind']}")
+    return "\n".join(lines)
+
+
 def generate_er_diagram(conn: sqlite3.Connection, service_name: str) -> str | None:
     """One service's `erDiagram`: an entity block per persisted table/collection, with
     its fields, plus a relationship line for every field whose LLM-inferred

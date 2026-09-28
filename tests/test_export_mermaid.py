@@ -8,7 +8,12 @@ from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
-from orbitkb.export.mermaid import export_mermaid, generate_er_diagram, generate_topology_diagram
+from orbitkb.export.mermaid import (
+    export_mermaid,
+    generate_entrypoint_sequence,
+    generate_er_diagram,
+    generate_topology_diagram,
+)
 from orbitkb.generation.architecture import recompute_architecture_view
 
 EVIDENCE = [{"file": "main.py", "start_line": 1, "end_line": 5}]
@@ -148,6 +153,45 @@ def test_generate_topology_diagram_highlights_cycle_services(tmp_path: Path):
 
     assert "classDef cycle" in diagram
     assert "cycle" in diagram.lower()
+
+
+def test_generate_entrypoint_sequence_renders_calls_reads_and_writes_and_publishes():
+    edges = [
+        {"from_symbol": "OrdersController.create", "to_symbol": "OrdersService.create", "kind": "invokes"},
+        {"from_symbol": "OrdersService.create", "to_symbol": "OrderRepository.save", "kind": "writes"},
+        {"from_symbol": "OrdersService.create", "to_symbol": "kafka:order.created", "kind": "publishes"},
+    ]
+
+    diagram = generate_entrypoint_sequence(edges, "OrdersController.create", "POST /orders")
+
+    assert diagram == "\n".join([
+        "sequenceDiagram",
+        "    participant p0 as POST /orders",
+        "    participant p1 as OrdersService.create",
+        "    p0->>p1: invokes",
+        "    participant p2 as DB",
+        "    p1->>p2: writes",
+        "    participant p3 as kafka:order.created",
+        "    p1->>p3: publishes",
+    ])
+
+
+def test_generate_entrypoint_sequence_reuses_one_db_participant_for_every_persistence_edge():
+    edges = [
+        {"from_symbol": "OrdersService.create", "to_symbol": "OrderRepository.save", "kind": "writes"},
+        {"from_symbol": "OrdersService.create", "to_symbol": "OrderRepository.find", "kind": "reads"},
+    ]
+
+    diagram = generate_entrypoint_sequence(edges, "OrdersService.create", "POST /orders")
+
+    assert diagram.count("participant p1 as DB") == 1
+    assert diagram.count("->>p1:") == 2
+
+
+def test_generate_entrypoint_sequence_with_no_edges_has_only_the_entrypoint_participant():
+    diagram = generate_entrypoint_sequence([], "OrdersController.list", "GET /orders")
+
+    assert diagram == "sequenceDiagram\n    participant p0 as GET /orders"
 
 
 def test_generate_er_diagram_lists_entity_fields(tmp_path: Path):

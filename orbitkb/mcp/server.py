@@ -157,7 +157,9 @@ def build_server(db_path: Path | None = None, backend: LLMBackend | None = None)
         `max_edges` defaults to 50 and is capped at 200 so a deep flow cannot flood
         agent context; `flow_pagination.truncated` tells the caller to ask again with
         a larger budget. Includes reachable literal resilience limits when source proves
-        them; they are declarations, not runtime guarantees. This is the preferred narrow
+        them; they are declarations, not runtime guarantees. `sequence_mermaid` is the
+        same flow as a Mermaid sequenceDiagram (capped at 20 messages, independent of
+        max_edges, for readability), zero LLM cost. This is the preferred narrow
         context primitive before reading source files."""
         with closing(_conn()) as conn:
             return queries.describe_entrypoint(conn, service, kind, method, name, max_edges, repository)

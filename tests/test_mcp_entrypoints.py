@@ -63,6 +63,14 @@ def test_describe_entrypoint_returns_the_reachable_bounded_flow(tmp_path):
         ("CreateOrderUseCase.execute", "orderRepository.save"),
     ]
     assert detail["boundaries"][0]["kind"] == "transaction"
+    assert detail["sequence_mermaid"] == "\n".join([
+        "sequenceDiagram",
+        "    participant p0 as POST /orders",
+        "    participant p1 as CreateOrderUseCase.execute",
+        "    p0->>p1: invokes",
+        "    participant p2 as DB",
+        "    p1->>p2: writes",
+    ])
 
 
 def test_describe_entrypoint_includes_a_deterministic_graphql_contract(tmp_path):
