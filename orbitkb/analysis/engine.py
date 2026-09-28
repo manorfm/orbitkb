@@ -29,7 +29,6 @@ from orbitkb.analysis.cloud_detection import (
     cloud_edge_kind_and_fact,
     detect_cloud_facts,
     go_client_declarations,
-    jvm_client_declarations,
     node_command_imports,
     node_stateful_client_declarations,
 )
@@ -66,6 +65,18 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
 STATIC_ANALYSIS_INPUT_VERSION = "31"
+
+# Shared with jvm_spring_analyzer.py's Kotlin/Java analyzers, and with
+# _feign_endpoints below (a Feign client's mapping annotation implies the same
+# HTTP verb as the equivalent Spring MVC route annotation) -- one mapping, not
+# a copy kept in sync in each place that needs it.
+SPRING_ROUTE_ANNOTATION_TO_METHOD: dict[str, str] = {
+    "GetMapping": "GET",
+    "PostMapping": "POST",
+    "PutMapping": "PUT",
+    "PatchMapping": "PATCH",
+    "DeleteMapping": "DELETE",
+}
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -406,38 +417,6 @@ def _spring_http_client_receivers(
     )
 
 
-def _spring_edges_for(
-    function: _Function,
-    path: Path,
-    root: Path,
-    source: bytes,
-    receivers: _SpringPersistenceReceivers,
-    cloud_declarations: dict[str, tuple],
-) -> tuple[list[FlowEdge], list[CloudFact]]:
-    edges = _FileAnalyzer._edges_for(function, path, root, source)
-    classified = []
-    cloud_facts: list[CloudFact] = []
-    for edge in edges:
-        cloud_kind, cloud_fact = cloud_edge_kind_and_fact(edge.target, edge.evidence, cloud_declarations)
-        kind = (
-            _spring_repository_call_kind(edge.target, receivers.repositories)
-            or _spring_jdbc_template_call_kind(edge.target, receivers.jdbc_templates)
-            or _spring_mongo_template_call_kind(edge.target, receivers.mongo_templates)
-            or _entity_manager_call_kind(edge.target, receivers.entity_managers)
-            or cloud_kind
-        )
-        # Generic name matching is disabled for JVM persistence: `repository.save`
-        # is an operation only with a local repository dependency.
-        if kind is None and edge.kind in {"reads", "writes"}:
-            kind = "invokes"
-        classified.append(FlowEdge(
-            edge.source, edge.target, kind or edge.kind, edge.evidence, edge.confidence, edge.origin,
-        ))
-        if cloud_fact is not None:
-            cloud_facts.append(cloud_fact)
-    return classified, cloud_facts
-
-
 def _spring_data_repository_types(files: list[Path]) -> frozenset[str]:
     """Find local interfaces whose declaration proves a Spring Data contract."""
     types = set()
@@ -765,234 +744,6 @@ def _go_literal_http_status(value: str) -> int | None:
         return int(value)
     name = re.sub(r"(?<!^)([A-Z])", r"_\1", value.replace("http.Status", "")).upper()
     return _HTTP_STATUS_CODES.get(name)
-
-
-class _KotlinSpringAnalyzer(_FileAnalyzer):
-    ROUTES: ClassVar[dict[str, str]] = {
-        "GetMapping": "GET",
-        "PostMapping": "POST",
-        "PutMapping": "PUT",
-        "PatchMapping": "PATCH",
-        "DeleteMapping": "DELETE",
-    }
-
-    def analyze(self, path: Path, root: Path) -> AnalysisResult:
-        source = path.read_bytes()
-        tree = self.parse(source)
-        cloud_declarations = jvm_client_declarations(source.decode("utf-8", errors="ignore"))
-        result = AnalysisResult()
-        for class_node in (node for node in _walk(tree) if node.type == "class_declaration"):
-            class_name_node = class_node.child_by_field_name("name")
-            class_name = _text(class_name_node, source) if class_name_node else path.stem
-            implements = _kotlin_supertypes(_text(class_node, source))
-            annotations = _class_annotations(class_node, source)
-            configuration_prefix = _spring_configuration_properties_prefix(annotations)
-            route_prefix = _spring_route_prefix(annotations)
-            qualifiers = _qualifiers(annotations)
-            primary = "@Primary" in annotations
-            publishers = _spring_amqp_publishers(_text(class_node, source))
-            kafka_publishers = _spring_kafka_publishers(_text(class_node, source))
-            for parameter in (node for node in _walk(class_node) if node.type == "class_parameter"):
-                parameter_text = _text(parameter, source)
-                name_match = re.search(r"(?:val|var)\s+(\w+)", parameter_text)
-                evidence = _evidence(path, root, parameter)
-                if binding := _configuration_properties_binding(
-                    configuration_prefix, class_name, name_match.group(1) if name_match else None, evidence,
-                ):
-                    result.configuration_bindings.append(binding)
-                types = [node for node in _walk(parameter) if node.type == "user_type"]
-                if types:
-                    injection_symbol = f"{class_name}.{name_match.group(1)}" if name_match else class_name
-                    contract = _text(types[-1], source)
-                    result.edges.append(FlowEdge(injection_symbol, contract, "injects", evidence))
-                    result.injections.append(Injection(injection_symbol, contract, _first_qualifier(_text(parameter, source)), evidence))
-                    if binding := _spring_value_property_binding(
-                        class_name, name_match.group(1) if name_match else None,
-                        parameter_text, evidence,
-                    ):
-                        result.configuration_bindings.append(binding)
-            persistence_receivers = _spring_persistence_receivers(result.injections, class_name)
-            rest_template_receivers = _spring_http_client_receivers(result.injections, class_name, "RestTemplate")
-            web_client_receivers = _spring_http_client_receivers(result.injections, class_name, "WebClient")
-            for function_node in (node for node in _walk(class_node) if node.type == "function_declaration"):
-                name_node = function_node.child_by_field_name("name")
-                if name_node is None:
-                    continue
-                symbol = f"{class_name}.{_text(name_node, source)}"
-                body = function_node.child_by_field_name("body") or function_node
-                function = _Function(_text(name_node, source), symbol, body, function_node)
-                result.symbols.append(_symbol(function, path, root, implements, qualifiers=qualifiers, primary=primary))
-                function_edges, function_cloud_facts = _spring_edges_for(
-                    function, path, root, source, persistence_receivers, cloud_declarations,
-                )
-                result.edges.extend(function_edges)
-                result.cloud_facts.extend(function_cloud_facts)
-                result.boundaries.extend(self._boundaries_for(function, path, root, source))
-                result.error_contracts.extend(_spring_raised_error_contracts(
-                    symbol, _text(function_node, source), path, root, function_node,
-                ))
-                result.error_contracts.extend(_spring_timeout_fallback_contracts(
-                    symbol, _text(function_node, source), path, root, function_node, kotlin=True,
-                ))
-                result.static_service_calls.extend(_spring_rest_template_service_calls(
-                    symbol, _text(function_node, source), rest_template_receivers, path, root, function_node,
-                ))
-                result.static_service_calls.extend(_spring_web_client_service_calls(
-                    symbol, _text(function_node, source), web_client_receivers, path, root, function_node,
-                ))
-                modifiers = next((node for node in function_node.named_children if node.type == "modifiers"), None)
-                modifier_text = _text(modifiers, source) if modifiers else ""
-                result.resilience_policies.extend(_spring_resilience_policies(
-                    symbol, _text(function_node, source), modifier_text, web_client_receivers,
-                    path, root, function_node,
-                ))
-                result.message_contracts.extend(
-                    _spring_publish_contracts(_text(function_node, source), publishers, path, root, function_node, kotlin=True)
-                )
-                result.message_contracts.extend(
-                    _spring_kafka_publish_contracts(_text(function_node, source), kafka_publishers, path, root, function_node, kotlin=True)
-                )
-                result.error_contracts.extend(_spring_error_contracts(
-                    symbol, _text(function_node, source), modifier_text,
-                    _evidence(path, root, modifiers or function_node), kotlin=True,
-                ))
-                match = re.search(r"@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\s*\(\s*\"([^\"]+)\"", modifier_text)
-                if match:
-                    result.entrypoints.append(EntryPoint("http", self.ROUTES[match.group(1)], _join_route(route_prefix, match.group(2)), symbol, _evidence(path, root, function_node)))
-                    result.contracts[symbol] = _spring_http_contract(_text(function_node, source), modifier_text, kotlin=True)
-                listener = re.search(r"@RabbitListener\s*\([^)]*\[\s*\"([^\"]+)\"", modifier_text)
-                if listener:
-                    result.entrypoints.append(EntryPoint("message", "CONSUME", listener.group(1), symbol, _evidence(path, root, function_node)))
-                    result.contracts[symbol] = _message_contract(listener.group(1), _text(function_node, source), "kotlin")
-                kafka_listener = re.search(r"@KafkaListener\s*\([^)]*\[\s*\"([^\"]+)\"", modifier_text)
-                if kafka_listener:
-                    result.entrypoints.append(EntryPoint("message", "CONSUME", kafka_listener.group(1), symbol, _evidence(path, root, function_node)))
-                    result.contracts[symbol] = _message_contract(kafka_listener.group(1), _text(function_node, source), "kotlin", transport="kafka")
-        return result
-
-
-class _JavaSpringAnalyzer(_FileAnalyzer):
-    ROUTES = _KotlinSpringAnalyzer.ROUTES
-
-    def analyze(self, path: Path, root: Path) -> AnalysisResult:
-        source = path.read_bytes()
-        tree = self.parse(source)
-        cloud_declarations = jvm_client_declarations(source.decode("utf-8", errors="ignore"))
-        result = AnalysisResult()
-        for class_node in (node for node in _walk(tree) if node.type == "class_declaration"):
-            class_name_node = class_node.child_by_field_name("name")
-            class_name = _text(class_name_node, source) if class_name_node else path.stem
-            implements = _java_interfaces(_text(class_node, source))
-            annotations = _class_annotations(class_node, source)
-            configuration_prefix = _spring_configuration_properties_prefix(annotations)
-            route_prefix = _spring_route_prefix(annotations)
-            qualifiers = _qualifiers(annotations)
-            primary = "@Primary" in annotations
-            publishers = _spring_amqp_publishers(_text(class_node, source))
-            kafka_publishers = _spring_kafka_publishers(_text(class_node, source))
-            for field in (node for node in _walk(class_node) if node.type == "field_declaration"):
-                types = [node for node in _walk(field) if node.type == "type_identifier"]
-                names = [node for node in _walk(field) if node.type == "variable_declarator"]
-                if names:
-                    variable = names[-1].child_by_field_name("name") or names[-1].named_children[0]
-                    variable_name = _text(variable, source)
-                    evidence = _evidence(path, root, field)
-                    if binding := _spring_value_property_binding(
-                        class_name, variable_name, _text(field, source), evidence,
-                    ):
-                        result.configuration_bindings.append(binding)
-                    if binding := _configuration_properties_binding(
-                        configuration_prefix, class_name, variable_name, evidence,
-                    ):
-                        result.configuration_bindings.append(binding)
-                if types and names:
-                    variable = names[-1].child_by_field_name("name") or names[-1].named_children[0]
-                    variable_name = _text(variable, source)
-                    consumer = f"{class_name}.{variable_name}"
-                    contract = _text(types[-1], source)
-                    evidence = _evidence(path, root, field)
-                    result.edges.append(FlowEdge(consumer, contract, "injects", evidence))
-                    result.injections.append(Injection(consumer, contract, _first_qualifier(_text(field, source)), evidence))
-            for constructor in (node for node in _walk(class_node) if node.type == "constructor_declaration"):
-                for parameter in (node for node in _walk(constructor) if node.type == "formal_parameter"):
-                    name_node = parameter.child_by_field_name("name")
-                    if name_node is None:
-                        continue
-                    evidence = _evidence(path, root, parameter)
-                    if binding := _spring_value_property_binding(
-                        class_name, _text(name_node, source), _text(parameter, source), evidence,
-                    ):
-                        result.configuration_bindings.append(binding)
-            persistence_receivers = _spring_persistence_receivers(result.injections, class_name)
-            rest_template_receivers = _spring_http_client_receivers(result.injections, class_name, "RestTemplate")
-            web_client_receivers = _spring_http_client_receivers(result.injections, class_name, "WebClient")
-            for method_node in (node for node in _walk(class_node) if node.type == "method_declaration"):
-                name_node = method_node.child_by_field_name("name")
-                body = method_node.child_by_field_name("body")
-                if name_node is None or body is None:
-                    continue
-                name = _text(name_node, source)
-                symbol = f"{class_name}.{name}"
-                function = _Function(name, symbol, body, method_node)
-                result.symbols.append(_symbol(function, path, root, implements, qualifiers=qualifiers, primary=primary))
-                function_edges, function_cloud_facts = _spring_edges_for(
-                    function, path, root, source, persistence_receivers, cloud_declarations,
-                )
-                result.edges.extend(function_edges)
-                result.cloud_facts.extend(function_cloud_facts)
-                result.boundaries.extend(self._boundaries_for(function, path, root, source))
-                result.error_contracts.extend(_spring_raised_error_contracts(
-                    symbol, _text(method_node, source), path, root, method_node,
-                ))
-                result.error_contracts.extend(_spring_timeout_fallback_contracts(
-                    symbol, _text(method_node, source), path, root, method_node, kotlin=False,
-                ))
-                result.static_service_calls.extend(_spring_rest_template_service_calls(
-                    symbol, _text(method_node, source), rest_template_receivers, path, root, method_node,
-                ))
-                result.static_service_calls.extend(_spring_web_client_service_calls(
-                    symbol, _text(method_node, source), web_client_receivers, path, root, method_node,
-                ))
-                modifiers = next((node for node in method_node.named_children if node.type == "modifiers"), None)
-                modifier_text = _text(modifiers, source) if modifiers else ""
-                result.resilience_policies.extend(_spring_resilience_policies(
-                    symbol, _text(method_node, source), modifier_text, web_client_receivers,
-                    path, root, method_node,
-                ))
-                result.message_contracts.extend(
-                    _spring_publish_contracts(_text(method_node, source), publishers, path, root, method_node)
-                )
-                result.message_contracts.extend(
-                    _spring_kafka_publish_contracts(_text(method_node, source), kafka_publishers, path, root, method_node)
-                )
-                result.error_contracts.extend(_spring_error_contracts(
-                    symbol, _text(method_node, source), modifier_text,
-                    _evidence(path, root, modifiers or method_node), kotlin=False,
-                ))
-                match = re.search(r"@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\s*\(\s*\"([^\"]+)\"", modifier_text)
-                if match:
-                    result.entrypoints.append(EntryPoint("http", self.ROUTES[match.group(1)], _join_route(route_prefix, match.group(2)), symbol, _evidence(path, root, method_node)))
-                    result.contracts[symbol] = _spring_http_contract(_text(method_node, source), modifier_text)
-                listener = re.search(r"@RabbitListener\s*\([^)]*(?:queues\s*=\s*)?\"([^\"]+)\"", modifier_text)
-                if listener:
-                    result.entrypoints.append(EntryPoint("message", "CONSUME", listener.group(1), symbol, _evidence(path, root, method_node)))
-                    result.contracts[symbol] = _message_contract(listener.group(1), _text(method_node, source), "java")
-                kafka_listener = re.search(r"@KafkaListener\s*\([^)]*(?:topics\s*=\s*)?\"([^\"]+)\"", modifier_text)
-                if kafka_listener:
-                    result.entrypoints.append(EntryPoint("message", "CONSUME", kafka_listener.group(1), symbol, _evidence(path, root, method_node)))
-                    result.contracts[symbol] = _message_contract(kafka_listener.group(1), _text(method_node, source), "java", transport="kafka")
-        return result
-
-
-class _JvmSpringAnalyzer:
-    """Selects the JVM parser while keeping the public stack identifier stable."""
-
-    def __init__(self) -> None:
-        self._kotlin = _KotlinSpringAnalyzer(Language(tree_sitter_kotlin.language()))
-        self._java = _JavaSpringAnalyzer(Language(tree_sitter_java.language()))
-
-    def analyze(self, path: Path, root: Path) -> AnalysisResult:
-        return self._java.analyze(path, root) if path.suffix == ".java" else self._kotlin.analyze(path, root)
 
 
 _JVM_GRPC_SERVICE_IMPORT = re.compile(
@@ -3463,10 +3214,14 @@ class StaticAnalysisEngine:
     """Facade selecting an AST analyzer for the supported service stack."""
 
     def __init__(self, depth_provider: DepthProvider | None = None) -> None:
+        # Deferred: jvm_spring_analyzer imports this module for its shared Spring
+        # helpers, so importing it back at module load time would be circular.
+        from orbitkb.analysis.jvm_spring_analyzer import JvmSpringAnalyzer
+
         self._depth_provider = depth_provider or NoopDepthProvider()
         self._analyzers = {
             "go": (_GoAnalyzer(Language(tree_sitter_go.language())), ("*.go",)),
-            "jvm-spring": (_JvmSpringAnalyzer(), ("*.java", "*.kt")),
+            "jvm-spring": (JvmSpringAnalyzer(), ("*.java", "*.kt")),
             "node-ts": (
                 _NodeGraphqlAnalyzer(Language(tree_sitter_typescript.language_typescript())),
                 ("*.js", "*.jsx", "*.ts", "*.tsx", "*.graphql", "*.gql", "*.prisma"),
@@ -3651,7 +3406,7 @@ def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], tuple[str, str,
             for method_match in _FEIGN_METHOD_PATTERN.finditer(client_match.group("body")):
                 endpoints[(client, method_match.group("method"))] = (
                     service,
-                    _JavaSpringAnalyzer.ROUTES[method_match.group("mapping")],
+                    SPRING_ROUTE_ANNOTATION_TO_METHOD[method_match.group("mapping")],
                     _join_route(route_prefix, method_match.group("path")),
                 )
     return endpoints
