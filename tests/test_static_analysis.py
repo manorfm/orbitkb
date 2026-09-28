@@ -97,6 +97,45 @@ class OrdersController(private val useCase: CreateOrderUseCase) {
     assert any(edge.kind == "invokes" and edge.target == "useCase.execute" for edge in result.edges)
 
 
+def test_jvm_spring_analyzer_extracts_a_pre_authorize_role_requirement(tmp_path: Path):
+    (tmp_path / "OrdersController.kt").write_text(
+        '''@RestController
+class OrdersController(private val useCase: CancelOrderUseCase) {
+  @PreAuthorize("hasRole('ADMIN')")
+  @DeleteMapping("/orders/{id}")
+  fun cancel(@PathVariable id: String) = useCase.execute(id)
+}
+''',
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(r.symbol, r.requirement, r.roles) for r in result.security_requirements] == [
+        ("OrdersController.cancel", "hasRole", ("ADMIN",)),
+    ]
+
+
+def test_java_spring_analyzer_extracts_a_secured_requirement(tmp_path: Path):
+    (tmp_path / "OrdersController.java").write_text(
+        '''class OrdersController {
+  @Secured("ROLE_ADMIN")
+  @DeleteMapping("/orders/{id}")
+  public void cancel(String id) {
+    useCase.execute(id);
+  }
+}
+''',
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(r.symbol, r.requirement, r.roles) for r in result.security_requirements] == [
+        ("OrdersController.cancel", "secured", ("ROLE_ADMIN",)),
+    ]
+
+
 def test_jvm_spring_analyzer_links_feign_invocation_with_a_path_parameter_in_the_mapping(tmp_path: Path):
     """The Feign interface body used to be captured with a naive `.*?}` regex, which
     stopped at the FIRST `}` anywhere in the body -- including one inside a route's

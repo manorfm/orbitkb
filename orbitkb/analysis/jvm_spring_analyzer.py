@@ -24,6 +24,7 @@ from pathlib import Path
 
 from orbitkb.analysis import engine
 from orbitkb.analysis.cloud_detection import cloud_edge_kind_and_fact, jvm_client_declarations
+from orbitkb.analysis.jvm_security_analyzer import method_security_requirement
 from orbitkb.analysis.jvm_scanner import (
     FunctionMatch,
     find_calls,
@@ -282,6 +283,8 @@ class _KotlinSpringAnalyzer:
                     symbol, function_match.text, web_client_receivers, path, root, line_evidence,
                 ))
                 modifier_text = function_match.modifiers
+                if requirement := method_security_requirement(symbol, modifier_text, evidence):
+                    result.security_requirements.append(requirement)
                 result.resilience_policies.extend(engine._spring_resilience_policies(
                     symbol, function_match.text, modifier_text, web_client_receivers, path, root, line_evidence,
                 ))
@@ -369,6 +372,8 @@ class _JavaSpringAnalyzer:
                     symbol, function_match.text, web_client_receivers, path, root, line_evidence,
                 ))
                 modifier_text = function_match.modifiers
+                if requirement := method_security_requirement(symbol, modifier_text, evidence):
+                    result.security_requirements.append(requirement)
                 result.resilience_policies.extend(engine._spring_resilience_policies(
                     symbol, function_match.text, modifier_text, web_client_receivers, path, root, line_evidence,
                 ))
