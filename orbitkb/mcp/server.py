@@ -124,7 +124,10 @@ def build_server(db_path: Path | None = None, backend: LLMBackend | None = None)
         """The most detailed level for one API: response shape field by field, its
         calls to other services/queues (business reason + exact data needed), and
         validation/authorization rules. `api_shape` restates method/path/request/
-        response compactly as one structured block (a lean "swagger"), plus a
+        response compactly as one structured block (a lean "swagger"), including
+        literal request/response header names and, when a
+        SecurityFilterChain/@PreAuthorize/@Secured rule covers this route, its
+        `security` requirement and roles (jvm-spring only so far for both) -- plus a
         literal `endpoint_kind` ("health_check"/"internal"/"rest", from the path
         alone). Call this once you know exactly which endpoint a change touches and
         need its full contract before editing it. Pass repository when needed."""

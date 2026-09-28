@@ -52,8 +52,8 @@ def test_describe_api_includes_a_compact_api_shape_block(tmp_path: Path):
         "method": "POST",
         "path": "/charge",
         "endpoint_kind": "rest",
-        "request": {"body": request_shape},
-        "response": {"body": response_shape},
+        "request": {"body": request_shape, "headers": []},
+        "response": {"body": response_shape, "headers": []},
         "security": None,
     }
 
@@ -122,3 +122,32 @@ def test_describe_api_security_is_none_when_no_requirement_covers_the_route(tmp_
     result = queries.describe_api(conn, "orders-service", "GET", "/orders")
 
     assert result["api_shape"]["security"] is None
+
+
+def test_describe_api_includes_request_and_response_headers_in_api_shape(tmp_path: Path):
+    from orbitkb.analysis.models import ApiHeader
+
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "menu-manager", "/tmp/menu-manager", "jvm-spring")
+    apis_repo.upsert_api(conn, service_id, "GET", "/menus/active", "s", "d", [], [])
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(api_headers=[
+        ApiHeader("GET", "/menus/active", "request", "Accept-Language", Evidence("MenuController.kt", 1, 1)),
+        ApiHeader("GET", "/menus/active", "response", "ETag", Evidence("MenuController.kt", 1, 1)),
+        ApiHeader("GET", "/menus/active", "response", "Cache-Control", Evidence("MenuController.kt", 1, 1)),
+    ]))
+
+    result = queries.describe_api(conn, "menu-manager", "GET", "/menus/active")
+
+    assert result["api_shape"]["request"]["headers"] == ["Accept-Language"]
+    assert result["api_shape"]["response"]["headers"] == ["Cache-Control", "ETag"]
+
+
+def test_describe_api_headers_are_empty_lists_when_none_were_extracted(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")
+    apis_repo.upsert_api(conn, service_id, "GET", "/orders", "s", "d", [], [])
+
+    result = queries.describe_api(conn, "orders-service", "GET", "/orders")
+
+    assert result["api_shape"]["request"]["headers"] == []
+    assert result["api_shape"]["response"]["headers"] == []

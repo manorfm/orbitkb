@@ -484,6 +484,9 @@ def describe_api(conn: sqlite3.Connection, service: str, method: str, path: str,
     response_shape = json.loads(api["response_shape"] or "[]")
     request_shape = json.loads(api["request_shape"] or "[]")
     security_requirements = flows_repo.list_static_security_requirements_in_declaration_order(conn, row["id"])
+    headers = flows_repo.list_static_api_headers_for_route(conn, row["id"], api["method"], api["path"])
+    request_headers = [h["name"] for h in headers if h["direction"] == "request"]
+    response_headers = [h["name"] for h in headers if h["direction"] == "response"]
     return {
         "service": row["name"], "repository": row["repository_name"],
         "method": api["method"],
@@ -498,8 +501,8 @@ def describe_api(conn: sqlite3.Connection, service: str, method: str, path: str,
             "method": api["method"],
             "path": api["path"],
             "endpoint_kind": classify_endpoint_kind(api["path"]),
-            "request": {"body": request_shape},
-            "response": {"body": response_shape},
+            "request": {"body": request_shape, "headers": request_headers},
+            "response": {"body": response_shape, "headers": response_headers},
             "security": _security_shape_for_api(security_requirements, api["method"], api["path"]),
         },
     }
