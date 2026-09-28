@@ -23,6 +23,7 @@ def replace_analysis(conn: sqlite3.Connection, service_id: int, analysis: Analys
     conn.execute("DELETE FROM static_feature_flags WHERE service_id = ?", (service_id,))
     conn.execute("DELETE FROM static_cloud_facts WHERE service_id = ?", (service_id,))
     conn.execute("DELETE FROM static_security_requirements WHERE service_id = ?", (service_id,))
+    conn.execute("DELETE FROM static_api_headers WHERE service_id = ?", (service_id,))
     indexed_at = now()
     entrypoint_ids: dict[str, int] = {}
     persisted_entrypoints: list[tuple[EntryPoint, int]] = []
@@ -170,6 +171,16 @@ def replace_analysis(conn: sqlite3.Connection, service_id: int, analysis: Analys
                 requirement.requirement, json.dumps(list(requirement.roles)),
                 requirement.evidence.file_path, requirement.evidence.start_line,
                 requirement.evidence.end_line, indexed_at,
+            ),
+        )
+    for header in analysis.api_headers:
+        conn.execute(
+            """INSERT INTO static_api_headers
+               (service_id, method, path, direction, name, file_path, start_line, end_line, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                service_id, header.method, header.path, header.direction, header.name,
+                header.evidence.file_path, header.evidence.start_line, header.evidence.end_line, indexed_at,
             ),
         )
 
@@ -350,6 +361,16 @@ def list_static_security_requirements(conn: sqlite3.Connection, service_id: int)
            FROM static_security_requirements WHERE service_id = ?
            ORDER BY route_pattern, method, symbol""",
         (service_id,),
+    ).fetchall()
+
+
+def list_static_api_headers_for_route(
+    conn: sqlite3.Connection, service_id: int, method: str, path: str,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT direction, name, file_path, start_line, end_line FROM static_api_headers
+           WHERE service_id = ? AND method = ? AND path = ? ORDER BY direction, name""",
+        (service_id, method, path),
     ).fetchall()
 
 

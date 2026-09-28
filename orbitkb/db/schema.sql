@@ -186,6 +186,24 @@ CREATE TABLE IF NOT EXISTS static_security_requirements (
 CREATE INDEX IF NOT EXISTS idx_static_security_requirements_service
     ON static_security_requirements(service_id);
 
+-- One HTTP header name a specific route reads (direction='request', from
+-- @RequestHeader) or writes (direction='response', from a ResponseEntity header
+-- builder call) -- the name only, never a value (see ApiHeader in models.py).
+CREATE TABLE IF NOT EXISTS static_api_headers (
+    id          INTEGER PRIMARY KEY,
+    service_id  INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+    method      TEXT NOT NULL,
+    path        TEXT NOT NULL,
+    direction   TEXT NOT NULL CHECK (direction IN ('request', 'response')),
+    name        TEXT NOT NULL,
+    file_path   TEXT NOT NULL,
+    start_line  INTEGER NOT NULL,
+    end_line    INTEGER NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_static_api_headers_service_route
+    ON static_api_headers(service_id, method, path);
+
 -- `provider` is the concrete message broker/vendor (kafka, rabbitmq, sqs, sns,
 -- service_bus, activemq, nats), inferred by the LLM from real code the same way
 -- service_calls.target_kind is — 'unknown' means the code only showed a

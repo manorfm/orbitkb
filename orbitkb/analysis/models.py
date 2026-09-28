@@ -197,6 +197,21 @@ class CloudFact:
 
 
 @dataclass(frozen=True)
+class ApiHeader:
+    """One HTTP header name a specific route reads (`@RequestHeader`) or writes
+    (a `ResponseEntity` header builder call) -- the name only, never a value:
+    a request header's value is caller-supplied runtime data, and a response
+    header's value is frequently itself computed, so neither is a literal,
+    indexable fact the way the header's name is."""
+
+    method: str
+    path: str
+    direction: str
+    name: str
+    evidence: Evidence
+
+
+@dataclass(frozen=True)
 class SecurityRequirement:
     """One authorization rule proven either for a route pattern (a Spring Security
     `SecurityFilterChain`'s `authorizeHttpRequests` block) or for a specific symbol
@@ -237,6 +252,7 @@ class AnalysisResult:
     feature_flags: list[FeatureFlag] = field(default_factory=list)
     cloud_facts: list[CloudFact] = field(default_factory=list)
     security_requirements: list[SecurityRequirement] = field(default_factory=list)
+    api_headers: list[ApiHeader] = field(default_factory=list)
 
     def extend(self, other: AnalysisResult) -> None:
         self.entrypoints.extend(other.entrypoints)
@@ -257,3 +273,4 @@ class AnalysisResult:
         self.feature_flags.extend(other.feature_flags)
         self.cloud_facts.extend(other.cloud_facts)
         self.security_requirements.extend(other.security_requirements)
+        self.api_headers.extend(other.api_headers)
