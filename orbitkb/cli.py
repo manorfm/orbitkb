@@ -626,7 +626,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
 
     def add_backend_args(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--backend", choices=["claude", "codex"], default=None, help="LLM backend to shell out to headless (default: whichever CLI is on PATH)")
+        p.add_argument(
+            "--backend", choices=["claude", "codex", "mock"], default=None,
+            help="LLM backend to shell out to headless (default: whichever CLI is on PATH); "
+            "'mock' costs nothing and shells out to nothing, for dry runs against a real repository",
+        )
         p.add_argument("--model", default=None, help="Override the backend's default model")
         p.add_argument("--claude-bare", action="store_true", help="Use ANTHROPIC_API_KEY billing instead of the Claude CLI subscription session")
         p.add_argument("--codex-api-key", action="store_true", help="Use CODEX_API_KEY billing instead of the ChatGPT subscription session")

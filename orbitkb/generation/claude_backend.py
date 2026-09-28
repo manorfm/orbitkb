@@ -8,6 +8,14 @@ from orbitkb.generation.backend_base import GenerationError, GenerationOutcome, 
 
 TIMEOUT_SECONDS = 180
 
+# A headless batch job calls `generate()` once per unit across a whole service
+# (an endpoint, a component, a persistence summary, ...), so leaving this unset
+# would fall back to whatever model the `claude` CLI's own ambient config
+# defaults to -- Opus, on an account configured that way -- multiplying an
+# expensive-per-call model across every unit instead of the cheaper one this
+# structured-extraction task actually needs.
+DEFAULT_MODEL = "sonnet"
+
 
 class ClaudeBackend:
     """Headless Claude CLI CLI backend.
@@ -21,7 +29,7 @@ class ClaudeBackend:
     name = "claude"
 
     def __init__(self, model: str | None = None, bare: bool = False):
-        self.model = model
+        self.model = model or DEFAULT_MODEL
         self.bare = bare
 
     def generate(self, prompt: str, schema: dict, cwd: Path) -> GenerationOutcome:

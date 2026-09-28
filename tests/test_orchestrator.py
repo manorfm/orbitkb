@@ -23,15 +23,19 @@ from orbitkb.discovery.registry import detector_for
 from orbitkb.discovery.walker import discover_services
 from orbitkb.generation import orchestrator
 from orbitkb.generation.backend_base import GenerationError, GenerationOutcome
+from orbitkb.generation.mock_backend import kind_for_schema
 from orbitkb.generation.orchestrator import DiscoveryError, index_path, index_service
 
 SAMPLE_ROOT = Path(__file__).resolve().parent.parent / "verify" / "sample_project"
 
 
 class FakeOrchestratorBackend:
-    """Returns a canned, schema-shaped response per unit kind, detected from the
-    schema's own top-level property names (the same schemas orchestrator.py loads).
-    Optionally fails a chosen unit kind, to exercise failure isolation.
+    """Returns a canned, schema-shaped response per unit kind, reusing
+    orbitkb.generation.mock_backend's schema-to-kind detection (the same one
+    `orbitkb index --backend mock` uses) but with representative sample values
+    instead of that backend's empty placeholders, since some tests assert on the
+    persisted content itself. Optionally fails a chosen unit kind, to exercise
+    failure isolation.
     """
 
     name = "fake"
@@ -40,26 +44,12 @@ class FakeOrchestratorBackend:
         self.fail_kind = fail_kind
         self.calls = 0
 
-    def _kind(self, schema: dict) -> str:
-        props = schema.get("properties", {})
-        if "short_desc" in props:
-            return "service_overview"
-        if "entities" in props:
-            return "persistence"
-        if "messages" in props:
-            return "messaging"
-        if set(props) == {"summary"}:
-            return "component"
-        return "api_detail"
-
     def generate(self, prompt: str, schema: dict, cwd: Path) -> GenerationOutcome:
         self.calls += 1
-        kind = self._kind(schema)
+        kind = kind_for_schema(schema)
         if kind == self.fail_kind:
             raise GenerationError("simulated failure")
-        if kind == "service_overview":
-            structured = {"short_desc": "Fake short description.", "long_desc": "Fake long description."}
-        elif kind == "persistence":
+        if kind == "persistence":
             structured = {
                 "entities": [
                     {"name": "fake_table", "kind": "sql_table", "engine": "postgres", "fields": [{"field": "id", "type_desc": "string"}]}
@@ -67,9 +57,7 @@ class FakeOrchestratorBackend:
             }
         elif kind == "messaging":
             structured = {"messages": [{"direction": "publishes", "channel": "fake_channel", "provider": "kafka", "shape": [], "description": "fake"}]}
-        elif kind == "component":
-            structured = {"summary": "Fake component summary."}
-        else:
+        elif kind == "api_detail":
             structured = {
                 "summary": "Fake summary.",
                 "description": "Fake description.",
@@ -82,6 +70,10 @@ class FakeOrchestratorBackend:
                 }],
                 "validations": [{"kind": "authorization", "description": "fake auth rule"}],
             }
+        elif kind == "service_overview":
+            structured = {"short_desc": "Fake short description.", "long_desc": "Fake long description."}
+        elif kind == "component":
+            structured = {"summary": "Fake component summary."}
         return GenerationOutcome(structured=structured)
 
 
@@ -96,7 +88,7 @@ class RecordingOrchestratorBackend(FakeOrchestratorBackend):
         self.prompts_by_kind: dict[str, list[str]] = {}
 
     def generate(self, prompt: str, schema: dict, cwd: Path) -> dict:
-        self.prompts_by_kind.setdefault(self._kind(schema), []).append(prompt)
+        self.prompts_by_kind.setdefault(kind_for_schema(schema), []).append(prompt)
         return super().generate(prompt, schema, cwd)
 
 

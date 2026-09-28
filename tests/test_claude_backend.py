@@ -18,6 +18,19 @@ from orbitkb.generation.claude_backend import ClaudeBackend
 SCHEMA = {"type": "object", "properties": {"summary": {"type": "string"}}}
 
 
+def test_defaults_to_sonnet_when_no_model_is_given():
+    """Without an explicit model, this used to shell out to `claude` with no --model
+    flag at all, which falls back to whatever model the CLI's own ambient config
+    defaults to (Opus, on an account configured that way) -- an expensive surprise
+    for a headless batch job invoked once per unit generated across a whole service.
+    """
+    assert ClaudeBackend().model == "sonnet"
+
+
+def test_an_explicit_model_overrides_the_default():
+    assert ClaudeBackend(model="opus").model == "opus"
+
+
 def test_generate_extracts_structured_output_and_full_usage(monkeypatch, tmp_path: Path):
     payload = {
         "structured_output": {"summary": "ok"},
