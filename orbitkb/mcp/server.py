@@ -94,6 +94,20 @@ def build_server(db_path: Path | None = None, backend: LLMBackend | None = None)
             return queries.describe_service(conn, service, limit, offset, repository)
 
     @mcp.tool()
+    def describe_service_topology(
+        service: str, repository: str | None = None, hops: int = queries.DEFAULT_TOPOLOGY_HOPS,
+    ) -> dict:
+        """A Mermaid graph TD of one service's own dependency neighborhood: who it
+        calls, who calls it, its queues/message links, and its databases — scoped to
+        `hops` steps out (default 1) rather than the whole indexed system's topology.
+        Zero LLM cost: rendered straight from the same facts describe_service and
+        get_relationships already list, just as a diagram. Raise hops for a wider
+        view (e.g. 2 to also see what your direct dependencies themselves depend
+        on). Pass repository when the service name is duplicated."""
+        with closing(_conn()) as conn:
+            return queries.describe_service_topology(conn, service, repository, hops)
+
+    @mcp.tool()
     def list_apis(
         service: str, limit: int = queries.DEFAULT_LIST_LIMIT, offset: int = 0, repository: str | None = None,
     ) -> dict:

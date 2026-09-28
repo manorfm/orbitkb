@@ -39,6 +39,7 @@ from orbitkb.db.repositories import security_findings as security_findings_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.discovery.hashing import git_working_changed_files_with_status
+from orbitkb.export.mermaid import generate_topology_diagram
 from orbitkb.generation import change_surface
 from orbitkb.generation.architecture import diff_architecture_runs
 from orbitkb.generation.backend_base import LLMBackend
@@ -329,6 +330,38 @@ def describe_service(
             "limit": limit, "offset": offset,
             "calls": calls_page, "apis": apis_page, "components": components_page,
             "persists": persists_page, "messages": messages_page,
+        },
+    }
+
+
+DEFAULT_TOPOLOGY_HOPS = 1
+
+
+def describe_service_topology(
+    conn: sqlite3.Connection, service: str, repository: str | None = None, hops: int = DEFAULT_TOPOLOGY_HOPS,
+) -> dict:
+    """Zero-LLM Mermaid `graph TD` of one service's own dependency neighborhood --
+    who it calls, who calls it, and its queues/DBs -- scoped to `hops` steps out
+    (default 1) rather than export's whole-system topology.mmd, since a single
+    service's context rarely needs the entire indexed system's graph. Built purely
+    from the same service_calls/messages/persistence facts describe_service and
+    get_relationships already read, just rendered as a diagram instead of a list.
+    """
+    row, service_error = _resolve_service(conn, service, repository)
+    if service_error:
+        return service_error
+    mermaid = generate_topology_diagram(conn, root_services={row["name"]}, hops=hops)
+    return {
+        "service": row["name"],
+        "repository": row["repository_name"],
+        "hops": hops,
+        "mermaid": mermaid,
+        "legend": {
+            "-->": "internal service call",
+            "-.->": "call/dependency on an external vendor, cloud resource or database",
+            "==>": "message link (publish on one side matched to consume on the other)",
+            "((...))": "external node (vendor, cloud resource, or an unmatched message broker)",
+            "[(...)]": "database node",
         },
     }
 

@@ -95,6 +95,34 @@ def test_generate_topology_diagram_shows_unmatched_messaging_and_persistence(tmp
     assert "persists" in diagram
 
 
+def test_generate_topology_diagram_scoped_to_one_service_excludes_unrelated_ones(tmp_path: Path):
+    """`root_services` + `hops` narrows the graph to one service's own neighborhood
+    -- notification-service (1 hop via the order_created message link) is included,
+    but a fourth, unrelated service must not leak into the scoped subgraph.
+    """
+    conn = open_db(tmp_path / "test.db")
+    _seed_topology(conn)
+    services_repo.ensure_service(conn, "unrelated-service", "/tmp/unrelated", "python")
+
+    diagram = generate_topology_diagram(conn, root_services={"orders-service"}, hops=1)
+
+    assert "orders-service" in diagram
+    assert "payments-service" in diagram  # 1 hop via the http service_call
+    assert "notification-service" in diagram  # 1 hop via the order_created message link
+    assert "unrelated-service" not in diagram
+
+
+def test_generate_topology_diagram_scoped_with_zero_hops_shows_only_the_root(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    _seed_topology(conn)
+
+    diagram = generate_topology_diagram(conn, root_services={"orders-service"}, hops=0)
+
+    assert "orders-service" in diagram
+    assert "payments-service" not in diagram
+    assert "notification-service" not in diagram
+
+
 def test_generate_topology_diagram_highlights_cycle_services(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     a_id = services_repo.ensure_service(conn, "a-service", "/tmp/a", "python")

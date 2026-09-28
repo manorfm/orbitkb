@@ -37,16 +37,59 @@ def _cycle_service_names(conn: sqlite3.Connection) -> set[str]:
     return names
 
 
-def generate_topology_diagram(conn: sqlite3.Connection) -> str:
-    """System-wide `graph TD`: every indexed service as a node, external vendors as
-    rounded nodes, service_calls as solid edges, message links as dashed edges.
-    Services involved in a cycle (find_architecture_smells) are styled distinctly —
-    the one piece of interpretation on top of otherwise purely structural facts."""
+def _neighbor_service_names(conn: sqlite3.Connection, service_id: int) -> set[str]:
+    """Other services directly connected to this one, in either direction, by a
+    resolved service_call or a matching publish/consume channel — external targets
+    (unresolved to_service_id, or non-service message channels) never grow the
+    reachable set, since they aren't a service to keep expanding from.
+    """
+    names = {
+        row["to_service_name"] for row in service_calls_repo.list_calls_for_service(conn, service_id)
+        if row["to_service_id"] is not None
+    }
+    names |= {row["from_service_name"] for row in service_calls_repo.list_inbound_calls(conn, service_id)}
+    names |= {row["other_service"] for row in messages_repo.list_message_links(conn, service_id)}
+    return names
+
+
+def _reachable_service_names(conn: sqlite3.Connection, roots: set[str], hops: int) -> set[str]:
+    """Every service within `hops` steps of `roots`, in either direction — a scoped
+    subgraph for one service's neighborhood, so a caller isn't handed the whole
+    system's topology when it only asked about one service's own context.
+    """
+    name_to_id = {svc["name"]: svc["id"] for svc in services_repo.list_services(conn)}
+    reached = {name for name in roots if name in name_to_id}
+    frontier = set(reached)
+    for _ in range(max(hops, 0)):
+        next_frontier: set[str] = set()
+        for name in frontier:
+            next_frontier |= _neighbor_service_names(conn, name_to_id[name]) - reached
+        if not next_frontier:
+            break
+        reached |= next_frontier
+        frontier = next_frontier
+    return reached
+
+
+def generate_topology_diagram(
+    conn: sqlite3.Connection, root_services: set[str] | None = None, hops: int = 1,
+) -> str:
+    """`graph TD` over every indexed service (or, with `root_services`, only the
+    subgraph reachable within `hops` steps of them): each as a node, external
+    vendors as rounded nodes, service_calls as solid edges, message links as dashed
+    edges. Services involved in a cycle (find_architecture_smells) are styled
+    distinctly — the one piece of interpretation on top of otherwise purely
+    structural facts. Cycle styling and DB nodes are scoped the same way: a service
+    filtered out of the subgraph never contributes its own persistence nodes either.
+    """
     cycle_names = _cycle_service_names(conn)
+    included = _reachable_service_names(conn, root_services, hops) if root_services is not None else None
     lines = ["graph TD"]
 
     service_ids: dict[str, str] = {}
     for svc in services_repo.list_services(conn):
+        if included is not None and svc["name"] not in included:
+            continue
         node_id = f"svc_{_slug(svc['name'])}"
         service_ids[svc["name"]] = node_id
         lines.append(f'  {node_id}["{svc["name"]}"]')
@@ -61,7 +104,11 @@ def generate_topology_diagram(conn: sqlite3.Connection) -> str:
         return external_ids[name]
 
     for edge in service_calls_repo.list_internal_edges(conn):
-        lines.append(f'  {service_ids[edge["from_name"]]} -->|{edge["call_kind"]}| {service_ids[edge["to_name"]]}')
+        from_id = service_ids.get(edge["from_name"])
+        to_id = service_ids.get(edge["to_name"])
+        if from_id is None or to_id is None:
+            continue
+        lines.append(f"  {from_id} -->|{edge['call_kind']}| {to_id}")
 
     for edge in service_calls_repo.list_external_edges(conn):
         from_id = service_ids.get(edge["from_name"])
@@ -99,7 +146,9 @@ def generate_topology_diagram(conn: sqlite3.Connection) -> str:
             lines.append(f"  {broker_id} -.->|{row['channel']}| {from_id}")
 
     for svc in services_repo.list_services(conn):
-        from_id = service_ids[svc["name"]]
+        from_id = service_ids.get(svc["name"])
+        if from_id is None:
+            continue
         engines = {entity["engine"] for entity in persistence_repo.list_persistence(conn, svc["id"])}
         for engine in sorted(engines):
             # Never shared across services — a same-named engine on two services isn't
