@@ -160,7 +160,7 @@ def _find_header_end(text: str, start: int) -> int:
 
 
 _INLINE_PREFIX_TOKEN = (
-    r"@[\w.]+(?:\([^\n]*?\))?|public|private|protected|internal|open|abstract"
+    r"@[\w.]+(?:\([^\n]*?\))?|public|private|protected|internal|open|abstract"  # nosec B105 - a regex fragment matching Kotlin/Java modifier keywords, not a credential.
     r"|final|sealed|data|inner|annotation|static|override|suspend"
 )
 _INLINE_PREFIX_RE = re.compile(rf"(?:{_INLINE_PREFIX_TOKEN})(?:\s+(?:{_INLINE_PREFIX_TOKEN}))*")
