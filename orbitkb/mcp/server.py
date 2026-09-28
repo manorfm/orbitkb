@@ -123,8 +123,11 @@ def build_server(db_path: Path | None = None, backend: LLMBackend | None = None)
     def describe_api(service: str, method: str, path: str, repository: str | None = None) -> dict:
         """The most detailed level for one API: response shape field by field, its
         calls to other services/queues (business reason + exact data needed), and
-        validation/authorization rules. Call this once you know exactly which
-        endpoint a change touches and need its full contract before editing it. Pass repository when needed."""
+        validation/authorization rules. `api_shape` restates method/path/request/
+        response compactly as one structured block (a lean "swagger"), plus a
+        literal `endpoint_kind` ("health_check"/"internal"/"rest", from the path
+        alone). Call this once you know exactly which endpoint a change touches and
+        need its full contract before editing it. Pass repository when needed."""
         with closing(_conn()) as conn:
             return queries.describe_api(conn, service, method, path, repository)
 

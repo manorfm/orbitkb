@@ -411,6 +411,24 @@ def describe_ci_commands(conn: sqlite3.Connection, repository: str, limit: int =
     }
 
 
+_HEALTH_CHECK_PATH = re.compile(r"/(health|healthz|actuator/health)(?:[/?]|$)", re.IGNORECASE)
+_INTERNAL_PATH = re.compile(r"/internal(?:[/?]|$)", re.IGNORECASE)
+
+
+def classify_endpoint_kind(path: str) -> str:
+    """A literal, path-only classification -- `"health_check"`/`"internal"` when
+    the path itself says so by convention, `"rest"` otherwise. Deliberately not
+    `"rpc"`/`"webhook"`: gRPC entrypoints are a separate `EntryPoint` kind that
+    never reaches `apis`/`describe_api` at all, and nothing in a path alone proves
+    "this is a webhook receiver" the way it proves a health-check convention.
+    """
+    if _HEALTH_CHECK_PATH.search(path):
+        return "health_check"
+    if _INTERNAL_PATH.search(path):
+        return "internal"
+    return "rest"
+
+
 def describe_api(conn: sqlite3.Connection, service: str, method: str, path: str, repository: str | None = None) -> dict:
     row, service_error = _resolve_service(conn, service, repository)
     if service_error:
@@ -420,16 +438,25 @@ def describe_api(conn: sqlite3.Connection, service: str, method: str, path: str,
         return {"error": f"unknown api: {method} {path} on {service}"}
     calls = service_calls_repo.list_calls_for_api(conn, api["id"])
     validations = apis_repo.list_validations_for_api(conn, api["id"])
+    response_shape = json.loads(api["response_shape"] or "[]")
+    request_shape = json.loads(api["request_shape"] or "[]")
     return {
         "service": row["name"], "repository": row["repository_name"],
         "method": api["method"],
         "path": api["path"],
         "summary": api["summary"],
         "description": api["description"],
-        "response_shape": json.loads(api["response_shape"] or "[]"),
-        "request_shape": json.loads(api["request_shape"] or "[]"),
+        "response_shape": response_shape,
+        "request_shape": request_shape,
         "calls": [_fmt_call(c) for c in calls],
         "validations": [{"kind": v["kind"], "description": v["description"]} for v in validations],
+        "api_shape": {
+            "method": api["method"],
+            "path": api["path"],
+            "endpoint_kind": classify_endpoint_kind(api["path"]),
+            "request": {"body": request_shape},
+            "response": {"body": response_shape},
+        },
     }
 
 
