@@ -90,9 +90,7 @@ def _endpoint_hint(
 
 
 def endpoint_matches(scan_root: Path) -> list[tuple[str, str, Path, int]]:
-    """(method, route, path, line_no) for every `@XMapping` annotation -- pure regex,
-    no tree-sitter, always safe to run directly (never needs isolating).
-    """
+    """(method, route, path, line_no) for every `@XMapping` annotation -- pure regex."""
     return [
         (_METHOD_BY_ANNOTATION[match.group(1)], match.group(2) or "/", path, line_no)
         for path, line_no, match in find_matches(scan_root, EXTENSIONS, _MAPPING_RE)
@@ -104,11 +102,8 @@ def endpoint_hints_for_matches(
 ) -> list[EndpointHint]:
     """The half of building endpoint hints that follows a call into another file
     (`resolve_kotlin_java_calls`, pure regex since `jvm_ast.py`'s tree-sitter
-    removal -- no longer the crash-prone half it once was). Still run per batch via
-    `orchestrator.py` for jvm-spring, so one endpoint's resolution failing is
-    isolated to its own batch's hints rather than the whole service's. `cache`
-    should be shared across one batch's matches (see `ParseCache`); a fresh one is
-    created when called standalone.
+    removal). `cache` should be shared across every match in one `collect_hints()`
+    pass (see `ParseCache`); a fresh one is created when called standalone.
     """
     if cache is None:
         cache = ParseCache()
@@ -155,11 +150,7 @@ class JvmSpringDetector:
         return hints
 
     def collect_hints_without_endpoints(self, folder: Path) -> ServiceHints:
-        """Everything `collect_hints()` builds except `hints.endpoints` -- pure regex,
-        so it never needs isolating. Split out so a caller (see `orchestrator.py`'s
-        isolation for jvm-spring) can always get this part, even when endpoint
-        resolution -- run in its own isolated batch regardless -- fails.
-        """
+        """Everything `collect_hints()` builds except `hints.endpoints` -- pure regex."""
         logger.debug("scanning JVM/Spring hints: %s", folder)
         hints = ServiceHints()
         engine_hint = engine_hint_from_manifest(folder, _MANIFEST_FILES, _ENGINE_DRIVER_KEYWORDS)

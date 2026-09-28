@@ -3050,9 +3050,7 @@ class StaticAnalysisEngine:
         }
 
     def list_files(self, root: Path, stack: str) -> list[Path]:
-        """The file listing alone -- a plain `rglob`, no parsing -- so a caller can
-        split it into batches before touching any native parser (see `analyze_files`).
-        """
+        """The file listing alone -- a plain `rglob`, no parsing (see `analyze_files`)."""
         configured = self._analyzers.get(stack)
         if configured is None:
             return []
@@ -3061,9 +3059,7 @@ class StaticAnalysisEngine:
 
     def analyze_files(self, paths: list[Path], root: Path, stack: str) -> AnalysisResult:
         """Just the per-file AST pass, over exactly the given `paths` (a subset of
-        `list_files`'s result is fine) -- no cross-file enrichment. This is the unit
-        `orchestrator.py` isolates per batch for jvm-spring: a native crash parsing
-        one file only has to cost that batch's files, not the whole service's.
+        `list_files`'s result is fine) -- no cross-file enrichment (see `enrich`).
         """
         configured = self._analyzers.get(stack)
         if configured is None:

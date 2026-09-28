@@ -528,58 +528,21 @@ def test_index_service_logs_hint_collection_before_static_analysis(tmp_path: Pat
     )
 
 
-def test_index_service_survives_a_jvm_static_analysis_crash(tmp_path: Path, monkeypatch, caplog):
-    """A real SIGSEGV was reproduced on a real Kotlin/Spring service, deep inside
-    StaticAnalysisEngine.analyze()'s tree-sitter usage -- heap corruption in the
-    tree-sitter-kotlin native binding that no amount of Python-side lifetime
-    correctness eliminated (see orbitkb/discovery/isolation.py). collect_hints() and
-    analyze() are isolated in a subprocess for exactly this stack, so a crash there
-    degrades this one service instead of taking down the whole `orbitkb index` run.
+def test_index_service_succeeds_on_a_real_jvm_spring_service(tmp_path: Path):
+    """jvm-spring's whole pipeline (collect_hints/analyze/enrich) is pure regex now
+    (see jvm_scanner.py/jvm_spring_analyzer.py/jvm_ast.py/jvm_grpc_analyzer.py) --
+    no longer isolated in a subprocess (there's no native crash left to contain),
+    so this just confirms indexing this stack still works end to end in-process,
+    same as every other stack.
     """
     conn = open_db(tmp_path / "test.db")
     single_service_root = SAMPLE_ROOT / "inventory-service"
     detector = detector_for(single_service_root)
     assert detector is not None
     assert detector.id == "jvm-spring"
-    monkeypatch.setattr(orchestrator, "run_isolated", lambda func, *args: (None, "crashed with signal SIGSEGV"))
-
-    with caplog.at_level(logging.WARNING, logger="orbitkb.generation.orchestrator"):
-        result = index_service(conn, "inventory-service", single_service_root, detector, FakeOrchestratorBackend())
-
-    assert result.status == "partial"
-    assert services_repo.get_service_by_name(conn, "inventory-service") is not None
-    assert any("crashed with signal SIGSEGV" in record.message for record in caplog.records)
-
-
-def test_index_service_keeps_results_from_batches_that_did_not_crash(tmp_path: Path, monkeypatch):
-    """A real crash zeroed out all 573 files' worth of hints and analysis in one real
-    service, because everything was isolated in a single subprocess call covering the
-    whole service -- one unlucky file cost every other file's real, successful result
-    too. Batching bounds that: with a small batch size and only *some* batches
-    crashing, the endpoints/symbols from the batches that succeeded must still make it
-    into the database -- "partial" has to mean something survived, not zero content.
-    """
-    conn = open_db(tmp_path / "test.db")
-    single_service_root = SAMPLE_ROOT / "inventory-service"
-    detector = detector_for(single_service_root)
-    assert detector is not None
-    assert detector.id == "jvm-spring"
-    monkeypatch.setattr(orchestrator, "_ISOLATION_BATCH_SIZE", 1)
-
-    real_run_isolated = orchestrator.run_isolated
-    calls = {"n": 0}
-
-    def flaky_run_isolated(func, *args):
-        calls["n"] += 1
-        if calls["n"] % 3 == 0:
-            return None, "crashed with signal SIGSEGV"
-        return real_run_isolated(func, *args)
-
-    monkeypatch.setattr(orchestrator, "run_isolated", flaky_run_isolated)
 
     result = index_service(conn, "inventory-service", single_service_root, detector, FakeOrchestratorBackend())
 
-    assert result.status == "partial"
-    assert calls["n"] > 3  # confirms batch_size=1 actually produced multiple isolated calls
+    assert result.status == "ok"
     apis = apis_repo.list_apis(conn, result.service_id)
     assert len(apis) > 0

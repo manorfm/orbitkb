@@ -1,9 +1,9 @@
 """Regex-based Spring/Kotlin/Java static analysis, replacing tree-sitter-kotlin/-java.
 
-That native parser has a proven, reproducible memory-corruption bug (SIGSEGV/SIGBUS,
-and even indefinite hangs -- see `orbitkb/discovery/isolation.py`) on real
-Kotlin/Spring services, which no amount of subprocess isolation actually eliminates,
-only contains the damage. This module and `jvm_scanner.py` remove the native parser
+That native parser had a proven, reproducible memory-corruption bug (SIGSEGV/SIGBUS,
+and even indefinite hangs) on real Kotlin/Spring services -- subprocess isolation
+could only contain the damage, not eliminate it. This module and `jvm_scanner.py`
+remove the native parser
 from the JVM analysis path entirely: `jvm_scanner.py` locates class/function
 boundaries by regex + brace-counting (no tree, no native code, so nothing left to
 corrupt), and this module holds the Spring-specific domain logic built on top of it

@@ -1,14 +1,14 @@
 """Regex-based navigation for Kotlin/Java cross-file call resolution, replacing
-tree-sitter-kotlin/-java: that native parser has a proven, reproducible
-memory-corruption bug (SIGSEGV/SIGBUS, and even indefinite hangs -- see
-`orbitkb/discovery/isolation.py`) on real Kotlin/Spring services, which no amount
-of subprocess isolation actually eliminates, only contains the damage. This was
-the second of three tree-sitter usage points in the JVM/Kotlin analysis path (the
-main per-file analyzer already made this move -- see
-`orbitkb/analysis/jvm_scanner.py` and `jvm_spring_analyzer.py`; the gRPC handler
-functions in `engine.py` are the remaining one); reusing `jvm_scanner.find_functions`
-here removes it. Still a one-hop heuristic, not a call graph: it follows an
-explicitly imported name into the one file whose package matches, nothing more.
+tree-sitter-kotlin/-java: that native parser had a proven, reproducible
+memory-corruption bug (SIGSEGV/SIGBUS, and even indefinite hangs) on real
+Kotlin/Spring services -- subprocess isolation could only contain the damage, not
+eliminate it. This was the second of three tree-sitter usage points removed from
+the JVM/Kotlin analysis path (see `orbitkb/analysis/jvm_scanner.py`/
+`jvm_spring_analyzer.py` for the main per-file analyzer, and
+`orbitkb/analysis/jvm_grpc_analyzer.py` for the third, gRPC detection); reusing
+`jvm_scanner.find_functions` here removes it. Still a one-hop heuristic, not a
+call graph: it follows an explicitly imported name into the one file whose
+package matches, nothing more.
 """
 from __future__ import annotations
 

@@ -1,9 +1,8 @@
-"""`jvm_scanner` replaces tree-sitter-kotlin/-java: that native parser has a proven,
-reproducible memory-corruption bug (SIGSEGV/SIGBUS/hangs on a real service -- see
-orbitkb/discovery/isolation.py) that no amount of subprocess isolation actually
-eliminates. Like every other stack's call resolution (scan_helpers.resolve_local_calls),
-this trades exact AST precision for a heuristic that can never crash: brace-counting
-instead of a real parser.
+"""`jvm_scanner` replaces tree-sitter-kotlin/-java: that native parser had a proven,
+reproducible memory-corruption bug (SIGSEGV/SIGBUS/hangs on a real service) that
+subprocess isolation could only contain, not eliminate. Like every other stack's
+call resolution (scan_helpers.resolve_local_calls), this trades exact AST precision
+for a heuristic that can never crash: brace-counting instead of a real parser.
 """
 from __future__ import annotations
 

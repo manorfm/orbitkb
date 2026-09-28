@@ -1,11 +1,11 @@
 """Regex + brace-counting Kotlin/Java class and function boundary detection,
-replacing tree-sitter-kotlin/-java. That native parser has a proven, reproducible
-memory-corruption bug (SIGSEGV/SIGBUS, and even indefinite hangs -- see
-orbitkb/discovery/isolation.py) on real Kotlin/Spring services; no amount of
-subprocess isolation actually eliminates it, only contains the damage. Like every
-other stack's call resolution (scan_helpers.resolve_local_calls), this trades exact
-AST precision for a heuristic that can never crash. The project's README already
-lists a full AST/LSP code graph as a deliberate non-goal.
+replacing tree-sitter-kotlin/-java. That native parser had a proven, reproducible
+memory-corruption bug (SIGSEGV/SIGBUS, and even indefinite hangs) on real
+Kotlin/Spring services -- subprocess isolation could only contain the damage, not
+eliminate it, which is why this module exists instead. Like every other stack's
+call resolution (scan_helpers.resolve_local_calls), this trades exact AST precision
+for a heuristic that can never crash. The project's README already lists a full
+AST/LSP code graph as a deliberate non-goal.
 """
 from __future__ import annotations
 
