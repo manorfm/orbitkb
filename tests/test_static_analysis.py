@@ -163,6 +163,53 @@ class SecurityConfig {
     ]
 
 
+def test_kotlin_spring_analyzer_extracts_request_and_response_headers(tmp_path: Path):
+    (tmp_path / "MenuController.kt").write_text(
+        '''@RestController
+class MenuController(private val menuService: MenuService) {
+  @GetMapping("/menus/active")
+  fun active(@RequestHeader(name = "Accept-Language", required = false) locale: String?): ResponseEntity<Menu> {
+    val body = menuService.active()
+    return ResponseEntity.ok()
+      .eTag(body.hashCode().toString())
+      .cacheControl(CacheControl.maxAge(30, TimeUnit.SECONDS))
+      .body(body)
+  }
+}
+''',
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert sorted((h.method, h.path, h.direction, h.name) for h in result.api_headers) == [
+        ("GET", "/menus/active", "request", "Accept-Language"),
+        ("GET", "/menus/active", "response", "Cache-Control"),
+        ("GET", "/menus/active", "response", "ETag"),
+    ]
+
+
+def test_java_spring_analyzer_extracts_a_generic_response_header(tmp_path: Path):
+    (tmp_path / "OrdersController.java").write_text(
+        '''class OrdersController {
+  @GetMapping("/orders/{id}")
+  public ResponseEntity<Order> get(@RequestHeader("X-Api-Key") String apiKey, String id) {
+    Order body = service.get(id);
+    return ResponseEntity.ok().header("X-Request-Id", requestId).body(body);
+  }
+}
+''',
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert sorted((h.method, h.path, h.direction, h.name) for h in result.api_headers) == [
+        ("GET", "/orders/{id}", "request", "X-Api-Key"),
+        ("GET", "/orders/{id}", "response", "X-Request-Id"),
+    ]
+
+
 def test_jvm_spring_analyzer_links_feign_invocation_with_a_path_parameter_in_the_mapping(tmp_path: Path):
     """The Feign interface body used to be captured with a naive `.*?}` regex, which
     stopped at the FIRST `}` anywhere in the body -- including one inside a route's

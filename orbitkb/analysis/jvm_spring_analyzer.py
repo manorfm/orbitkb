@@ -36,6 +36,7 @@ from orbitkb.analysis.jvm_scanner import (
 )
 from orbitkb.analysis.models import (
     AnalysisResult,
+    ApiHeader,
     CloudFact,
     EntryPoint,
     Evidence,
@@ -44,6 +45,43 @@ from orbitkb.analysis.models import (
     Injection,
     Symbol,
 )
+
+_REQUEST_HEADER_RE = re.compile(r'@RequestHeader\s*\(\s*(?:(?:name|value)\s*=\s*)?"(?P<name>[^"]+)"')
+_RESPONSE_HEADER_CALL_RE = re.compile(r'\.header\s*\(\s*"(?P<name>[^"]+)"')
+# `ResponseEntity.BodyBuilder`'s own named header setters -- a fixed, well-known
+# Spring API surface, not a guess: calling `.eTag(...)` always sets the `ETag`
+# header, regardless of the (often computed) argument, same as the generic
+# `.header("X", ...)` case above already only records the literal name.
+_NAMED_RESPONSE_HEADER_BUILDERS = {
+    "eTag": "ETag",
+    "cacheControl": "Cache-Control",
+    "lastModified": "Last-Modified",
+    "location": "Location",
+    "contentType": "Content-Type",
+}
+
+
+def _endpoint_headers(method: str, path: str, function_match: FunctionMatch, evidence: Evidence) -> list[ApiHeader]:
+    """Header names one HTTP endpoint reads (`@RequestHeader`, from its own
+    signature) or writes (a `ResponseEntity` header builder call, from its
+    body) -- names only, never values (see `ApiHeader`).
+    """
+    headers = [
+        ApiHeader(method, path, "request", match.group("name"), evidence)
+        for match in _REQUEST_HEADER_RE.finditer(function_match.text[: function_match.body_offset])
+    ]
+    body = function_match.text[function_match.body_offset :]
+    seen: set[str] = set()
+    for match in _RESPONSE_HEADER_CALL_RE.finditer(body):
+        name = match.group("name")
+        if name not in seen:
+            seen.add(name)
+            headers.append(ApiHeader(method, path, "response", name, evidence))
+    for builder_method, header_name in _NAMED_RESPONSE_HEADER_BUILDERS.items():
+        if header_name not in seen and re.search(rf"\.{builder_method}\s*\(", body):
+            seen.add(header_name)
+            headers.append(ApiHeader(method, path, "response", header_name, evidence))
+    return headers
 
 
 class _LineEvidence:
@@ -299,8 +337,11 @@ class _KotlinSpringAnalyzer:
                 ))
                 match = re.search(r"@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\s*\(\s*\"([^\"]+)\"", modifier_text)
                 if match:
-                    result.entrypoints.append(EntryPoint("http", engine.SPRING_ROUTE_ANNOTATION_TO_METHOD[match.group(1)], engine._join_route(route_prefix, match.group(2)), symbol, evidence))
+                    http_method = engine.SPRING_ROUTE_ANNOTATION_TO_METHOD[match.group(1)]
+                    route = engine._join_route(route_prefix, match.group(2))
+                    result.entrypoints.append(EntryPoint("http", http_method, route, symbol, evidence))
                     result.contracts[symbol] = engine._spring_http_contract(function_match.text, modifier_text, kotlin=True)
+                    result.api_headers.extend(_endpoint_headers(http_method, route, function_match, evidence))
                 listener = re.search(r"@RabbitListener\s*\([^)]*\[\s*\"([^\"]+)\"", modifier_text)
                 if listener:
                     result.entrypoints.append(EntryPoint("message", "CONSUME", listener.group(1), symbol, evidence))
@@ -388,8 +429,11 @@ class _JavaSpringAnalyzer:
                 ))
                 match = re.search(r"@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\s*\(\s*\"([^\"]+)\"", modifier_text)
                 if match:
-                    result.entrypoints.append(EntryPoint("http", engine.SPRING_ROUTE_ANNOTATION_TO_METHOD[match.group(1)], engine._join_route(route_prefix, match.group(2)), symbol, evidence))
+                    http_method = engine.SPRING_ROUTE_ANNOTATION_TO_METHOD[match.group(1)]
+                    route = engine._join_route(route_prefix, match.group(2))
+                    result.entrypoints.append(EntryPoint("http", http_method, route, symbol, evidence))
                     result.contracts[symbol] = engine._spring_http_contract(function_match.text, modifier_text)
+                    result.api_headers.extend(_endpoint_headers(http_method, route, function_match, evidence))
                 listener = re.search(r"@RabbitListener\s*\([^)]*(?:queues\s*=\s*)?\"([^\"]+)\"", modifier_text)
                 if listener:
                     result.entrypoints.append(EntryPoint("message", "CONSUME", listener.group(1), symbol, evidence))
