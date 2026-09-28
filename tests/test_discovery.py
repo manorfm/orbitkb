@@ -86,12 +86,13 @@ def test_kotlin_endpoint_resolves_a_statically_imported_extension_function_into_
     assert "fun Restaurant.out()" in endpoint.extra_excerpts[0].text
 
 
-def test_jvm_collect_hints_logs_before_and_during_tree_sitter_resolution(caplog):
-    """A real crash happened inside this exact call chain (JvmSpringDetector.collect_hints
-    -> _endpoint_hint -> resolve_kotlin_java_calls -> tree-sitter), entirely before
-    StaticAnalysisEngine.analyze()'s own per-file DEBUG line ever runs -- so `--verbose`
-    produced no output at all. These three log lines (scan start, endpoint hint, and the
-    jvm_ast.py tree-sitter parse itself) give the next crash something to end on.
+def test_jvm_collect_hints_logs_before_and_during_call_resolution(caplog):
+    """A real crash used to happen inside this exact call chain
+    (JvmSpringDetector.collect_hints -> _endpoint_hint -> resolve_kotlin_java_calls),
+    entirely before StaticAnalysisEngine.analyze()'s own per-file DEBUG line ever
+    runs -- so `--verbose` produced no output at all. These three log lines (scan
+    start, endpoint hint, and the jvm_ast.py source scan itself) give a future crash
+    anywhere on this path something to end on.
     """
     with caplog.at_level(logging.DEBUG):
         JvmSpringDetector().collect_hints(COMPONENT_KOTLIN_ROOT)
@@ -99,18 +100,17 @@ def test_jvm_collect_hints_logs_before_and_during_tree_sitter_resolution(caplog)
     messages = [record.message for record in caplog.records]
     assert any("scanning JVM/Spring hints" in m for m in messages)
     assert any("building endpoint hint" in m for m in messages)
-    assert any("tree-sitter parsing" in m for m in messages)
+    assert any("scanning JVM/Kotlin source" in m for m in messages)
 
 
 def test_collect_hints_shares_a_parse_cache_across_endpoints(tmp_path: Path, caplog):
-    """`resolve_kotlin_java_calls()` used to re-parse every candidate file in the
+    """`resolve_kotlin_java_calls()` used to re-scan every candidate file in the
     package from scratch for every endpoint that couldn't resolve a call locally --
-    for N endpoints all calling the same helper, that's N full tree-sitter parses of
-    the same file, and N fresh `rglob()` walks of the whole service. That's the exact
-    hot path a real SIGBUS crash was found inside (`_find_in_package`'s `iter_files`
-    call, jvm_ast.py). A cache shared for the whole `collect_hints()` pass parses each
-    file at most once, which is both the actual right performance fix and the surest
-    way to cut exposure to whatever native timing issue triggers the corruption.
+    for N endpoints all calling the same helper, that's N re-scans of the same file,
+    and N fresh `rglob()` walks of the whole service. A cache shared for the whole
+    `collect_hints()` pass scans each file at most once, which matters for
+    throughput on a real service with dozens of endpoints all reaching a shared
+    helper.
     """
     (tmp_path / "Helpers.kt").write_text("package com.acme\n\nfun helper() {}\n", encoding="utf-8")
     (tmp_path / "Controller.kt").write_text(
@@ -125,10 +125,10 @@ def test_collect_hints_shares_a_parse_cache_across_endpoints(tmp_path: Path, cap
 
     assert len(hints.endpoints) == 2
     assert all(e.extra_excerpts and e.extra_excerpts[0].file_path == "Helpers.kt" for e in hints.endpoints)
-    helper_parses = [
-        r for r in caplog.records if "tree-sitter parsing" in r.message and "Helpers.kt" in r.message
+    helper_scans = [
+        r for r in caplog.records if "scanning JVM/Kotlin source" in r.message and "Helpers.kt" in r.message
     ]
-    assert len(helper_parses) == 1
+    assert len(helper_scans) == 1
 
 
 def test_python_celery_task_is_tagged_as_an_abstracted_provider(tmp_path: Path):

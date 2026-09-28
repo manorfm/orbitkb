@@ -102,11 +102,13 @@ def endpoint_matches(scan_root: Path) -> list[tuple[str, str, Path, int]]:
 def endpoint_hints_for_matches(
     matches: list[tuple[str, str, Path, int]], folder: Path, cache: ParseCache | None = None,
 ) -> list[EndpointHint]:
-    """The tree-sitter-touching half of building endpoint hints -- isolable per batch
-    (`orchestrator.py` runs this for a slice of `matches` at a time for jvm-spring, so
-    a native crash resolving one endpoint's calls only costs that batch's endpoints,
-    not the whole service's hints). `cache` should be shared across one batch's
-    matches (see `ParseCache`); a fresh one is created when called standalone.
+    """The half of building endpoint hints that follows a call into another file
+    (`resolve_kotlin_java_calls`, pure regex since `jvm_ast.py`'s tree-sitter
+    removal -- no longer the crash-prone half it once was). Still run per batch via
+    `orchestrator.py` for jvm-spring, so one endpoint's resolution failing is
+    isolated to its own batch's hints rather than the whole service's. `cache`
+    should be shared across one batch's matches (see `ParseCache`); a fresh one is
+    created when called standalone.
     """
     if cache is None:
         cache = ParseCache()
@@ -154,9 +156,9 @@ class JvmSpringDetector:
 
     def collect_hints_without_endpoints(self, folder: Path) -> ServiceHints:
         """Everything `collect_hints()` builds except `hints.endpoints` -- pure regex,
-        no tree-sitter, so it never needs isolating. Split out so a caller (see
-        `orchestrator.py`'s isolation for jvm-spring) can always get this part, even
-        when endpoint resolution -- the only tree-sitter-touching part -- crashes.
+        so it never needs isolating. Split out so a caller (see `orchestrator.py`'s
+        isolation for jvm-spring) can always get this part, even when endpoint
+        resolution -- run in its own isolated batch regardless -- fails.
         """
         logger.debug("scanning JVM/Spring hints: %s", folder)
         hints = ServiceHints()
