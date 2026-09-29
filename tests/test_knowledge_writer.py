@@ -6,12 +6,15 @@ import pytest
 from orbitkb.db.connection import open_db, open_readonly_db
 from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import components as components_repo
+from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.generation.knowledge import (
     ComponentDocumentation,
     EndpointDocumentation,
+    MessageDocumentation,
+    MessagingDocumentation,
     OverviewDocumentation,
     PersistenceDocumentation,
     PersistenceEntity,
@@ -147,3 +150,25 @@ def test_legacy_writer_replaces_persistence_entities_and_clears_stale_data(tmp_p
 
     writer.replace_persistence(service_id, PersistenceDocumentation([], []))
     assert persistence_repo.list_persistence(conn, service_id) == []
+
+
+def test_legacy_writer_replaces_messages_and_clears_stale_data(tmp_path: Path):
+    conn = open_db(tmp_path / "messaging.db")
+    service_id = services_repo.ensure_service(conn, "menus", "/tmp/menus", "python")
+    writer = LegacyKnowledgeAdapter(conn)
+    evidence = [{"file": "events.py", "start_line": 8, "end_line": 12}]
+
+    writer.replace_messaging(service_id, MessagingDocumentation(
+        [MessageDocumentation("publishes", "menu.updated", "rabbitmq", [{"field": "id", "type_desc": "string"}], "Menu changed")],
+        evidence,
+    ))
+
+    stored = messages_repo.list_messages(conn, service_id)
+    assert [(row["direction"], row["channel"], row["provider"]) for row in stored] == [
+        ("publishes", "menu.updated", "rabbitmq")
+    ]
+    assert json.loads(stored[0]["shape_json"]) == [{"field": "id", "type_desc": "string"}]
+    assert json.loads(stored[0]["evidence_json"]) == evidence
+
+    writer.replace_messaging(service_id, MessagingDocumentation([], []))
+    assert messages_repo.list_messages(conn, service_id) == []

@@ -264,6 +264,9 @@ def test_index_service_passes_generated_endpoint_to_injected_writer(tmp_path: Pa
         def replace_persistence(self, service_id, documentation):
             pass
 
+        def replace_messaging(self, service_id, documentation):
+            pass
+
     conn = open_db(tmp_path / "injected-writer.db")
     orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
     writer = RecordingWriter()
@@ -301,6 +304,9 @@ def test_index_service_passes_generated_components_to_injected_writer(tmp_path: 
             pass
 
         def replace_persistence(self, service_id, documentation):
+            pass
+
+        def replace_messaging(self, service_id, documentation):
             pass
 
     conn = open_db(tmp_path / "component-writer.db")
@@ -342,6 +348,9 @@ def test_index_service_passes_generated_overview_to_injected_writer(tmp_path: Pa
             self.overviews.append((service_id, documentation))
 
         def replace_persistence(self, service_id, documentation):
+            pass
+
+        def replace_messaging(self, service_id, documentation):
             pass
 
     conn = open_db(tmp_path / "overview-writer.db")
@@ -405,6 +414,53 @@ def test_index_service_writes_and_clears_persistence_through_injected_writer(tmp
     assert len(writer.persistence_writes) == 2
     assert writer.persistence_writes[1][1].entities == []
     assert persistence_repo.list_persistence(conn, first.service_id) == []
+
+
+def test_index_service_writes_and_clears_messaging_through_injected_writer(tmp_path: Path):
+    from orbitkb.db.repositories import messages as messages_repo
+    from orbitkb.generation.legacy_knowledge import LegacyKnowledgeAdapter
+
+    class RecordingWriter(LegacyKnowledgeAdapter):
+        def __init__(self, conn):
+            super().__init__(conn)
+            self.messaging_writes = []
+
+        def replace_messaging(self, service_id, documentation):
+            self.messaging_writes.append((service_id, documentation))
+            super().replace_messaging(service_id, documentation)
+
+    class WithoutMessaging:
+        def __init__(self, detector):
+            self.detector = detector
+            self.id = detector.id
+
+        def collect_hints(self, root):
+            hints = self.detector.collect_hints(root)
+            hints.messaging = []
+            return hints
+
+    conn = open_db(tmp_path / "messaging-writer.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    writer = RecordingWriter(conn)
+
+    first = index_service(conn, orders.name, orders.path, orders.detector, FakeOrchestratorBackend(), knowledge_writer=writer)
+    assert first.status == "ok"
+    assert len(writer.messaging_writes) == 1
+    service_id, documentation = writer.messaging_writes[0]
+    assert service_id == first.service_id
+    assert [(message.direction, message.channel, message.provider) for message in documentation.messages] == [
+        ("publishes", "fake_channel", "kafka")
+    ]
+    assert documentation.evidence
+
+    second = index_service(
+        conn, orders.name, orders.path, WithoutMessaging(orders.detector), FakeOrchestratorBackend(),
+        knowledge_writer=writer,
+    )
+    assert second.status == "ok"
+    assert len(writer.messaging_writes) == 2
+    assert writer.messaging_writes[1][1].messages == []
+    assert messages_repo.list_messages(conn, first.service_id) == []
 
 
 def test_index_path_indexes_all_three_sample_services(tmp_path: Path):

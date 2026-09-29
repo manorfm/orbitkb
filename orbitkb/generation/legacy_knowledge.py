@@ -4,6 +4,7 @@ import sqlite3
 
 from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import components as components_repo
+from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
@@ -11,6 +12,7 @@ from orbitkb.generation.knowledge import (
     ComponentDocumentation,
     ComponentSummary,
     EndpointDocumentation,
+    MessagingDocumentation,
     OverviewDocumentation,
     PersistenceDocumentation,
     RouteKey,
@@ -80,6 +82,22 @@ class LegacyKnowledgeAdapter:
             [
                 {"name": entity.name, "kind": entity.kind, "engine": entity.engine, "schema_json": entity.fields}
                 for entity in documentation.entities
+            ],
+            documentation.evidence,
+        )
+
+    def replace_messaging(self, service_id: int, documentation: MessagingDocumentation) -> None:
+        messages_repo.replace_messages(
+            self._conn, service_id,
+            [
+                {
+                    "direction": message.direction,
+                    "channel": message.channel,
+                    "provider": message.provider,
+                    "shape_json": message.shape,
+                    "description": message.description,
+                }
+                for message in documentation.messages
             ],
             documentation.evidence,
         )

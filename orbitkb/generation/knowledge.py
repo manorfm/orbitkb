@@ -54,6 +54,21 @@ class PersistenceDocumentation:
     evidence: list[dict]
 
 
+@dataclass(frozen=True)
+class MessageDocumentation:
+    direction: str
+    channel: str
+    provider: str
+    shape: list[dict]
+    description: str
+
+
+@dataclass(frozen=True)
+class MessagingDocumentation:
+    messages: list[MessageDocumentation]
+    evidence: list[dict]
+
+
 class KnowledgeReader(Protocol):
     def endpoint_keys(self, service_id: int) -> set[RouteKey]: ...
     def api_summaries(self, service_id: int) -> dict[RouteKey, str]: ...
@@ -67,6 +82,7 @@ class KnowledgeWriter(Protocol):
     def prune_components(self, service_id: int, keep_keys: set[tuple[str, str]]) -> None: ...
     def save_overview(self, service_id: int, documentation: OverviewDocumentation) -> None: ...
     def replace_persistence(self, service_id: int, documentation: PersistenceDocumentation) -> None: ...
+    def replace_messaging(self, service_id: int, documentation: MessagingDocumentation) -> None: ...
 
 
 def compose_endpoint_summaries(routes: list[RouteKey], summaries: dict[RouteKey, str]) -> str:

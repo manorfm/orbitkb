@@ -19,7 +19,6 @@ from orbitkb.db.repositories import indexed_files as indexed_files_repo
 from orbitkb.db.repositories import (
     kubernetes_configuration as kubernetes_configuration_repo,
 )
-from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import repositories as repositories_repo
 from orbitkb.db.repositories import search as search_repo
 from orbitkb.db.repositories import security_findings as security_findings_repo
@@ -45,6 +44,8 @@ from orbitkb.generation.knowledge import (
     EndpointDocumentation,
     KnowledgeReader,
     KnowledgeWriter,
+    MessageDocumentation,
+    MessagingDocumentation,
     OverviewDocumentation,
     PersistenceDocumentation,
     PersistenceEntity,
@@ -518,7 +519,7 @@ class MessagingGenerator:
         outcome = UnitOutcome()
         messaging_files = {m.excerpt.file_path for m in ctx.hints.messaging}
         if not ctx.hints.messaging:
-            messages_repo.replace_messages(ctx.conn, ctx.service_id, [], [])
+            ctx.knowledge_writer.replace_messaging(ctx.service_id, MessagingDocumentation([], []))
             return outcome
 
         unit = UnitMeasurement(self.kind, ())
@@ -539,17 +540,11 @@ class MessagingGenerator:
         if generation:
             result = generation.structured
             messages = [
-                {
-                    "direction": m["direction"],
-                    "channel": m["channel"],
-                    "shape_json": m["shape"],
-                    "description": m["description"],
-                    "provider": m["provider"],
-                }
+                MessageDocumentation(m["direction"], m["channel"], m["provider"], m["shape"], m["description"])
                 for m in result["messages"]
             ]
             evidence = _evidence_from_excerpts([m.excerpt for m in ctx.hints.messaging] + config_excerpts)
-            messages_repo.replace_messages(ctx.conn, ctx.service_id, messages, evidence)
+            ctx.knowledge_writer.replace_messaging(ctx.service_id, MessagingDocumentation(messages, evidence))
             unit.status = "success"
             outcome.add(unit)
             ctx.progress.unit_finished(ctx.name, "messaging", "ok")

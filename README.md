@@ -525,6 +525,8 @@ component generation; optional embeddings still run only when the overview
 is regenerated.
 Persistence entities and evidence are replaced through `KnowledgeWriter`,
 including an empty replacement when discovery finds no persistence hints.
+Messaging contracts use the same writer and are cleared when no messaging
+hints remain.
 
 Architecture rules have fact-mutation tests for cycles and fan-out (both at
 service level and their intra-service component analog), shared storage,
