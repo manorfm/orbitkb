@@ -213,7 +213,10 @@ Spring route extraction includes multiline class `@RequestMapping` prefixes and 
 Java/Spring request and response DTO shapes include declared primitive fields as well as object fields.
 Kotlin/Spring request and response DTO shapes include `val`/`var` properties
 from data-class primary constructors, with nullable and defaulted fields
-marked optional. Types inferred only from expression bodies remain unknown.
+marked optional. A Kotlin expression body ending in a uniquely imported
+extension can expose a candidate response DTO when that extension directly
+constructs it. The candidate is marked inferred and remains ambiguous for
+zero-call eligibility until the extension receiver type is proven.
 Feign interface methods remain outbound client declarations; their mappings are not generated as service entrypoints.
 
 An optional external depth provider can enrich a selected flow when native resolution

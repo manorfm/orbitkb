@@ -43,11 +43,20 @@ def project_analysis(service: ServiceKey, analysis: AnalysisResult) -> Canonical
     facts: dict[str, CanonicalFact] = {}
     for entry in analysis.entrypoints:
         key = EntrypointKey(service, entry.kind, entry.method, entry.name, entry.symbol)
-        attributes = {"contract": entry.contract or analysis.contracts.get(entry.symbol)}
-        source = _source(entry.evidence)
+        contract = entry.contract or analysis.contracts.get(entry.symbol)
+        attributes = {"contract": contract}
+        sources = [_source(entry.evidence)]
+        response = contract.get("returns") if isinstance(contract, dict) else None
+        derivation = response.get("derived_from") if isinstance(response, dict) else None
+        if isinstance(derivation, dict) and isinstance(derivation.get("file"), str) and (
+            isinstance(derivation.get("start_line"), int) and derivation["start_line"] > 0
+        ):
+            sources.append(SourceReference(
+                derivation["file"], derivation["start_line"], derivation["start_line"],
+            ))
         _add_fact(facts, CanonicalFact(
             id=key.fact_id, kind="entrypoint", subject=key, attributes=attributes,
-            status=FactStatus.CONFIRMED, origin="static", sources=(source,),
+            status=FactStatus.CONFIRMED, origin="static", sources=tuple(sources),
         ))
     for symbol in analysis.symbols:
         _add_fact(facts, CanonicalFact(

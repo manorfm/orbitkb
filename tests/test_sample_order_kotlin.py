@@ -74,11 +74,23 @@ def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
         {"name": "ingredientsAdded", "type": "List<IngredientIn>", "required": False, "validations": []},
         {"name": "ingredientsRemoved", "type": "List<IngredientIn>", "required": False, "validations": []},
     ]
+    response = analysis.contracts["BillOrderController.addItem"]["returns"]
+    assert response is not None
+    assert response["type"] == "BillOut"
+    assert response["fields"] == [
+        {"name": "billId", "type": "ULID", "required": True, "validations": []},
+        {"name": "orderCount", "type": "Int", "required": True, "validations": []},
+        {"name": "requestedBy", "type": "ULID", "required": True, "validations": []},
+    ]
+    assert response["derived_from"]["file"].endswith("BillOut.kt")
+    assert response["confidence"] == "inferred"
     snapshot = project_analysis(ServiceKey("sample-order"), analysis)
-    route = next(
-        fact.subject for fact in snapshot.facts
+    route_fact = next(
+        fact for fact in snapshot.facts
         if fact.kind == "entrypoint" and fact.subject.name == ROUTE
     )
+    assert any(source.file_path.endswith("BillOut.kt") for source in route_fact.sources)
+    route = route_fact.subject
     reached = KnowledgeNavigator(snapshot).reachable(route, TraversalPolicy())
 
     catalog_calls = [fact for fact in reached.facts if fact.kind == "service_call"]
@@ -92,6 +104,6 @@ def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
     assert sufficiency is not None
     assert sufficiency.overall.value == "missing"
     assert sufficiency.status("request_shape").value == "enough"
-    assert sufficiency.status("response_shape").value == "missing"
+    assert sufficiency.status("response_shape").value == "ambiguous"
     assert sufficiency.status("business_behavior").value == "missing"
     assert sufficiency.status("flow").value == "ambiguous"

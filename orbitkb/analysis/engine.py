@@ -48,6 +48,7 @@ from orbitkb.analysis.jvm_security_analyzer import (
     spring_filter_chain_security_requirements,
 )
 from orbitkb.analysis.kotlin_dto_shapes import kotlin_data_class_shapes
+from orbitkb.analysis.kotlin_expression_returns import enrich_kotlin_expression_returns
 from orbitkb.analysis.models import (
     AnalysisResult,
     CloudFact,
@@ -3115,6 +3116,8 @@ class StaticAnalysisEngine:
         if stack == "go":
             result.grpc_handlers.extend(_go_grpc_handlers(files, root))
             result.grpc_client_bindings.extend(_go_grpc_client_bindings(files, root))
+        if stack == "jvm-spring":
+            enrich_kotlin_expression_returns(result, files, root)
         _enrich_contract_fields(result.contracts, files)
         _enrich_rabbitmq_contracts(result.contracts, files)
         _enrich_openapi_contracts(result, root)

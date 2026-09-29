@@ -69,6 +69,20 @@ class DeterministicSufficiencyEvaluator:
                      if isinstance(fact.value.get("contract"), dict)]
         calls = by_kind["service_call"]
         security = by_kind["security_requirement"]
+        responses = [contract.get("returns") for contract in contracts]
+        response_shapes = [response for response in responses
+                           if isinstance(response, dict) and response.get("fields")]
+        if not response_shapes:
+            response_status = SufficiencyStatus.MISSING
+            response_reason = "response fields require explicit evidence; a return type alone is insufficient"
+        elif len(response_shapes) != len(contracts) or any(
+            response.get("confidence") == "inferred" for response in response_shapes
+        ):
+            response_status = SufficiencyStatus.AMBIGUOUS
+            response_reason = "response type inferred from an extension without proven receiver type"
+        else:
+            response_status = SufficiencyStatus.ENOUGH
+            response_reason = "response fields have an explicit return type"
 
         dimensions = [
             DimensionAssessment(
@@ -87,12 +101,9 @@ class DeterministicSufficiencyEvaluator:
             ),
             DimensionAssessment(
                 "response_shape",
-                SufficiencyStatus.ENOUGH if any(
-                    isinstance(contract.get("returns"), dict) and contract["returns"].get("fields")
-                    for contract in contracts
-                ) else SufficiencyStatus.MISSING,
+                response_status,
                 tuple(fact.id for fact in entrypoints),
-                "response fields require explicit evidence; a return type alone is insufficient",
+                response_reason,
             ),
             DimensionAssessment(
                 "integrations",

@@ -8,5 +8,6 @@ Run `pytest -q tests/test_sample_order_kotlin.py` to inspect the current coverag
 The analyzer reaches both catalog Feign routes and recognizes the MongoDB
 document and Spring security rule. The endpoint still has unresolved flow
 boundaries around extension methods, domain branches and Redis publication;
-the request DTO is extracted, but the inferred response type and business
-description are not complete enough for zero-call docs.
+the request DTO is extracted, while the response DTO inferred through
+`resumeOut` remains ambiguous. The business description is also incomplete,
+so the route is not eligible for zero-call docs.
