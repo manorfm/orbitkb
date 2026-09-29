@@ -51,7 +51,7 @@ from orbitkb.generation.knowledge import (
     PersistenceDocumentation,
     PersistenceEntity,
     compose_component_summaries,
-    compose_endpoint_summaries,
+    compose_endpoint_context,
 )
 from orbitkb.generation.legacy_knowledge import LegacyKnowledgeAdapter
 from orbitkb.generation.llm_harness import generate_with_retry, load_prompt, load_schema
@@ -115,16 +115,6 @@ class NullProgressReporter:
 # ---------------------------------------------------------------------------
 # prompt rendering helpers
 # ---------------------------------------------------------------------------
-
-def _evidence_from_excerpts(excerpts: list[CodeExcerpt]) -> list[dict]:
-    """Turn discovery excerpts into persistable evidence pointers (file + line range).
-
-    This is the evidence an LLM call actually saw when it produced a claim, so it's
-    attached as-is to whatever that call generated — it is never fabricated beyond
-    what discovery already found.
-    """
-    return [{"file": e.file_path, "start_line": e.start_line, "end_line": e.end_line} for e in excerpts]
-
 
 def _folder_tree(root: Path, max_depth: int = 2, max_lines: int = 200) -> str:
     lines: list[str] = []
@@ -440,10 +430,10 @@ class ComponentGenerator:
                 ctx.progress.unit_finished(ctx.name, label, "skipped")
                 continue
             ctx.progress.unit_started(ctx.name, label)
-            endpoint_summaries = compose_endpoint_summaries(
+            endpoint_context = compose_endpoint_context(
                 [(endpoint.method, endpoint.path) for endpoint in group], api_summaries,
             )
-            prompt = _render_component_prompt(ctx.name, component_name, component_file, endpoint_summaries)
+            prompt = _render_component_prompt(ctx.name, component_name, component_file, endpoint_context.text)
             generation = generate_with_retry(
                 ctx.backend, prompt, load_schema("component"), ctx.root, ctx.failures_root,
                 f"{ctx.name}-component-{component_name}",
@@ -458,10 +448,9 @@ class ComponentGenerator:
                 ctx.progress.unit_finished(ctx.name, label, "failed")
                 continue
             result = generation.structured
-            evidence = _evidence_from_excerpts([endpoint.excerpt for endpoint in group])
             ctx.knowledge_writer.save_component(
                 ctx.service_id,
-                ComponentDocumentation(component_name, component_file, result["summary"], evidence),
+                ComponentDocumentation(component_name, component_file, result["summary"], endpoint_context.evidence),
             )
             unit.status = "success"
             outcome.add(unit)

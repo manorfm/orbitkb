@@ -162,9 +162,11 @@ def test_index_service_uses_injected_knowledge_reader_for_component_prompts(tmp_
         def endpoint_keys(self, service_id: int) -> set[tuple[str, str]]:
             return set()
 
-        def api_summaries(self, service_id: int) -> dict[tuple[str, str], str]:
+        def api_summaries(self, service_id: int):
+            from orbitkb.generation.knowledge import EndpointSummary
+
             self.service_ids.append(service_id)
-            return {("GET", "/orders/{order_id}"): "Summary from the reader"}
+            return {("GET", "/orders/{order_id}"): EndpointSummary("Summary from the reader", [])}
 
         def component_summaries(self, service_id: int):
             return []
@@ -215,6 +217,19 @@ def test_endpoint_evidence_excludes_excerpts_cut_from_the_prompt_budget(tmp_path
     assert result.status == "ok"
     assert all("... (truncated, excerpt budget reached)" in prompt for prompt in backend.prompts_by_kind["api_detail"])
     assert all(json.loads(row["evidence_json"]) == [] for row in apis_repo.list_apis(conn, result.service_id))
+
+
+def test_component_evidence_tracks_endpoint_summaries_with_no_source_evidence(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(orchestrator, "MAX_EXCERPT_CHARS", 1)
+    conn = open_db(tmp_path / "bounded-component-evidence.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    backend = RecordingOrchestratorBackend()
+
+    result = index_service(conn, orders.name, orders.path, orders.detector, backend)
+
+    assert result.status == "ok"
+    assert any("Fake summary." in prompt for prompt in backend.prompts_by_kind["component"])
+    assert all(json.loads(row["evidence_json"]) == [] for row in components_repo.list_components(conn, result.service_id))
 
 
 def test_aggregate_evidence_excludes_main_and_config_excerpts_cut_from_prompts(tmp_path: Path, monkeypatch):
@@ -269,7 +284,7 @@ def test_index_service_uses_injected_component_summaries_for_overview(tmp_path: 
         def endpoint_keys(self, service_id: int) -> set[tuple[str, str]]:
             return set()
 
-        def api_summaries(self, service_id: int) -> dict[tuple[str, str], str]:
+        def api_summaries(self, service_id: int):
             return {}
 
         def component_summaries(self, service_id: int) -> list[ComponentSummary]:
@@ -368,7 +383,7 @@ def test_index_service_passes_generated_components_to_injected_writer(tmp_path: 
     assert {(doc.name, doc.file_path) for _, doc in writer.saved_components} == {
         ("OrdersController", "adapters/http/orders_controller.py"), ("main", "main.py"),
     }
-    assert all(service_id == result.service_id and doc.summary == "Fake component summary." and doc.evidence
+    assert all(service_id == result.service_id and doc.summary == "Fake component summary." and not doc.evidence
                for service_id, doc in writer.saved_components)
     assert writer.pruned_components == [
         (result.service_id, {(doc.name, doc.file_path) for _, doc in writer.saved_components})

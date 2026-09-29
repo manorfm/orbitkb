@@ -519,7 +519,9 @@ inside an existing database transaction.
 The reader obtains existing endpoint keys in one query per service before
 deciding which routes need regeneration.
 Generated component summaries and their evidence are also saved and pruned
-through `KnowledgeWriter`.
+through `KnowledgeWriter`. Component evidence follows the stored API summaries
+used in its prompt, including summaries reused during incremental indexing.
+If a summary has no source evidence, the component does not infer it from raw code.
 The service overview descriptions are saved through the same writer after
 component generation; optional embeddings still run only when the overview
 is regenerated.

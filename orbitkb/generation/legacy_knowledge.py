@@ -1,5 +1,6 @@
 """Adapter from current SQLite API rows to the generation read contract."""
 
+import json
 import sqlite3
 
 from orbitkb.db.repositories import apis as apis_repo
@@ -12,6 +13,7 @@ from orbitkb.generation.knowledge import (
     ComponentDocumentation,
     ComponentSummary,
     EndpointDocumentation,
+    EndpointSummary,
     MessagingDocumentation,
     OverviewDocumentation,
     PersistenceDocumentation,
@@ -26,9 +28,11 @@ class LegacyKnowledgeAdapter:
     def endpoint_keys(self, service_id: int) -> set[RouteKey]:
         return apis_repo.list_api_keys(self._conn, service_id)
 
-    def api_summaries(self, service_id: int) -> dict[RouteKey, str]:
+    def api_summaries(self, service_id: int) -> dict[RouteKey, EndpointSummary]:
         return {
-            (row["method"], row["path"]): row["summary"]
+            (row["method"], row["path"]): EndpointSummary(
+                row["summary"], json.loads(row["evidence_json"] or "[]"),
+            )
             for row in apis_repo.list_apis(self._conn, service_id)
         }
 
