@@ -204,6 +204,19 @@ def test_injected_reader_controls_endpoint_regeneration_without_file_changes(tmp
     assert second.llm_calls == 5  # four routes plus the overview they refresh
 
 
+def test_endpoint_evidence_excludes_excerpts_cut_from_the_prompt_budget(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(orchestrator, "MAX_EXCERPT_CHARS", 1)
+    conn = open_db(tmp_path / "bounded-evidence.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    backend = RecordingOrchestratorBackend()
+
+    result = index_service(conn, orders.name, orders.path, orders.detector, backend)
+
+    assert result.status == "ok"
+    assert all("... (truncated, excerpt budget reached)" in prompt for prompt in backend.prompts_by_kind["api_detail"])
+    assert all(json.loads(row["evidence_json"]) == [] for row in apis_repo.list_apis(conn, result.service_id))
+
+
 def test_overview_prompt_is_composed_from_the_components_summary(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     backend = RecordingOrchestratorBackend()

@@ -38,6 +38,7 @@ from orbitkb.discovery.walker import ServiceCandidate, discover_services
 from orbitkb.generation.architecture import recompute_architecture_view
 from orbitkb.generation.backend_base import LLMBackend, LLMUsage
 from orbitkb.generation.embeddings import EmbeddingBackend
+from orbitkb.generation.evidence import EvidenceSource
 from orbitkb.generation.knowledge import (
     ComponentDocumentation,
     ComponentSummary,
@@ -116,16 +117,7 @@ class NullProgressReporter:
 # ---------------------------------------------------------------------------
 
 def _join_excerpts(excerpts: list[CodeExcerpt], max_chars: int = MAX_EXCERPT_CHARS) -> str:
-    parts: list[str] = []
-    total = 0
-    for e in excerpts:
-        block = f"--- {e.file_path} (lines {e.start_line}-{e.end_line}) ---\n{redact_sensitive_values(e.text)}\n"
-        if total + len(block) > max_chars:
-            parts.append("... (truncated, excerpt budget reached)")
-            break
-        parts.append(block)
-        total += len(block)
-    return "\n".join(parts) if parts else "(no excerpts found)"
+    return EvidenceSource.from_excerpts(excerpts, max_chars).prompt_text
 
 
 def _evidence_from_excerpts(excerpts: list[CodeExcerpt]) -> list[dict]:
@@ -209,9 +201,14 @@ def _unique_endpoint_routes(endpoints: list[EndpointHint]) -> list[EndpointHint]
     return list(by_route.values())
 
 
-def _render_api_detail_prompt(name: str, stack: str, endpoint: EndpointHint, hints: ServiceHints) -> str:
-    excerpts = [endpoint.excerpt, *endpoint.extra_excerpts]
-    code = _join_excerpts(excerpts)
+def _render_api_detail_prompt(
+    name: str, stack: str, endpoint: EndpointHint, hints: ServiceHints,
+    evidence_source: EvidenceSource | None = None,
+) -> str:
+    source = evidence_source or EvidenceSource.from_excerpts(
+        [endpoint.excerpt, *endpoint.extra_excerpts], MAX_EXCERPT_CHARS,
+    )
+    code = source.prompt_text
     dep_files = endpoint.dependency_files()
     own_calls = [c for c in hints.outbound_calls if c.excerpt.file_path in dep_files]
     outbound = "\n".join(
@@ -378,7 +375,10 @@ class EndpointGenerator:
                 ctx.progress.unit_finished(ctx.name, label, "skipped")
                 continue
             ctx.progress.unit_started(ctx.name, label)
-            prompt = _render_api_detail_prompt(ctx.name, ctx.detector.id, endpoint, ctx.hints)
+            source = EvidenceSource.from_excerpts(
+                [endpoint.excerpt, *endpoint.extra_excerpts], MAX_EXCERPT_CHARS,
+            )
+            prompt = _render_api_detail_prompt(ctx.name, ctx.detector.id, endpoint, ctx.hints, source)
             generation = generate_with_retry(
                 ctx.backend, prompt, load_schema("api_detail"), ctx.root, ctx.failures_root,
                 f"{ctx.name}-{endpoint.method}-{endpoint.path}",
@@ -393,7 +393,7 @@ class EndpointGenerator:
                 ctx.progress.unit_finished(ctx.name, label, "failed")
                 continue
             result = generation.structured
-            evidence = _evidence_from_excerpts([endpoint.excerpt, *endpoint.extra_excerpts])
+            evidence = source.pointers
             ctx.knowledge_writer.save_endpoint(
                 ctx.service_id,
                 EndpointDocumentation(
