@@ -87,10 +87,43 @@ paths:
         result = DeterministicSufficiencyEvaluator().evaluate(capsule)
 
         assert result.status("business_behavior") == expected
+        assert result.status("request_shape") == SufficiencyStatus.ENOUGH
         assert result.overall != SufficiencyStatus.ENOUGH
         if expected == SufficiencyStatus.ENOUGH:
             assert result.evidence_ids("business_behavior") == (route.fact_id,)
             assert any(source.file_path == "openapi.yaml" for source in capsule.facts[0].sources)
+
+
+def test_optional_or_unresolved_openapi_body_does_not_prove_empty_request_shape():
+    route = EntrypointKey(ServiceKey("orders"), "http", "POST", "/orders", "Orders.create")
+
+    def assess(present: bool | None) -> SufficiencyStatus:
+        entry = EvidenceFact(
+            "entry", "entrypoint", {"contract": {"formal_contract": {
+                "format": "openapi", "request_body_present": present,
+            }}}, FactStatus.CONFIRMED, "static", None, (), (route.symbol,), "entry",
+        )
+        capsule = EvidenceReducer().reduce((EvidenceSet(route, (entry,), (), False),), EvidenceBudget(20_000))
+        return DeterministicSufficiencyEvaluator().evaluate(capsule).status("request_shape")
+
+    assert assess(False) == SufficiencyStatus.ENOUGH
+    assert assess(True) == SufficiencyStatus.MISSING
+    assert assess(None) == SufficiencyStatus.MISSING
+
+
+def test_openapi_body_absence_cannot_override_source_request_type_without_fields():
+    route = EntrypointKey(ServiceKey("orders"), "http", "POST", "/orders", "Orders.create")
+    entry = EvidenceFact(
+        "entry", "entrypoint", {"contract": {
+            "request": {"type": "OrderRequest"},
+            "formal_contract": {"format": "openapi", "request_body_present": False},
+        }}, FactStatus.CONFIRMED, "static", None, (), (route.symbol,), "entry",
+    )
+    capsule = EvidenceReducer().reduce((EvidenceSet(route, (entry,), (), False),), EvidenceBudget(20_000))
+
+    result = DeterministicSufficiencyEvaluator().evaluate(capsule)
+
+    assert result.status("request_shape") == SufficiencyStatus.MISSING
 
 
 def test_omitted_call_cannot_be_marked_sufficient():

@@ -79,7 +79,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "40"
+STATIC_ANALYSIS_INPUT_VERSION = "41"
 
 # Shared with jvm_spring_analyzer.py's Kotlin/Java analyzers, and with
 # _feign_endpoints below (a Feign client's mapping annotation implies the same
@@ -3539,6 +3539,7 @@ class _OpenApiOperation:
     path: str
     operation_id: str | None
     description: str | None
+    request_body_present: bool | None
     request_body_required: bool | None
     response_statuses: tuple[str, ...]
     security: str
@@ -3560,6 +3561,7 @@ def _enrich_openapi_contracts(result: AnalysisResult, root: Path) -> None:
             "format": "openapi",
             "operation_id": operation.operation_id,
             "description": operation.description,
+            "request_body_present": operation.request_body_present,
             "request_body_required": operation.request_body_required,
             "response_statuses": list(operation.response_statuses),
             "security": operation.security,
@@ -3601,6 +3603,7 @@ def _openapi_operations(root: Path) -> list[_OpenApiOperation]:
                     path=raw_path,
                     operation_id=operation_id,
                     description=description,
+                    request_body_present=_openapi_request_body_present(operation, path_item),
                     request_body_required=_openapi_request_body_required(operation, path_item),
                     response_statuses=_openapi_response_statuses(operation),
                     security=_openapi_security(operation, document),
@@ -3629,6 +3632,22 @@ def _load_openapi_document(path: Path, source: str) -> dict | None:
     if not isinstance(document.get("openapi"), str) and str(document.get("swagger")) != "2.0":
         return None
     return document
+
+
+def _openapi_request_body_present(operation: dict, path_item: dict) -> bool | None:
+    if "requestBody" in operation:
+        request_body = operation["requestBody"]
+        if not isinstance(request_body, dict) or "$ref" in request_body:
+            return None
+        return True
+    if any("parameters" in container and not isinstance(container["parameters"], list)
+           for container in (path_item, operation)):
+        return None
+    parameters = [*_openapi_parameters(path_item), *_openapi_parameters(operation)]
+    if any(not isinstance(parameter, dict) or "$ref" in parameter for parameter in parameters):
+        return None
+    return any(isinstance(parameter, dict) and parameter.get("in") == "body"
+               for parameter in parameters)
 
 
 def _openapi_request_body_required(operation: dict, path_item: dict) -> bool | None:

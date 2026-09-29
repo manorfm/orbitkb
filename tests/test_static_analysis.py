@@ -2652,6 +2652,7 @@ paths:
         "format": "openapi",
         "operation_id": "createOrder",
         "description": None,
+        "request_body_present": True,
         "request_body_required": True,
         "response_statuses": ["201", "409"],
         "security": "required",
@@ -2692,6 +2693,7 @@ paths:
     assert result.contracts["OrdersController.list"]["formal_contract"]["description"] == (
         "Returns orders available to the caller."
     )
+    assert result.contracts["OrdersController.list"]["formal_contract"]["request_body_present"] is False
     assert result.contracts["OrdersController.get"]["formal_contract"]["description"] is None
 
 
@@ -2814,6 +2816,63 @@ paths:
     result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
 
     assert result.contracts["OrdersController.create"]["formal_contract"]["request_body_required"] is None
+    assert result.contracts["OrdersController.create"]["formal_contract"]["request_body_present"] is None
+
+
+def test_openapi_optional_body_is_present_even_when_not_required(tmp_path: Path):
+    (tmp_path / "OrdersController.java").write_text(
+        '''@RestController
+class OrdersController {
+  @PostMapping("/orders")
+  Order create(Order request) { return request; }
+}
+''', encoding="utf-8",
+    )
+    (tmp_path / "openapi.yaml").write_text(
+        '''openapi: 3.0.3
+paths:
+  /orders:
+    post:
+      requestBody:
+        required: false
+      responses:
+        "200": {}
+''', encoding="utf-8",
+    )
+
+    formal = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring").contracts[
+        "OrdersController.create"
+    ]["formal_contract"]
+
+    assert formal["request_body_present"] is True
+    assert formal["request_body_required"] is False
+
+
+def test_malformed_openapi_parameters_do_not_prove_absence_of_request_body(tmp_path: Path):
+    (tmp_path / "OrdersController.java").write_text(
+        '''@RestController
+class OrdersController {
+  @GetMapping("/orders")
+  Order list() { return new Order(); }
+}
+''', encoding="utf-8",
+    )
+    (tmp_path / "openapi.yaml").write_text(
+        '''openapi: 3.0.3
+paths:
+  /orders:
+    get:
+      parameters: invalid
+      responses:
+        "200": {}
+''', encoding="utf-8",
+    )
+
+    formal = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring").contracts[
+        "OrdersController.list"
+    ]["formal_contract"]
+
+    assert formal["request_body_present"] is None
 
 
 def test_static_analysis_extracts_literal_protobuf_service_rpcs(tmp_path: Path):

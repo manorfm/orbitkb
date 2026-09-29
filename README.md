@@ -571,6 +571,8 @@ regenerated endpoints; this does not skip generation or change LLM call counts.
 An explicit OpenAPI operation description can satisfy the business behavior
 dimension for its exact matching HTTP route. Missing or blank descriptions
 remain missing; other incomplete dimensions still require generation.
+The same assessment treats a bodyless OpenAPI operation as having a known empty
+request payload. An optional or unresolved body still needs payload evidence.
 Use `orbitkb index <path> --sufficiency-details` or
 `orbitkb update <service> --sufficiency-details` to print one JSON line per
 regenerated route with each dimension's status, reason and evidence IDs. An

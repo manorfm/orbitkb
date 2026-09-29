@@ -17,6 +17,16 @@ def _has_openapi_description(contract: object) -> bool:
             and isinstance(formal.get("description"), str) and bool(formal["description"].strip()))
 
 
+def _has_proven_request_shape(contract: dict) -> bool:
+    request = contract.get("request")
+    if isinstance(request, dict):
+        return bool(request.get("fields"))
+    formal = contract.get("formal_contract")
+    return isinstance(formal, dict) and formal.get("format") == "openapi" and (
+        formal.get("request_body_present") is False
+    )
+
+
 class SufficiencyStatus(str, Enum):
     ENOUGH = "enough"
     MISSING = "missing"
@@ -82,6 +92,9 @@ class DeterministicSufficiencyEvaluator:
             if _has_openapi_description(fact.value.get("contract"))
         )
         behavior_enough = bool(described) and len(described) == len(entrypoints)
+        request_enough = bool(contracts) and len(contracts) == len(entrypoints) and all(
+            _has_proven_request_shape(contract) for contract in contracts
+        )
         authorization_limited = (
             capsule.navigation_truncated
             or "security_requirement" in capsule.report.omitted_fact_kinds
@@ -110,12 +123,9 @@ class DeterministicSufficiencyEvaluator:
             ),
             DimensionAssessment(
                 "request_shape",
-                SufficiencyStatus.ENOUGH if any(
-                    isinstance(contract.get("request"), dict) and contract["request"].get("fields")
-                    for contract in contracts
-                ) else SufficiencyStatus.MISSING,
+                SufficiencyStatus.ENOUGH if request_enough else SufficiencyStatus.MISSING,
                 tuple(fact.id for fact in entrypoints),
-                "request payload fields require explicit evidence",
+                "request payload fields or explicit absence of a body require evidence",
             ),
             DimensionAssessment(
                 "response_shape",
