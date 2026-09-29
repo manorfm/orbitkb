@@ -47,6 +47,7 @@ from orbitkb.domain.navigation import (
     TraversalPolicy,
     TraversalResult,
 )
+from orbitkb.domain.route_patterns import route_pattern_covers
 from orbitkb.export.mermaid import (
     generate_entrypoint_sequence,
     generate_topology_diagram,
@@ -438,31 +439,6 @@ def classify_endpoint_kind(path: str) -> str:
     if _INTERNAL_PATH.search(path):
         return "internal"
     return "rest"
-
-
-def _route_segments_match(security_segment: str, api_segment: str) -> bool:
-    if security_segment == "*" or security_segment.startswith("{") or api_segment.startswith("{"):
-        return True
-    return security_segment == api_segment
-
-
-def route_pattern_covers(security_pattern: str, api_path: str) -> bool:
-    """Whether a Spring Security Ant-style route pattern (from a
-    `SecurityFilterChain`'s `authorizeHttpRequests` block, e.g.
-    `"/restaurants/{id}/**"`) covers a specific API's own declared route (e.g.
-    `"/restaurants/{id}/cancel"`) -- structural segment matching: a `{var}`/`*`
-    segment in either pattern matches any single segment (path-variable names
-    never need to agree between the two), and a trailing `**` matches any
-    remaining depth, including none.
-    """
-    security_segments = [s for s in security_pattern.split("/") if s]
-    api_segments = [s for s in api_path.split("/") if s]
-    for i, security_segment in enumerate(security_segments):
-        if security_segment == "**":
-            return True
-        if i >= len(api_segments) or not _route_segments_match(security_segment, api_segments[i]):
-            return False
-    return len(api_segments) == len(security_segments)
 
 
 def _security_shape_for_api(requirements: list[sqlite3.Row], method: str, path: str) -> dict | None:

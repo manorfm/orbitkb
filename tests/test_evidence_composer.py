@@ -2,6 +2,12 @@ from pathlib import Path
 
 from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.engine import StaticAnalysisEngine
+from orbitkb.analysis.models import (
+    AnalysisResult,
+    EntryPoint,
+    Evidence,
+    SecurityRequirement,
+)
 from orbitkb.domain.canonical import FactStatus, ServiceKey
 from orbitkb.domain.evidence import EvidenceComposer, EvidenceProfile
 from orbitkb.domain.navigation import KnowledgeNavigator, TraversalPolicy
@@ -47,3 +53,29 @@ def test_composer_reports_limited_flow_instead_of_silent_omission():
     assert evidence.truncated
     assert any(boundary.reason == "edge_limit" for boundary in evidence.boundaries)
     assert not evidence.facts
+
+
+def test_route_security_uses_method_and_first_matching_rule():
+    source = Evidence("Security.kt", 1, 1)
+    snapshot = project_analysis(ServiceKey("orders"), AnalysisResult(
+        entrypoints=[
+            EntryPoint("http", "GET", "/orders/{id}", "Orders.get", source),
+            EntryPoint("http", "POST", "/orders/{id}", "Orders.post", source),
+        ],
+        security_requirements=[
+            SecurityRequirement("/orders/*", "GET", None, "permitAll", (), source),
+            SecurityRequirement("/orders/{orderId}", "POST", None, "hasRole", ("ADMIN",), source),
+            SecurityRequirement("**", None, None, "authenticated", (), source),
+        ],
+    ))
+    composer = EvidenceComposer(KnowledgeNavigator(snapshot))
+    profile = EvidenceProfile(frozenset({"security_requirement"}))
+
+    selected = {
+        route.method: [fact.value["requirement"] for fact in composer.compose(
+            route, profile, TraversalPolicy(),
+        ).facts]
+        for route in (fact.subject for fact in snapshot.facts if fact.kind == "entrypoint")
+    }
+
+    assert selected == {"GET": ["permitAll"], "POST": ["hasRole"]}

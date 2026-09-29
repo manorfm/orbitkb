@@ -6,6 +6,7 @@ from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.engine import StaticAnalysisEngine
 from orbitkb.discovery.jvm_stack import JvmSpringDetector
 from orbitkb.domain.canonical import ServiceKey
+from orbitkb.domain.evidence import EvidenceComposer, EvidenceProfile
 from orbitkb.domain.navigation import KnowledgeNavigator, TraversalPolicy
 from orbitkb.generation.route_evidence import route_sufficiency
 
@@ -109,3 +110,18 @@ def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
     assert sufficiency.status("response_shape").value == "enough"
     assert sufficiency.status("business_behavior").value == "missing"
     assert sufficiency.status("flow").value == "ambiguous"
+    assert sufficiency.status("authorization").value == "ambiguous"
+    assert len(sufficiency.evidence_ids("authorization")) == 1
+    security_fact = next(fact for fact in snapshot.facts if fact.id == sufficiency.evidence_ids("authorization")[0])
+    assert security_fact.attributes["requirement"] == "authenticated"
+
+
+def test_sample_route_evidence_selects_the_first_matching_http_rule():
+    snapshot = project_analysis(ServiceKey("sample-order"), StaticAnalysisEngine().analyze(SAMPLE, "jvm-spring"))
+    route = next(fact.subject for fact in snapshot.facts if fact.kind == "entrypoint" and fact.subject.name == ROUTE)
+    evidence = EvidenceComposer(KnowledgeNavigator(snapshot)).compose(
+        route, EvidenceProfile(frozenset({"security_requirement"})), TraversalPolicy(),
+    )
+
+    requirements = [fact.value["requirement"] for fact in evidence.facts]
+    assert requirements == ["authenticated"]

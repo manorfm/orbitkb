@@ -10,6 +10,7 @@ from orbitkb.domain.canonical import (
     CanonicalFact,
     EntrypointKey,
     FactStatus,
+    RoutePatternKey,
     SourceReference,
 )
 from orbitkb.domain.navigation import (
@@ -17,6 +18,7 @@ from orbitkb.domain.navigation import (
     TraversalBoundary,
     TraversalPolicy,
 )
+from orbitkb.domain.route_patterns import route_pattern_covers
 
 
 @dataclass(frozen=True)
@@ -72,8 +74,17 @@ class EvidenceComposer:
     def compose(self, entrypoint: EntrypointKey, profile: EvidenceProfile,
                 policy: TraversalPolicy) -> EvidenceSet:
         traversal = self._navigator.reachable(entrypoint, policy)
-        facts = tuple(
+        facts = [
             EvidenceFact.from_canonical(fact, traversal.path_to(fact.id))
             for fact in traversal.facts if fact.kind in profile.kinds
-        )
-        return EvidenceSet(entrypoint, facts, traversal.boundaries, traversal.truncated)
+        ]
+        if entrypoint.transport == "http" and "security_requirement" in profile.kinds:
+            for fact in self._navigator.snapshot.facts:
+                subject = fact.subject
+                if (fact.kind == "security_requirement" and isinstance(subject, RoutePatternKey)
+                        and subject.service == entrypoint.service
+                        and (subject.method is None or subject.method == entrypoint.method)
+                        and route_pattern_covers(subject.pattern, entrypoint.name)):
+                    facts.append(EvidenceFact.from_canonical(fact, (entrypoint.symbol,)))
+                    break
+        return EvidenceSet(entrypoint, tuple(facts), traversal.boundaries, traversal.truncated)

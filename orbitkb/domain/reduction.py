@@ -92,8 +92,8 @@ class EvidenceReducer:
         retained_uses: list[EvidenceUse] = []
         omitted: list[str] = []
         selected_chars = 0
-        priority = {"entrypoint": 0, "service_call": 1}
-        for digest, fact in sorted(facts_by_digest.items(), key=lambda item: priority.get(item[1].kind, 2)):
+        priority = {"entrypoint": 0, "service_call": 1, "security_requirement": 2}
+        for digest, fact in sorted(facts_by_digest.items(), key=lambda item: priority.get(item[1].kind, 3)):
             uses = uses_by_digest[digest]
             size = _estimated_size(fact, uses)
             if selected_chars + size > budget.max_chars:
