@@ -5,9 +5,10 @@ import pytest
 
 from orbitkb.db.connection import open_db, open_readonly_db
 from orbitkb.db.repositories import apis as apis_repo
+from orbitkb.db.repositories import components as components_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
-from orbitkb.generation.knowledge import EndpointDocumentation
+from orbitkb.generation.knowledge import ComponentDocumentation, EndpointDocumentation
 from orbitkb.generation.legacy_knowledge import LegacyKnowledgeAdapter
 
 
@@ -91,3 +92,21 @@ def test_legacy_writer_preserves_an_outer_transaction(tmp_path: Path):
     conn.rollback()
     assert apis_repo.get_api_by_key(conn, service_id, "GET", "/menus") is None
     assert conn.execute("SELECT value FROM schema_meta WHERE key = 'unrelated'").fetchone() is None
+
+
+def test_legacy_writer_updates_component_evidence_and_prunes_missing_components(tmp_path: Path):
+    conn = open_db(tmp_path / "components.db")
+    service_id = services_repo.ensure_service(conn, "menus", "/tmp/menus", "python")
+    writer = LegacyKnowledgeAdapter(conn)
+    evidence = [{"file": "menu.py", "start_line": 5, "end_line": 10}]
+
+    writer.save_component(service_id, ComponentDocumentation("MenuController", "menu.py", "Lists menus", evidence))
+    first = components_repo.list_components(conn, service_id)[0]
+    assert json.loads(first["evidence_json"]) == evidence
+
+    writer.save_component(service_id, ComponentDocumentation("MenuController", "menu.py", "Lists active menus", evidence))
+    updated = components_repo.list_components(conn, service_id)
+    assert [(row["name"], row["summary"]) for row in updated] == [("MenuController", "Lists active menus")]
+
+    writer.prune_components(service_id, set())
+    assert components_repo.list_components(conn, service_id) == []

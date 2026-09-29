@@ -252,6 +252,12 @@ def test_index_service_passes_generated_endpoint_to_injected_writer(tmp_path: Pa
         def prune_endpoints(self, service_id, keep_keys):
             self.pruned.append((service_id, keep_keys))
 
+        def save_component(self, service_id, documentation):
+            pass
+
+        def prune_components(self, service_id, keep_keys):
+            pass
+
     conn = open_db(tmp_path / "injected-writer.db")
     orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
     writer = RecordingWriter()
@@ -265,6 +271,42 @@ def test_index_service_passes_generated_endpoint_to_injected_writer(tmp_path: Pa
     assert all(documentation.validations and documentation.calls and documentation.evidence for _, documentation in writer.saved)
     assert writer.pruned == [(result.service_id, {(doc.method, doc.path) for _, doc in writer.saved})]
     assert apis_repo.list_apis(conn, result.service_id) == []
+
+
+def test_index_service_passes_generated_components_to_injected_writer(tmp_path: Path):
+    class RecordingWriter:
+        def __init__(self):
+            self.saved_components = []
+            self.pruned_components = []
+
+        def save_endpoint(self, service_id, documentation):
+            pass
+
+        def prune_endpoints(self, service_id, keep_keys):
+            pass
+
+        def save_component(self, service_id, documentation):
+            self.saved_components.append((service_id, documentation))
+
+        def prune_components(self, service_id, keep_keys):
+            self.pruned_components.append((service_id, keep_keys))
+
+    conn = open_db(tmp_path / "component-writer.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    writer = RecordingWriter()
+
+    result = index_service(conn, orders.name, orders.path, orders.detector, FakeOrchestratorBackend(), knowledge_writer=writer)
+
+    assert result.status == "ok"
+    assert {(doc.name, doc.file_path) for _, doc in writer.saved_components} == {
+        ("OrdersController", "adapters/http/orders_controller.py"), ("main", "main.py"),
+    }
+    assert all(service_id == result.service_id and doc.summary == "Fake component summary." and doc.evidence
+               for service_id, doc in writer.saved_components)
+    assert writer.pruned_components == [
+        (result.service_id, {(doc.name, doc.file_path) for _, doc in writer.saved_components})
+    ]
+    assert components_repo.list_components(conn, result.service_id) == []
 
 
 def test_index_path_indexes_all_three_sample_services(tmp_path: Path):

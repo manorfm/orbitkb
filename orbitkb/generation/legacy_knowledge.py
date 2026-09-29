@@ -6,6 +6,7 @@ from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import components as components_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.generation.knowledge import (
+    ComponentDocumentation,
     ComponentSummary,
     EndpointDocumentation,
     RouteKey,
@@ -54,3 +55,12 @@ class LegacyKnowledgeAdapter:
 
     def prune_endpoints(self, service_id: int, keep_keys: set[RouteKey]) -> None:
         apis_repo.prune_apis_not_in(self._conn, service_id, keep_keys)
+
+    def save_component(self, service_id: int, documentation: ComponentDocumentation) -> None:
+        components_repo.upsert_component(
+            self._conn, service_id, documentation.name, documentation.file_path,
+            documentation.summary, documentation.evidence,
+        )
+
+    def prune_components(self, service_id: int, keep_keys: set[tuple[str, str]]) -> None:
+        components_repo.prune_components_not_in(self._conn, service_id, keep_keys)

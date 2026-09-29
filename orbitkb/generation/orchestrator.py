@@ -12,7 +12,6 @@ from orbitkb.analysis.engine import STATIC_ANALYSIS_INPUT_VERSION, StaticAnalysi
 from orbitkb.ci.scanner import scan_github_actions_commands
 from orbitkb.db.repositories import ci_commands as ci_commands_repo
 from orbitkb.db.repositories import cloud_iac as cloud_iac_repo
-from orbitkb.db.repositories import components as components_repo
 from orbitkb.db.repositories import embeddings as embeddings_repo
 from orbitkb.db.repositories import flows as flows_repo
 from orbitkb.db.repositories import index_runs as index_runs_repo
@@ -42,6 +41,7 @@ from orbitkb.generation.architecture import recompute_architecture_view
 from orbitkb.generation.backend_base import LLMBackend, LLMUsage
 from orbitkb.generation.embeddings import EmbeddingBackend
 from orbitkb.generation.knowledge import (
+    ComponentDocumentation,
     ComponentSummary,
     EndpointDocumentation,
     KnowledgeReader,
@@ -450,15 +450,16 @@ class ComponentGenerator:
                 continue
             result = generation.structured
             evidence = _evidence_from_excerpts([endpoint.excerpt for endpoint in group])
-            components_repo.upsert_component(
-                ctx.conn, ctx.service_id, component_name, component_file, result["summary"], evidence
+            ctx.knowledge_writer.save_component(
+                ctx.service_id,
+                ComponentDocumentation(component_name, component_file, result["summary"], evidence),
             )
             unit.status = "success"
             outcome.add(unit)
             ctx.any_component_regenerated = True
             ctx.progress.unit_finished(ctx.name, label, "ok")
 
-        components_repo.prune_components_not_in(ctx.conn, ctx.service_id, keep_component_keys)
+        ctx.knowledge_writer.prune_components(ctx.service_id, keep_component_keys)
         return outcome
 
 
