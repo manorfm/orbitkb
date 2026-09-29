@@ -4,6 +4,7 @@ import sqlite3
 
 from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import components as components_repo
+from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.generation.knowledge import (
@@ -11,6 +12,7 @@ from orbitkb.generation.knowledge import (
     ComponentSummary,
     EndpointDocumentation,
     OverviewDocumentation,
+    PersistenceDocumentation,
     RouteKey,
 )
 
@@ -70,4 +72,14 @@ class LegacyKnowledgeAdapter:
     def save_overview(self, service_id: int, documentation: OverviewDocumentation) -> None:
         services_repo.update_service_overview(
             self._conn, service_id, documentation.short_desc, documentation.long_desc,
+        )
+
+    def replace_persistence(self, service_id: int, documentation: PersistenceDocumentation) -> None:
+        persistence_repo.replace_persistence_entities(
+            self._conn, service_id,
+            [
+                {"name": entity.name, "kind": entity.kind, "engine": entity.engine, "schema_json": entity.fields}
+                for entity in documentation.entities
+            ],
+            documentation.evidence,
         )

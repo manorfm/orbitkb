@@ -20,7 +20,6 @@ from orbitkb.db.repositories import (
     kubernetes_configuration as kubernetes_configuration_repo,
 )
 from orbitkb.db.repositories import messages as messages_repo
-from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import repositories as repositories_repo
 from orbitkb.db.repositories import search as search_repo
 from orbitkb.db.repositories import security_findings as security_findings_repo
@@ -47,6 +46,8 @@ from orbitkb.generation.knowledge import (
     KnowledgeReader,
     KnowledgeWriter,
     OverviewDocumentation,
+    PersistenceDocumentation,
+    PersistenceEntity,
     compose_component_summaries,
     compose_endpoint_summaries,
 )
@@ -471,7 +472,7 @@ class PersistenceGenerator:
         outcome = UnitOutcome()
         persistence_files = {p.excerpt.file_path for p in ctx.hints.persistence}
         if not ctx.hints.persistence:
-            persistence_repo.replace_persistence_entities(ctx.conn, ctx.service_id, [], [])
+            ctx.knowledge_writer.replace_persistence(ctx.service_id, PersistenceDocumentation([], []))
             return outcome
 
         unit = UnitMeasurement(self.kind, ())
@@ -494,11 +495,11 @@ class PersistenceGenerator:
         if generation:
             result = generation.structured
             entities = [
-                {"name": e["name"], "kind": e["kind"], "engine": e["engine"], "schema_json": e["fields"]}
+                PersistenceEntity(e["name"], e["kind"], e["engine"], e["fields"])
                 for e in result["entities"]
             ]
             evidence = _evidence_from_excerpts([p.excerpt for p in ctx.hints.persistence] + persistence_config_excerpts)
-            persistence_repo.replace_persistence_entities(ctx.conn, ctx.service_id, entities, evidence)
+            ctx.knowledge_writer.replace_persistence(ctx.service_id, PersistenceDocumentation(entities, evidence))
             unit.status = "success"
             outcome.add(unit)
             ctx.progress.unit_finished(ctx.name, "persistence", "ok")

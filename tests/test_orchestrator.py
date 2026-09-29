@@ -261,6 +261,9 @@ def test_index_service_passes_generated_endpoint_to_injected_writer(tmp_path: Pa
         def save_overview(self, service_id, documentation):
             pass
 
+        def replace_persistence(self, service_id, documentation):
+            pass
+
     conn = open_db(tmp_path / "injected-writer.db")
     orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
     writer = RecordingWriter()
@@ -295,6 +298,9 @@ def test_index_service_passes_generated_components_to_injected_writer(tmp_path: 
             self.pruned_components.append((service_id, keep_keys))
 
         def save_overview(self, service_id, documentation):
+            pass
+
+        def replace_persistence(self, service_id, documentation):
             pass
 
     conn = open_db(tmp_path / "component-writer.db")
@@ -335,6 +341,9 @@ def test_index_service_passes_generated_overview_to_injected_writer(tmp_path: Pa
         def save_overview(self, service_id, documentation):
             self.overviews.append((service_id, documentation))
 
+        def replace_persistence(self, service_id, documentation):
+            pass
+
     conn = open_db(tmp_path / "overview-writer.db")
     orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
     writer = RecordingWriter()
@@ -349,6 +358,53 @@ def test_index_service_passes_generated_overview_to_injected_writer(tmp_path: Pa
         "Fake short description.", "Fake long description.",
     )
     assert services_repo.get_service_by_name(conn, "orders-service")["short_desc"] is None
+
+
+def test_index_service_writes_and_clears_persistence_through_injected_writer(tmp_path: Path):
+    from orbitkb.db.repositories import persistence as persistence_repo
+    from orbitkb.generation.legacy_knowledge import LegacyKnowledgeAdapter
+
+    class RecordingWriter(LegacyKnowledgeAdapter):
+        def __init__(self, conn):
+            super().__init__(conn)
+            self.persistence_writes = []
+
+        def replace_persistence(self, service_id, documentation):
+            self.persistence_writes.append((service_id, documentation))
+            super().replace_persistence(service_id, documentation)
+
+    class WithoutPersistence:
+        def __init__(self, detector):
+            self.detector = detector
+            self.id = detector.id
+
+        def collect_hints(self, root):
+            hints = self.detector.collect_hints(root)
+            hints.persistence = []
+            return hints
+
+    conn = open_db(tmp_path / "persistence-writer.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    writer = RecordingWriter(conn)
+
+    first = index_service(conn, orders.name, orders.path, orders.detector, FakeOrchestratorBackend(), knowledge_writer=writer)
+    assert first.status == "ok"
+    assert len(writer.persistence_writes) == 1
+    service_id, documentation = writer.persistence_writes[0]
+    assert service_id == first.service_id
+    assert [(entity.name, entity.kind, entity.engine) for entity in documentation.entities] == [
+        ("fake_table", "sql_table", "postgres")
+    ]
+    assert documentation.evidence
+
+    second = index_service(
+        conn, orders.name, orders.path, WithoutPersistence(orders.detector), FakeOrchestratorBackend(),
+        knowledge_writer=writer,
+    )
+    assert second.status == "ok"
+    assert len(writer.persistence_writes) == 2
+    assert writer.persistence_writes[1][1].entities == []
+    assert persistence_repo.list_persistence(conn, first.service_id) == []
 
 
 def test_index_path_indexes_all_three_sample_services(tmp_path: Path):

@@ -6,12 +6,15 @@ import pytest
 from orbitkb.db.connection import open_db, open_readonly_db
 from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import components as components_repo
+from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.generation.knowledge import (
     ComponentDocumentation,
     EndpointDocumentation,
     OverviewDocumentation,
+    PersistenceDocumentation,
+    PersistenceEntity,
 )
 from orbitkb.generation.legacy_knowledge import LegacyKnowledgeAdapter
 
@@ -124,3 +127,23 @@ def test_legacy_writer_saves_overview_descriptions(tmp_path: Path):
 
     service = services_repo.get_service_by_name(conn, "menus")
     assert (service["short_desc"], service["long_desc"]) == ("Menu API", "Manages menus")
+
+
+def test_legacy_writer_replaces_persistence_entities_and_clears_stale_data(tmp_path: Path):
+    conn = open_db(tmp_path / "persistence.db")
+    service_id = services_repo.ensure_service(conn, "menus", "/tmp/menus", "python")
+    writer = LegacyKnowledgeAdapter(conn)
+    evidence = [{"file": "menu.py", "start_line": 3, "end_line": 15}]
+
+    writer.replace_persistence(service_id, PersistenceDocumentation(
+        [PersistenceEntity("menus", "sql_table", "postgres", [{"field": "id", "type_desc": "string"}])],
+        evidence,
+    ))
+
+    stored = persistence_repo.list_persistence(conn, service_id)
+    assert [(row["name"], row["kind"], row["engine"]) for row in stored] == [("menus", "sql_table", "postgres")]
+    assert json.loads(stored[0]["schema_json"]) == [{"field": "id", "type_desc": "string"}]
+    assert json.loads(stored[0]["evidence_json"]) == evidence
+
+    writer.replace_persistence(service_id, PersistenceDocumentation([], []))
+    assert persistence_repo.list_persistence(conn, service_id) == []
