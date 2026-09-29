@@ -515,6 +515,9 @@ by its budget. A limited source flow or budget omission marks the capsule trunca
 Endpoint generation now adds compact, route-reachable HTTP call evidence from the
 canonical snapshot to its existing source excerpts and outbound hints. It labels
 limited navigation or omitted calls instead of treating missing evidence as no call.
+The endpoint indexer also assesses canonical evidence by documentation dimension
+in shadow mode. `IndexResult.sufficiency_shadow` counts assessed statuses for
+regenerated endpoints; this does not skip generation or change LLM call counts.
 `describe_entrypoint.boundaries` also reports unresolved local symbols, cycles
 and traversal limits alongside known static boundaries, with source locations
 when the bounded edge is included.

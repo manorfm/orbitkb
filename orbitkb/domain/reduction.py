@@ -39,6 +39,7 @@ class ReductionReport:
 
 @dataclass(frozen=True)
 class ContextCapsule:
+    entrypoints: tuple[EntrypointKey, ...]
     facts: tuple[EvidenceFact, ...]
     uses: tuple[EvidenceUse, ...]
     boundaries: tuple[TraversalBoundary, ...]
@@ -104,5 +105,6 @@ class EvidenceReducer:
 
         report = ReductionReport(input_facts, len(facts_by_digest), len(retained),
                                  tuple(omitted), input_chars, selected_chars)
-        return ContextCapsule(tuple(retained), tuple(retained_uses), tuple(boundaries.values()), report,
+        entrypoints = tuple(dict.fromkeys(item.entrypoint for item in evidence))
+        return ContextCapsule(entrypoints, tuple(retained), tuple(retained_uses), tuple(boundaries.values()), report,
                               any(item.truncated for item in evidence) or bool(omitted))

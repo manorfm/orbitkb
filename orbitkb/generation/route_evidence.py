@@ -6,15 +6,37 @@ from orbitkb.domain.canonical import CanonicalSnapshot, EntrypointKey
 from orbitkb.domain.evidence import EvidenceComposer, EvidenceProfile
 from orbitkb.domain.navigation import KnowledgeNavigator, TraversalPolicy
 from orbitkb.domain.reduction import EvidenceBudget, EvidenceReducer
+from orbitkb.domain.sufficiency import (
+    DeterministicSufficiencyEvaluator,
+    SufficiencyResult,
+)
 
 
-def route_outbound_hints(snapshot: CanonicalSnapshot, method: str, path: str,
-                         *, max_chars: int = 4_000) -> str | None:
-    entrypoints = tuple(
+def _entrypoints(snapshot: CanonicalSnapshot, method: str, path: str) -> tuple[EntrypointKey, ...]:
+    return tuple(
         fact.subject for fact in snapshot.facts
         if fact.kind == "entrypoint" and isinstance(fact.subject, EntrypointKey)
         and fact.subject.method == method and fact.subject.name == path
     )
+
+
+def route_sufficiency(snapshot: CanonicalSnapshot, method: str, path: str) -> SufficiencyResult | None:
+    entrypoints = _entrypoints(snapshot, method, path)
+    if not entrypoints:
+        return None
+    composer = EvidenceComposer(KnowledgeNavigator(snapshot))
+    profile = EvidenceProfile(frozenset({
+        "entrypoint", "flow_edge", "service_call", "security_requirement",
+    }))
+    capsule = EvidenceReducer().reduce(tuple(
+        composer.compose(entrypoint, profile, TraversalPolicy()) for entrypoint in entrypoints
+    ), EvidenceBudget(20_000))
+    return DeterministicSufficiencyEvaluator().evaluate(capsule)
+
+
+def route_outbound_hints(snapshot: CanonicalSnapshot, method: str, path: str,
+                         *, max_chars: int = 4_000) -> str | None:
+    entrypoints = _entrypoints(snapshot, method, path)
     if not entrypoints:
         return None
     composer = EvidenceComposer(KnowledgeNavigator(snapshot))

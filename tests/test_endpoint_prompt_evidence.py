@@ -38,6 +38,7 @@ def test_endpoint_prompt_uses_route_proven_feign_evidence_without_another_model_
                   if "Endpoint: GET /menus/{id}\n" in prompt)
     assert result.status == "ok"
     assert result.llm_calls == 6
+    assert result.sufficiency_shadow == {"missing": 2, "unassessed": 1}
     assert "restaurant-service" in prompt
     assert "GET /restaurants/{id}" in prompt
     assert "MenuGateway.kt" in prompt

@@ -8,7 +8,8 @@ Endpoint: $method $path
 Use ONLY the evidence below. If something is not visible in the evidence, leave it out
 rather than guessing.
 
-Handler code (and any directly-called helper in the same or an imported file):
+Source excerpts for business behavior and payload details that static facts cannot establish
+(handler and directly-called helpers, bounded and redacted):
 $code_excerpts
 
 Outbound-call hints (route-reachable calls are marked; other hints may or may not

@@ -57,7 +57,7 @@ from orbitkb.generation.knowledge import (
 from orbitkb.generation.legacy_knowledge import LegacyKnowledgeAdapter
 from orbitkb.generation.llm_harness import generate_with_retry, load_prompt, load_schema
 from orbitkb.generation.policy import GenerationPolicy
-from orbitkb.generation.route_evidence import route_outbound_hints
+from orbitkb.generation.route_evidence import route_outbound_hints, route_sufficiency
 from orbitkb.generation.unit import IndexUnit
 from orbitkb.iac.scanner import scan_repository_facts
 from orbitkb.security.findings import find_security_findings
@@ -83,6 +83,7 @@ class IndexResult:
     input_tokens: int | None = None
     output_tokens: int | None = None
     cost_usd: float | None = None
+    sufficiency_shadow: dict[str, int] = field(default_factory=dict)
 
 
 class ProgressReporter(Protocol):
@@ -321,6 +322,7 @@ class IndexContext:
     any_endpoint_regenerated: bool = False
     any_component_regenerated: bool = False
     llm_invocations: int = 0
+    sufficiency_shadow: dict[str, int] = field(default_factory=dict)
 
     def record_llm_invocation(self, unit: IndexUnit) -> None:
         self.llm_invocations += 1
@@ -356,6 +358,9 @@ class EndpointGenerator:
                 ctx.progress.unit_finished(ctx.name, label, "skipped")
                 continue
             ctx.progress.unit_started(ctx.name, label)
+            sufficiency = route_sufficiency(snapshot, endpoint.method, endpoint.path) if snapshot else None
+            shadow_status = sufficiency.overall.value if sufficiency else "unassessed"
+            ctx.sufficiency_shadow[shadow_status] = ctx.sufficiency_shadow.get(shadow_status, 0) + 1
             source = EvidenceSource.from_excerpts(
                 [endpoint.excerpt, *endpoint.extra_excerpts], MAX_EXCERPT_CHARS,
             )
@@ -757,6 +762,7 @@ def _index_service_unlocked(
         files_changed=len(changed) + len(removed), llm_calls=llm_calls, status=status,
         llm_invocations=ctx.llm_invocations,
         input_tokens=total_usage.input_tokens, output_tokens=total_usage.output_tokens, cost_usd=total_usage.cost_usd,
+        sufficiency_shadow=ctx.sufficiency_shadow,
     )
 
 
