@@ -39,7 +39,7 @@ def test_shared_feign_fact_is_sent_once_with_both_route_paths():
     assert not capsule.truncated
 
 
-def test_budget_reports_every_omitted_fact_and_keeps_navigation_limits():
+def test_budget_reports_every_omitted_fact_and_keeps_external_boundary():
     evidence = _route_evidence()
 
     capsule = EvidenceReducer().reduce(evidence, EvidenceBudget(max_chars=1))
@@ -50,7 +50,8 @@ def test_budget_reports_every_omitted_fact_and_keeps_navigation_limits():
         fact.id for route in evidence for fact in route.facts
     }
     assert capsule.truncated
-    assert any(boundary.reason == "unresolved" for boundary in capsule.boundaries)
+    assert any(boundary.reason == "external_call" and boundary.target == "restaurantClient.getRestaurant"
+               for boundary in capsule.boundaries)
 
 
 def test_source_truncation_remains_visible_without_budget_omission():

@@ -36,7 +36,9 @@ def test_composed_route_evidence_preserves_feign_path_source_and_digest():
     assert call.digest == next(fact.digest for fact in repeated.facts if fact.id == call.id)
     assert len({fact.id for fact in evidence.facts}) == len(evidence.facts)
     assert {fact.kind for fact in evidence.facts} == profile.kinds
-    assert any(boundary.reason == "unresolved" for boundary in evidence.boundaries)
+    assert any(boundary.reason == "external_call" and boundary.target == "restaurantClient.getRestaurant"
+               for boundary in evidence.boundaries)
+    assert not any(boundary.reason == "unresolved" for boundary in evidence.boundaries)
     assert not evidence.truncated
 
 

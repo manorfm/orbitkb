@@ -256,7 +256,10 @@ def _classify_spring_edges(
     return classified, cloud_facts
 
 
-def _jvm_edges_for_text(symbol: str, function_match: FunctionMatch, path: Path, root: Path) -> list[FlowEdge]:
+def _jvm_edges_for_text(
+    symbol: str, function_match: FunctionMatch, path: Path, root: Path,
+    local_classes: frozenset[str] = frozenset(),
+) -> list[FlowEdge]:
     engine.logger.debug("  analyzing function: %s (%s)", symbol, path.name)
     edges = []
     # Scanning starts at body_offset, not 0: the signature itself can contain a
@@ -264,6 +267,8 @@ def _jvm_edges_for_text(symbol: str, function_match: FunctionMatch, path: Path, 
     # which tree-sitter never saw since it only ever walked the body Node.
     body_text = function_match.text[function_match.body_offset :]
     for callee, offset in find_calls(body_text):
+        if callee in local_classes:
+            continue
         line = function_match.start_line + function_match.text.count("\n", 0, function_match.body_offset + offset)
         edges.append(FlowEdge(symbol, callee, engine._call_kind(callee), Evidence(path.relative_to(root).as_posix(), line, line)))
     return edges
@@ -305,6 +310,7 @@ def _kotlin_extension_imports(text: str, function_match: FunctionMatch) -> tuple
 
 def _kotlin_top_level_extensions(
     text: str, classes: list[ClassMatch], path: Path, root: Path,
+    local_classes: frozenset[str],
 ) -> tuple[list[Symbol], list[FlowEdge], list[FlowBoundary]]:
     package_match = re.search(r"(?m)^\s*package\s+([\w.]+)\s*$", text)
     if package_match is None:
@@ -323,7 +329,7 @@ def _kotlin_top_level_extensions(
         symbol = f"{package}.{receiver_type}.{name}"
         evidence = Evidence(path.relative_to(root).as_posix(), function.start_line, function.end_line)
         symbols.append(Symbol(symbol, f"{package}.{receiver_type}", name, evidence))
-        edges.extend(_jvm_edges_for_text(symbol, function, path, root))
+        edges.extend(_jvm_edges_for_text(symbol, function, path, root, local_classes))
         boundaries.extend(_boundaries_for_text(symbol, function.text, evidence))
     return symbols, edges, boundaries
 
@@ -366,6 +372,8 @@ class _KotlinSpringAnalyzer:
         cloud_declarations = jvm_client_declarations(text)
         result = AnalysisResult()
         classes = find_classes(text)
+        function_names = {function.name for function in find_functions(text, 0, len(text), kotlin=True)}
+        local_classes = frozenset(class_match.name for class_match in classes) - function_names
         for class_match in classes:
             class_name = class_match.name
             implements = engine._kotlin_supertypes(class_match.header)
@@ -409,7 +417,7 @@ class _KotlinSpringAnalyzer:
                     return_type=engine._spring_return_type(signature, kotlin=True),
                     local_assignments=_direct_kotlin_local_assignments(function_match),
                 ))
-                edges = _jvm_edges_for_text(symbol, function_match, path, root)
+                edges = _jvm_edges_for_text(symbol, function_match, path, root, local_classes)
                 classified_edges, cloud_facts = _classify_spring_edges(
                     edges, persistence_receivers, redis_publishers, cloud_declarations,
                 )
@@ -457,7 +465,7 @@ class _KotlinSpringAnalyzer:
                 if kafka_listener:
                     result.entrypoints.append(EntryPoint("message", "CONSUME", kafka_listener.group(1), symbol, evidence))
                     result.contracts[symbol] = engine._message_contract(kafka_listener.group(1), function_match.text, "kotlin", transport="kafka")
-        symbols, edges, boundaries = _kotlin_top_level_extensions(text, classes, path, root)
+        symbols, edges, boundaries = _kotlin_top_level_extensions(text, classes, path, root, local_classes)
         result.symbols.extend(symbols)
         result.edges.extend(edges)
         result.boundaries.extend(boundaries)

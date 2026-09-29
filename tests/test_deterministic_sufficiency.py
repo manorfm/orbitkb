@@ -49,6 +49,15 @@ def test_spring_route_has_proven_call_and_response_but_missing_semantic_document
     )
 
 
+def test_local_kotlin_dto_construction_does_not_make_route_flow_ambiguous():
+    capsule = _capsule()
+
+    result = DeterministicSufficiencyEvaluator().evaluate(capsule)
+
+    assert result.status("flow") == SufficiencyStatus.ENOUGH
+    assert not any(boundary.target == "Menu" for boundary in capsule.boundaries)
+
+
 def test_explicit_openapi_description_proves_only_matching_route_business_behavior(tmp_path: Path):
     (tmp_path / "OrdersController.java").write_text(
         '''@RestController

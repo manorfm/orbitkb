@@ -3,6 +3,41 @@ from pathlib import Path
 from orbitkb.analysis.engine import StaticAnalysisEngine
 
 
+def test_kotlin_local_constructor_is_not_an_invocation_but_unknown_call_remains(tmp_path: Path):
+    (tmp_path / "Handler.kt").write_text(
+        '''data class Local(val id: String)
+class Handler {
+    fun handle() {
+        Local("x")
+        Unknown()
+    }
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(edge.source, edge.target) for edge in result.edges if edge.kind == "invokes"] == [
+        ("Handler.handle", "Unknown"),
+    ]
+
+
+def test_kotlin_class_and_function_with_same_name_keep_call_ambiguous(tmp_path: Path):
+    (tmp_path / "Handler.kt").write_text(
+        '''class Local
+fun Local() = Unit
+class Handler {
+    fun handle() = Local()
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Handler.handle" and edge.target == "Local" and edge.kind == "invokes"
+               for edge in result.edges)
+
+
 def test_go_analyzer_maps_route_to_internal_and_persistence_flow(tmp_path: Path):
     source = tmp_path / "main.go"
     source.write_text(
