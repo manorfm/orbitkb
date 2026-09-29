@@ -520,6 +520,9 @@ The reader obtains existing endpoint keys in one query per service before
 deciding which routes need regeneration.
 Generated component summaries and their evidence are also saved and pruned
 through `KnowledgeWriter`.
+The service overview descriptions are saved through the same writer after
+component generation; optional embeddings still run only when the overview
+is regenerated.
 
 Architecture rules have fact-mutation tests for cycles and fan-out (both at
 service level and their intra-service component analog), shared storage,

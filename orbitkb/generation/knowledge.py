@@ -34,6 +34,12 @@ class ComponentDocumentation:
     evidence: list[dict]
 
 
+@dataclass(frozen=True)
+class OverviewDocumentation:
+    short_desc: str
+    long_desc: str
+
+
 class KnowledgeReader(Protocol):
     def endpoint_keys(self, service_id: int) -> set[RouteKey]: ...
     def api_summaries(self, service_id: int) -> dict[RouteKey, str]: ...
@@ -45,6 +51,7 @@ class KnowledgeWriter(Protocol):
     def prune_endpoints(self, service_id: int, keep_keys: set[RouteKey]) -> None: ...
     def save_component(self, service_id: int, documentation: ComponentDocumentation) -> None: ...
     def prune_components(self, service_id: int, keep_keys: set[tuple[str, str]]) -> None: ...
+    def save_overview(self, service_id: int, documentation: OverviewDocumentation) -> None: ...
 
 
 def compose_endpoint_summaries(routes: list[RouteKey], summaries: dict[RouteKey, str]) -> str:

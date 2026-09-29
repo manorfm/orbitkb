@@ -8,7 +8,11 @@ from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import components as components_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
-from orbitkb.generation.knowledge import ComponentDocumentation, EndpointDocumentation
+from orbitkb.generation.knowledge import (
+    ComponentDocumentation,
+    EndpointDocumentation,
+    OverviewDocumentation,
+)
 from orbitkb.generation.legacy_knowledge import LegacyKnowledgeAdapter
 
 
@@ -110,3 +114,13 @@ def test_legacy_writer_updates_component_evidence_and_prunes_missing_components(
 
     writer.prune_components(service_id, set())
     assert components_repo.list_components(conn, service_id) == []
+
+
+def test_legacy_writer_saves_overview_descriptions(tmp_path: Path):
+    conn = open_db(tmp_path / "overview.db")
+    service_id = services_repo.ensure_service(conn, "menus", "/tmp/menus", "python")
+
+    LegacyKnowledgeAdapter(conn).save_overview(service_id, OverviewDocumentation("Menu API", "Manages menus"))
+
+    service = services_repo.get_service_by_name(conn, "menus")
+    assert (service["short_desc"], service["long_desc"]) == ("Menu API", "Manages menus")

@@ -5,10 +5,12 @@ import sqlite3
 from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import components as components_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
+from orbitkb.db.repositories import services as services_repo
 from orbitkb.generation.knowledge import (
     ComponentDocumentation,
     ComponentSummary,
     EndpointDocumentation,
+    OverviewDocumentation,
     RouteKey,
 )
 
@@ -64,3 +66,8 @@ class LegacyKnowledgeAdapter:
 
     def prune_components(self, service_id: int, keep_keys: set[tuple[str, str]]) -> None:
         components_repo.prune_components_not_in(self._conn, service_id, keep_keys)
+
+    def save_overview(self, service_id: int, documentation: OverviewDocumentation) -> None:
+        services_repo.update_service_overview(
+            self._conn, service_id, documentation.short_desc, documentation.long_desc,
+        )

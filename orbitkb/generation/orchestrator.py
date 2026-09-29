@@ -46,6 +46,7 @@ from orbitkb.generation.knowledge import (
     EndpointDocumentation,
     KnowledgeReader,
     KnowledgeWriter,
+    OverviewDocumentation,
     compose_component_summaries,
     compose_endpoint_summaries,
 )
@@ -590,7 +591,9 @@ class OverviewGenerator:
         )
         if generation:
             result = generation.structured
-            services_repo.update_service_overview(ctx.conn, ctx.service_id, result["short_desc"], result["long_desc"])
+            ctx.knowledge_writer.save_overview(
+                ctx.service_id, OverviewDocumentation(result["short_desc"], result["long_desc"]),
+            )
             unit.status = "success"
             outcome.add(unit)
             self._update_embedding(ctx, result["short_desc"], result["long_desc"])

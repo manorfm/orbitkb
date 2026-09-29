@@ -258,6 +258,9 @@ def test_index_service_passes_generated_endpoint_to_injected_writer(tmp_path: Pa
         def prune_components(self, service_id, keep_keys):
             pass
 
+        def save_overview(self, service_id, documentation):
+            pass
+
     conn = open_db(tmp_path / "injected-writer.db")
     orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
     writer = RecordingWriter()
@@ -291,6 +294,9 @@ def test_index_service_passes_generated_components_to_injected_writer(tmp_path: 
         def prune_components(self, service_id, keep_keys):
             self.pruned_components.append((service_id, keep_keys))
 
+        def save_overview(self, service_id, documentation):
+            pass
+
     conn = open_db(tmp_path / "component-writer.db")
     orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
     writer = RecordingWriter()
@@ -307,6 +313,42 @@ def test_index_service_passes_generated_components_to_injected_writer(tmp_path: 
         (result.service_id, {(doc.name, doc.file_path) for _, doc in writer.saved_components})
     ]
     assert components_repo.list_components(conn, result.service_id) == []
+
+
+def test_index_service_passes_generated_overview_to_injected_writer(tmp_path: Path):
+    class RecordingWriter:
+        def __init__(self):
+            self.overviews = []
+
+        def save_endpoint(self, service_id, documentation):
+            pass
+
+        def prune_endpoints(self, service_id, keep_keys):
+            pass
+
+        def save_component(self, service_id, documentation):
+            pass
+
+        def prune_components(self, service_id, keep_keys):
+            pass
+
+        def save_overview(self, service_id, documentation):
+            self.overviews.append((service_id, documentation))
+
+    conn = open_db(tmp_path / "overview-writer.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    writer = RecordingWriter()
+
+    result = index_service(conn, orders.name, orders.path, orders.detector, FakeOrchestratorBackend(), knowledge_writer=writer)
+
+    assert result.status == "ok"
+    assert len(writer.overviews) == 1
+    service_id, documentation = writer.overviews[0]
+    assert service_id == result.service_id
+    assert (documentation.short_desc, documentation.long_desc) == (
+        "Fake short description.", "Fake long description.",
+    )
+    assert services_repo.get_service_by_name(conn, "orders-service")["short_desc"] is None
 
 
 def test_index_path_indexes_all_three_sample_services(tmp_path: Path):
