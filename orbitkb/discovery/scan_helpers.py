@@ -3,8 +3,8 @@ of regex patterns rather than reimplementing file walking / excerpt slicing."""
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Callable, Iterator
 
 from orbitkb.discovery.base import CodeExcerpt
 
@@ -51,6 +51,38 @@ def read_text(path: Path) -> str | None:
         return path.read_text(encoding="utf-8", errors="ignore")
     except OSError:
         return None
+
+
+def find_matching_paren(text: str, open_index: int) -> int:
+    """Find a closing parenthesis, ignoring delimiters inside string literals."""
+    depth = 0
+    i = open_index
+    while i < len(text):
+        char = text[i]
+        if text.startswith('"""', i):
+            end = text.find('"""', i + 3)
+            i = end + 3 if end >= 0 else len(text)
+            continue
+        if char in {'"', "'"}:
+            quote = char
+            i += 1
+            while i < len(text):
+                if text[i] == "\\":
+                    i += 2
+                elif text[i] == quote:
+                    i += 1
+                    break
+                else:
+                    i += 1
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
 
 
 def excerpt_around(

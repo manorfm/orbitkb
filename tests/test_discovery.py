@@ -86,6 +86,42 @@ def test_kotlin_endpoint_resolves_a_statically_imported_extension_function_into_
     assert "fun Restaurant.out()" in endpoint.extra_excerpts[0].text
 
 
+def test_spring_class_request_mapping_is_not_an_endpoint(tmp_path: Path):
+    (tmp_path / "MenuController.kt").write_text(
+        '@RestController\n'
+        '@RequestMapping(produces = [APPLICATION_JSON_VALUE], consumes = [APPLICATION_JSON_VALUE])\n'
+        'class MenuController {\n'
+        '    @GetMapping("/menus")\n'
+        '    fun list() = emptyList<String>()\n'
+        '}\n',
+        encoding="utf-8",
+    )
+
+    endpoints = JvmSpringDetector().collect_hints(tmp_path).endpoints
+
+    assert [(endpoint.method, endpoint.path) for endpoint in endpoints] == [("GET", "/menus")]
+
+
+def test_multiline_spring_class_request_mapping_is_not_an_endpoint(tmp_path: Path):
+    (tmp_path / "MenuController.kt").write_text(
+        '@RestController\n'
+        '@RequestMapping(\n'
+        '    "/clusters/{clusterId}",\n'
+        '    produces = [APPLICATION_JSON_VALUE],\n'
+        '    consumes = [APPLICATION_JSON_VALUE]\n'
+        ')\n'
+        'class MenuController {\n'
+        '    @GetMapping("/menus")\n'
+        '    fun list() = emptyList<String>()\n'
+        '}\n',
+        encoding="utf-8",
+    )
+
+    endpoints = JvmSpringDetector().collect_hints(tmp_path).endpoints
+
+    assert [(endpoint.method, endpoint.path) for endpoint in endpoints] == [("GET", "/menus")]
+
+
 def test_kotlin_endpoint_with_a_return_typed_let_chain_resolves_the_static_import(tmp_path: Path):
     """A real controller shape from the repository this rewrite was validated
     against: a return-type-annotated expression body (`: MenuOut =`) whose value is

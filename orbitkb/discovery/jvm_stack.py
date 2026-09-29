@@ -19,6 +19,7 @@ from orbitkb.discovery.scan_helpers import (
     engine_hint_from_manifest,
     excerpt_around,
     find_matches,
+    find_matching_paren,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,20 @@ _JPA_ENTITY_RE = re.compile(r"@Entity\b.*?\bclass\s+(\w+)", re.DOTALL)
 _SPRING_DATA_REPO_RE = re.compile(r"interface\s+(\w+)\s+extends\s+\w*Repository")
 
 _CLASS_RE = re.compile(r"^\s*(?:public\s+|private\s+)?(?:class|interface)\s+(\w+)")
+_TYPE_AFTER_MAPPING_RE = re.compile(
+    r"\s*(?:@[\w.]+(?:\([^)]*\))?\s*)*"
+    r"(?:(?:public|private|protected|internal|open|abstract|final|sealed|data)\s+)*"
+    r"(?:class|interface|enum)\b"
+)
+
+
+def _is_type_mapping(match: re.Match[str]) -> bool:
+    source = match.string
+    opening = source.find("(", match.start(), match.end())
+    if opening < 0:
+        return False
+    closing = find_matching_paren(source, opening)
+    return closing >= 0 and bool(_TYPE_AFTER_MAPPING_RE.match(source, closing + 1))
 
 
 def _endpoint_hint(
@@ -90,10 +105,11 @@ def _endpoint_hint(
 
 
 def endpoint_matches(scan_root: Path) -> list[tuple[str, str, Path, int]]:
-    """(method, route, path, line_no) for every `@XMapping` annotation -- pure regex."""
+    """Return route annotations on handlers, excluding type-level route prefixes."""
     return [
         (_METHOD_BY_ANNOTATION[match.group(1)], match.group(2) or "/", path, line_no)
         for path, line_no, match in find_matches(scan_root, EXTENSIONS, _MAPPING_RE)
+        if not _is_type_mapping(match)
     ]
 
 

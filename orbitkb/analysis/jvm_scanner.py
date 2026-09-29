@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from orbitkb.discovery.scan_helpers import find_matching_paren
+
 _CLASS_KEYWORD_RE = re.compile(r"\bclass\s+(?P<name>[A-Za-z_]\w*)")
 _ANNOTATION_LINE_RE = re.compile(r"^[ \t]*(?:@[\w.]+(?:\([^\n]*\))?[ \t]*)+$")
 # `override`/`suspend` are function/property modifiers, not class ones, but a class
@@ -351,28 +353,6 @@ def find_functions(text: str, search_start: int, search_end: int, kotlin: bool) 
             body_offset=body_offset,
         ))
     return functions
-
-
-def find_matching_paren(text: str, open_index: int) -> int:
-    depth = 0
-    i = open_index
-    n = len(text)
-    while i < n:
-        ch = text[i]
-        if ch == '"':
-            i = _skip_string(text, i)
-            continue
-        if ch == "'":
-            i = _skip_char_literal(text, i)
-            continue
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-            if depth == 0:
-                return i
-        i += 1
-    return -1
 
 
 def _end_of_expression_body(text: str, start: int, limit: int) -> int:
