@@ -211,6 +211,33 @@ def test_index_service_uses_injected_component_summaries_for_overview(tmp_path: 
     )
 
 
+def test_index_service_passes_generated_endpoint_to_injected_writer(tmp_path: Path):
+    class RecordingWriter:
+        def __init__(self):
+            self.saved = []
+            self.pruned = []
+
+        def save_endpoint(self, service_id, documentation):
+            self.saved.append((service_id, documentation))
+
+        def prune_endpoints(self, service_id, keep_keys):
+            self.pruned.append((service_id, keep_keys))
+
+    conn = open_db(tmp_path / "injected-writer.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    writer = RecordingWriter()
+
+    result = index_service(conn, orders.name, orders.path, orders.detector, FakeOrchestratorBackend(), knowledge_writer=writer)
+
+    assert result.status == "ok"
+    assert len(writer.saved) == 4
+    assert all(service_id == result.service_id for service_id, _ in writer.saved)
+    assert {documentation.method for _, documentation in writer.saved} == {"GET", "POST"}
+    assert all(documentation.validations and documentation.calls and documentation.evidence for _, documentation in writer.saved)
+    assert writer.pruned == [(result.service_id, {(doc.method, doc.path) for _, doc in writer.saved})]
+    assert apis_repo.list_apis(conn, result.service_id) == []
+
+
 def test_index_path_indexes_all_three_sample_services(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     backend = FakeOrchestratorBackend()

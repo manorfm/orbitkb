@@ -13,9 +13,27 @@ class ComponentSummary:
     summary: str
 
 
+@dataclass(frozen=True)
+class EndpointDocumentation:
+    method: str
+    path: str
+    summary: str
+    description: str
+    response_shape: list[dict]
+    request_shape: list[dict]
+    validations: list[dict]
+    calls: list[dict]
+    evidence: list[dict]
+
+
 class KnowledgeReader(Protocol):
     def api_summaries(self, service_id: int) -> dict[RouteKey, str]: ...
     def component_summaries(self, service_id: int) -> list[ComponentSummary]: ...
+
+
+class KnowledgeWriter(Protocol):
+    def save_endpoint(self, service_id: int, documentation: EndpointDocumentation) -> None: ...
+    def prune_endpoints(self, service_id: int, keep_keys: set[RouteKey]) -> None: ...
 
 
 def compose_endpoint_summaries(routes: list[RouteKey], summaries: dict[RouteKey, str]) -> str:

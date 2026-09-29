@@ -44,7 +44,9 @@ from orbitkb.generation.backend_base import LLMBackend, LLMUsage
 from orbitkb.generation.embeddings import EmbeddingBackend
 from orbitkb.generation.knowledge import (
     ComponentSummary,
+    EndpointDocumentation,
     KnowledgeReader,
+    KnowledgeWriter,
     compose_component_summaries,
     compose_endpoint_summaries,
 )
@@ -334,6 +336,7 @@ class IndexContext:
     failures_root: Path
     progress: ProgressReporter
     knowledge_reader: KnowledgeReader
+    knowledge_writer: KnowledgeWriter
     embedding_backend: EmbeddingBackend | None = None
     any_endpoint_regenerated: bool = False
     any_component_regenerated: bool = False
@@ -387,19 +390,21 @@ class EndpointGenerator:
                 continue
             result = generation.structured
             evidence = _evidence_from_excerpts([endpoint.excerpt, *endpoint.extra_excerpts])
-            api_id = apis_repo.upsert_api(
-                ctx.conn, ctx.service_id, endpoint.method, endpoint.path,
-                result["summary"], result["description"], result["response_shape"], evidence,
-                request_shape=result["request_shape"],
+            ctx.knowledge_writer.save_endpoint(
+                ctx.service_id,
+                EndpointDocumentation(
+                    method=endpoint.method, path=endpoint.path,
+                    summary=result["summary"], description=result["description"],
+                    response_shape=result["response_shape"], request_shape=result["request_shape"],
+                    validations=result["validations"], calls=result["calls"], evidence=evidence,
+                ),
             )
-            apis_repo.replace_api_validations(ctx.conn, api_id, result["validations"])
-            service_calls_repo.replace_calls_for_api(ctx.conn, ctx.service_id, api_id, result["calls"], evidence)
             unit.status = "success"
             outcome.add(unit)
             ctx.any_endpoint_regenerated = True
             ctx.progress.unit_finished(ctx.name, label, "ok")
 
-        apis_repo.prune_apis_not_in(ctx.conn, ctx.service_id, keep_api_keys)
+        ctx.knowledge_writer.prune_endpoints(ctx.service_id, keep_api_keys)
         return outcome
 
 
@@ -628,6 +633,7 @@ def _index_service_unlocked(
     embedding_backend: EmbeddingBackend | None = None,
     depth_provider: DepthProvider | None = None,
     knowledge_reader: KnowledgeReader | None = None,
+    knowledge_writer: KnowledgeWriter | None = None,
 ) -> IndexResult:
     failures_root = failures_root or (Path.home() / ".orbitkb" / "failures")
     progress = progress or NullProgressReporter()
@@ -683,11 +689,13 @@ def _index_service_unlocked(
     index_runs_repo.recover_unfinished_runs(conn, service_id)
     run_id = index_runs_repo.start_index_run(conn, service_id, backend.name)
 
+    knowledge_adapter = LegacyKnowledgeAdapter(conn)
     ctx = IndexContext(
         conn=conn, name=name, root=root, detector=detector, backend=backend, hints=hints,
         component_groups=component_groups, service_id=service_id, is_new=is_new, existing=existing,
         changed=changed, removed=removed, force=force, failures_root=failures_root, progress=progress,
-        knowledge_reader=knowledge_reader if knowledge_reader is not None else LegacyKnowledgeAdapter(conn),
+        knowledge_reader=knowledge_reader if knowledge_reader is not None else knowledge_adapter,
+        knowledge_writer=knowledge_writer if knowledge_writer is not None else knowledge_adapter,
         embedding_backend=embedding_backend,
     )
 
@@ -761,6 +769,7 @@ def index_service(
     repository_id: int | None = None, embedding_backend: EmbeddingBackend | None = None,
     depth_provider: DepthProvider | None = None,
     knowledge_reader: KnowledgeReader | None = None,
+    knowledge_writer: KnowledgeWriter | None = None,
 ) -> IndexResult:
     """Serialize one service identity while retaining independent-service parallelism."""
     lock_key = f"{repository_id if repository_id is not None else 'standalone'}:{name}"
@@ -769,7 +778,7 @@ def index_service(
     try:
         return _index_service_unlocked(
             conn, name, root, detector, backend, force, failures_root, progress,
-            repository_id, embedding_backend, depth_provider, knowledge_reader,
+            repository_id, embedding_backend, depth_provider, knowledge_reader, knowledge_writer,
         )
     finally:
         index_runs_repo.release_service_lock(conn, lock_key)
