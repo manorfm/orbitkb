@@ -208,6 +208,8 @@ The supported deterministic subset is intentionally focused:
 | Cloud/infra | AWS (SQS, SNS, S3, EventBridge, Kinesis), Azure (Blob Storage, Service Bus, Event Hub) and GCP (Pub/Sub) call sites (Go, Java, Kotlin, Node/TS; Python is AWS-only via `boto3`), plus Terraform/CloudFormation/plain Kubernetes declarations, parsed with real grammars (`python-hcl2`, `cfn-flip`) — never keyword matching. A cloud call also produces a `FlowEdge`, visible in `trace_flow`/`describe_entrypoint`, for every language except Python. | GCS, Dockerfile, and unrendered Helm templates are not resolved; Azure Service Bus code facts can't distinguish queue from topic (defaults to queue — see `describe_cloud_dependencies`). |
 | Runtime evidence | Normalized OTel or broker edges | Experimental; payloads, trace IDs and attributes are rejected. |
 
+Kotlin/Spring flow tracing follows a uniquely resolved interface implementation through constructor injection, including controller → use case → gateway → Feign paths.
+
 An optional external depth provider can enrich a selected flow when native resolution
 is insufficient. It is bounded by timeout, edge budget, validation, cache and a local
 circuit breaker; it never injects an opaque whole-repository graph.

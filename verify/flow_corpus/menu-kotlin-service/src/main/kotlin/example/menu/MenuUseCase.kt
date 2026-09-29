@@ -1,5 +1,9 @@
 package example.menu
 
-class MenuUseCase(private val menuGateway: MenuGateway) {
-    fun get(id: String): Menu = menuGateway.fetch(id)
+interface MenuQuery {
+    fun get(id: String): Menu
+}
+
+class MenuUseCase(private val menuGateway: RestaurantGateway) : MenuQuery {
+    override fun get(id: String): Menu = menuGateway.fetch(id)
 }

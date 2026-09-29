@@ -1,7 +1,11 @@
 package example.menu
 
-class MenuGateway(private val restaurantClient: RestaurantClient) {
-    fun fetch(id: String): Menu {
+interface RestaurantGateway {
+    fun fetch(id: String): Menu
+}
+
+class MenuGateway(private val restaurantClient: RestaurantClient) : RestaurantGateway {
+    override fun fetch(id: String): Menu {
         val restaurant = restaurantClient.getRestaurant(id)
         return Menu(id, restaurant.name)
     }

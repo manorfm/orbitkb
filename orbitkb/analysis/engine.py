@@ -1548,8 +1548,23 @@ def _python_call_name(node: ast.expr) -> str | None:
 
 
 def _kotlin_supertypes(class_text: str) -> tuple[str, ...]:
-    match = re.search(r"\bclass\s+\w+\s*:\s*([^\{(]+)", class_text)
-    return tuple(item.strip().split("(", 1)[0] for item in match.group(1).split(",")) if match else ()
+    # The JVM scanner passes the header after the class name. Constructor
+    # parameters can contain colons, so only a colon outside parentheses begins
+    # the supertype list.
+    constructor_depth = 0
+    for index, char in enumerate(class_text):
+        if char == "(":
+            constructor_depth += 1
+        elif char == ")":
+            constructor_depth -= 1
+        elif char == ":" and constructor_depth == 0:
+            supertypes = class_text[index + 1 :]
+            return tuple(
+                match.group(1)
+                for item in supertypes.split(",")
+                if (match := re.match(r"\s*([\w.]+)", item))
+            )
+    return ()
 
 
 def _go_http_contract(declaration: str) -> dict:
