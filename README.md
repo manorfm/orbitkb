@@ -529,6 +529,8 @@ or competing edge remains unresolved.
 Spring Data derived queries also retain their read/write classification when a
 custom repository interface has one local Spring Data implementation. Another
 local implementation leaves that classification unproven.
+Confirmed Spring Data reads and writes appear as persistence boundaries in
+canonical navigation; this does not assign a collection name to the operation.
 An internal evidence composer can select route facts by profile for later prompt
 reduction. It preserves each fact's source, route path, status and content digest,
 and carries navigation boundaries and truncation forward without calling a model.

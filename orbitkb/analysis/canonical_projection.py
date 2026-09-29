@@ -84,9 +84,11 @@ def project_analysis(service: ServiceKey, analysis: AnalysisResult) -> Canonical
     for edge in analysis.edges:
         source = _source(edge.evidence)
         _add_fact(facts, CanonicalFact(
-            id=fact_id(service, "flow_edge", edge.source, edge.target, edge.kind, edge.origin, edge.confidence),
+            id=fact_id(service, "flow_edge", edge.source, edge.target, edge.kind, edge.origin, edge.confidence,
+                       *((edge.boundary_kind,) if edge.boundary_kind else ())),
             kind="flow_edge", subject=SymbolKey(service, edge.source),
-            attributes={"relation": edge.kind, "target": edge.target, "confidence": edge.confidence},
+            attributes={"relation": edge.kind, "target": edge.target, "confidence": edge.confidence,
+                        **({"boundary_kind": edge.boundary_kind} if edge.boundary_kind else {})},
             status=(FactStatus.CONFIRMED if edge.origin == "static" and edge.confidence == "high"
                     else FactStatus.INFERRED),
             origin=edge.origin, sources=(source,),

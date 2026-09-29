@@ -1824,6 +1824,8 @@ interface MongoOrderDAO : OrderRepository, MongoRepository<Order, String>
     assert ("Orders.find", "repository.findByStatus", "reads") in {
         (edge.source, edge.target, edge.kind) for edge in result.edges
     }
+    assert next(edge for edge in result.edges if edge.source == "Orders.find"
+                and edge.target == "repository.findByStatus").boundary_kind == "persistence"
 
 
 def test_java_spring_data_derived_method_on_a_unique_custom_parent_interface(tmp_path: Path):
@@ -1863,6 +1865,7 @@ class ManualOrderRepository : OrderRepository {
 
     assert any(edge.source == "Orders.find" and edge.kind == "invokes"
                and edge.target == "ManualOrderRepository.findByStatus" for edge in result.edges)
+    assert all(edge.boundary_kind is None for edge in result.edges if edge.source == "Orders.find")
 
 
 def test_spring_data_query_operations_require_local_repository_and_modifying_evidence(tmp_path: Path):

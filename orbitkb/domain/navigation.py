@@ -9,6 +9,7 @@ from orbitkb.domain.canonical import (
     CanonicalFact,
     CanonicalSnapshot,
     EntrypointKey,
+    FactStatus,
     SourceReference,
     SymbolKey,
 )
@@ -125,7 +126,14 @@ class KnowledgeNavigator:
                 facts.setdefault(edge.id, edge)
                 paths.setdefault(edge.id, path)
                 if not target or target not in self._by_symbol:
-                    reason = "external_call" if edge.id in self._external_edges else "unresolved"
+                    if edge.id in self._external_edges:
+                        reason = "external_call"
+                    elif (edge.attributes.get("boundary_kind") == "persistence"
+                          and edge.attributes.get("relation") in {"reads", "writes"}
+                          and edge.status is FactStatus.CONFIRMED):
+                        reason = "persistence_call"
+                    else:
+                        reason = "unresolved"
                     boundaries.append(TraversalBoundary(symbol, target, reason, edge.id))
                 elif target in path:
                     boundaries.append(TraversalBoundary(symbol, target, "cycle", edge.id))

@@ -32,6 +32,7 @@ class FlowEdge:
     evidence: Evidence
     confidence: str = "high"
     origin: str = "static"
+    boundary_kind: str | None = None
 
 
 @dataclass(frozen=True)

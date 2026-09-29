@@ -108,6 +108,14 @@ def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
         and edge.kind == "reads"
         for edge in analysis.edges
     )
+    assert ("persistence_call", "billRepository.findByIdAndTableIdAndTableRestaurantId") in {
+        (boundary.reason, boundary.target) for boundary in reached.boundaries
+    }
+    assert not any(
+        boundary.reason == "unresolved"
+        and boundary.target == "billRepository.findByIdAndTableIdAndTableRestaurantId"
+        for boundary in reached.boundaries
+    )
     extension_edges = {
         fact.attributes["target"]: fact
         for fact in reached.facts

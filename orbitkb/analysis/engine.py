@@ -78,7 +78,7 @@ from orbitkb.analysis.resolution import BoundedFlowResolver
 from orbitkb.discovery.scan_helpers import SKIP_DIRS
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "34"
+STATIC_ANALYSIS_INPUT_VERSION = "35"
 
 # Shared with jvm_spring_analyzer.py's Kotlin/Java analyzers, and with
 # _feign_endpoints below (a Feign client's mapping annotation implies the same
@@ -495,7 +495,7 @@ def _classify_spring_data_derived_operations(
         receiver, target_separator, method = edge.target.rpartition(".")
         repository_type = injected_types.get(f"{owner}.{receiver}") if separator and target_separator else None
         kind = _spring_derived_operation_kind(method) if repository_type in repository_types else None
-        classified.append(replace(edge, kind=kind) if kind else edge)
+        classified.append(replace(edge, kind=kind, boundary_kind="persistence") if kind else edge)
     return classified
 
 
@@ -544,7 +544,7 @@ def _classify_spring_data_query_operations(
         receiver, target_separator, method = edge.target.rpartition(".")
         repository_type = injected_types.get(f"{owner}.{receiver}") if separator and target_separator else None
         kind = query_methods.get((repository_type, method))
-        classified.append(replace(edge, kind=kind) if kind else edge)
+        classified.append(replace(edge, kind=kind, boundary_kind="persistence") if kind else edge)
     return classified
 
 

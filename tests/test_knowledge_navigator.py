@@ -140,6 +140,35 @@ def test_external_boundary_requires_unique_edge_and_same_source():
         assert ("unresolved", "client.fetch") in {(item.reason, item.target) for item in result.boundaries}
 
 
+def test_unproven_read_does_not_become_a_persistence_boundary():
+    snapshot = CanonicalSnapshot(SERVICE, (
+        fact(ENTRY.fact_id, "entrypoint", ENTRY),
+        fact("unproven-read", "flow_edge", SymbolKey(SERVICE, ENTRY.symbol),
+             {"relation": "reads", "target": "repository.findByStatus"}),
+    ))
+
+    result = KnowledgeNavigator(snapshot).reachable(ENTRY, TraversalPolicy())
+
+    assert [(boundary.reason, boundary.target) for boundary in result.boundaries] == [
+        ("unresolved", "repository.findByStatus"),
+    ]
+
+
+def test_inferred_persistence_marker_does_not_prove_a_boundary():
+    edge = CanonicalFact(
+        "inferred-read", "flow_edge", SymbolKey(SERVICE, ENTRY.symbol),
+        {"relation": "reads", "target": "repository.findByStatus", "boundary_kind": "persistence"},
+        FactStatus.INFERRED, "codegraph", (SourceReference("Menu.kt", 1, 2),),
+    )
+    snapshot = CanonicalSnapshot(SERVICE, (fact(ENTRY.fact_id, "entrypoint", ENTRY), edge))
+
+    result = KnowledgeNavigator(snapshot).reachable(ENTRY, TraversalPolicy())
+
+    assert [(boundary.reason, boundary.target) for boundary in result.boundaries] == [
+        ("unresolved", "repository.findByStatus"),
+    ]
+
+
 def test_validation_relation_reaches_its_evidence():
     validator = SymbolKey(SERVICE, "MenuValidator.validate")
     controller = SymbolKey(SERVICE, ENTRY.symbol)
