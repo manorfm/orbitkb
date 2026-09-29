@@ -169,6 +169,21 @@ def test_inferred_persistence_marker_does_not_prove_a_boundary():
     ]
 
 
+def test_inferred_redis_publish_does_not_prove_a_boundary():
+    edge = CanonicalFact(
+        "inferred-publish", "flow_edge", SymbolKey(SERVICE, ENTRY.symbol),
+        {"relation": "publishes", "target": "redis.convertAndSend", "boundary_kind": "redis_pubsub"},
+        FactStatus.INFERRED, "codegraph", (SourceReference("Menu.kt", 1, 2),),
+    )
+    snapshot = CanonicalSnapshot(SERVICE, (fact(ENTRY.fact_id, "entrypoint", ENTRY), edge))
+
+    result = KnowledgeNavigator(snapshot).reachable(ENTRY, TraversalPolicy())
+
+    assert [(boundary.reason, boundary.target) for boundary in result.boundaries] == [
+        ("unresolved", "redis.convertAndSend"),
+    ]
+
+
 def test_validation_relation_reaches_its_evidence():
     validator = SymbolKey(SERVICE, "MenuValidator.validate")
     controller = SymbolKey(SERVICE, ENTRY.symbol)

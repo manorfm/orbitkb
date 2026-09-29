@@ -170,7 +170,7 @@ _JAVA_PRIMITIVE_TYPES = r"boolean|byte|char|short|int|long|float|double"
 _JAVA_FIELD_RE = re.compile(
     r"(?m)^[ \t]*(?:@\w+(?:\([^\n]*?\))?[ \t\n]*)*"
     r"(?:(?:public|private|protected|static|final|transient|volatile)[ \t]+)*"
-    rf"(?P<type>(?:{_JAVA_PRIMITIVE_TYPES})\b(?:\[\])?|[A-Z][\w.<>\[\],?]*)"
+    rf"(?P<type>(?:{_JAVA_PRIMITIVE_TYPES})\b(?:\[\])?|[A-Z][\w.<>\[\],?]*(?:[ \t]+[A-Z][\w.<>\[\],?]*)*)"
     r"[ \t]+(?P<name>[a-z_]\w*)[ \t]*(?:=[^;]*)?;"
 )
 
@@ -186,7 +186,8 @@ def _java_class_field_members(
     members = []
     for match in _JAVA_FIELD_RE.finditer(masked):
         line = class_start_line + class_body_text.count("\n", 0, match.start())
-        members.append(DeclaredMember(match.group("name"), _last_type_token(match.group("type")), match.group(0), line))
+        declared_type = match.group("type").split("<", 1)[0].rsplit(".", 1)[-1]
+        members.append(DeclaredMember(match.group("name"), declared_type, match.group(0), line))
     return members
 
 
@@ -221,26 +222,30 @@ def _java_constructor_param_members(
 
 
 def _classify_spring_edges(
-    edges: list[FlowEdge], receivers: engine._SpringPersistenceReceivers, cloud_declarations: dict[str, tuple],
+    edges: list[FlowEdge], receivers: engine._SpringPersistenceReceivers,
+    redis_publishers: frozenset[str], cloud_declarations: dict[str, tuple],
 ) -> tuple[list[FlowEdge], list[CloudFact]]:
     classified = []
     cloud_facts: list[CloudFact] = []
     for edge in edges:
         cloud_kind, cloud_fact = cloud_edge_kind_and_fact(edge.target, edge.evidence, cloud_declarations)
+        redis_receiver, separator, redis_method = edge.target.rpartition(".")
+        redis_publish = bool(separator and redis_receiver in redis_publishers and redis_method == "convertAndSend")
         repository_kind = engine._spring_repository_call_kind(edge.target, receivers.repositories)
         template_kind = (
             engine._spring_jdbc_template_call_kind(edge.target, receivers.jdbc_templates)
             or engine._spring_mongo_template_call_kind(edge.target, receivers.mongo_templates)
             or engine._entity_manager_call_kind(edge.target, receivers.entity_managers)
         )
-        kind = repository_kind or template_kind or cloud_kind
+        kind = repository_kind or template_kind or ("publishes" if redis_publish else None) or cloud_kind
         # Generic name matching is disabled for JVM persistence: `repository.save`
         # is an operation only with a local repository dependency.
         if kind is None and edge.kind in {"reads", "writes"}:
             kind = "invokes"
+        boundary_kind = "redis_pubsub" if redis_publish else "persistence" if template_kind else edge.boundary_kind
         classified.append(FlowEdge(
             edge.source, edge.target, kind or edge.kind, edge.evidence, edge.confidence, edge.origin,
-            boundary_kind="persistence" if template_kind else edge.boundary_kind,
+            boundary_kind=boundary_kind,
         ))
         if cloud_fact is not None:
             cloud_facts.append(cloud_fact)
@@ -366,8 +371,11 @@ class _KotlinSpringAnalyzer:
                     if binding := engine._spring_value_property_binding(class_name, member.name, member.raw_text, evidence):
                         result.configuration_bindings.append(binding)
             persistence_receivers = engine._spring_persistence_receivers(result.injections, class_name)
-            rest_template_receivers = engine._spring_http_client_receivers(result.injections, class_name, "RestTemplate")
-            web_client_receivers = engine._spring_http_client_receivers(result.injections, class_name, "WebClient")
+            rest_template_receivers = engine._spring_injected_receivers(result.injections, class_name, "RestTemplate")
+            web_client_receivers = engine._spring_injected_receivers(result.injections, class_name, "WebClient")
+            redis_publishers = engine._spring_injected_receivers(
+                result.injections, class_name, "StringRedisTemplate", "RedisTemplate",
+            )
             for function_match in find_functions(text, class_match.body_start, class_match.body_end, kotlin=True):
                 symbol = f"{class_name}.{function_match.name}"
                 evidence = Evidence(path.relative_to(root).as_posix(), function_match.start_line, function_match.end_line)
@@ -375,7 +383,9 @@ class _KotlinSpringAnalyzer:
                 result.symbols.append(Symbol(symbol, class_name, function_match.name, evidence,
                                              implements, imports, qualifiers, primary))
                 edges = _jvm_edges_for_text(symbol, function_match, path, root)
-                classified_edges, cloud_facts = _classify_spring_edges(edges, persistence_receivers, cloud_declarations)
+                classified_edges, cloud_facts = _classify_spring_edges(
+                    edges, persistence_receivers, redis_publishers, cloud_declarations,
+                )
                 result.edges.extend(classified_edges)
                 result.cloud_facts.extend(cloud_facts)
                 result.boundaries.extend(_boundaries_for_text(symbol, function_match.modifiers + "\n" + function_match.text, evidence))
@@ -462,14 +472,19 @@ class _JavaSpringAnalyzer:
                 if binding := engine._spring_value_property_binding(class_name, member.name, member.raw_text, evidence):
                     result.configuration_bindings.append(binding)
             persistence_receivers = engine._spring_persistence_receivers(result.injections, class_name)
-            rest_template_receivers = engine._spring_http_client_receivers(result.injections, class_name, "RestTemplate")
-            web_client_receivers = engine._spring_http_client_receivers(result.injections, class_name, "WebClient")
+            rest_template_receivers = engine._spring_injected_receivers(result.injections, class_name, "RestTemplate")
+            web_client_receivers = engine._spring_injected_receivers(result.injections, class_name, "WebClient")
+            redis_publishers = engine._spring_injected_receivers(
+                result.injections, class_name, "StringRedisTemplate", "RedisTemplate",
+            )
             for function_match in functions:
                 symbol = f"{class_name}.{function_match.name}"
                 evidence = Evidence(path.relative_to(root).as_posix(), function_match.start_line, function_match.end_line)
                 result.symbols.append(Symbol(symbol, class_name, function_match.name, evidence, implements, (), qualifiers, primary))
                 edges = _jvm_edges_for_text(symbol, function_match, path, root)
-                classified_edges, cloud_facts = _classify_spring_edges(edges, persistence_receivers, cloud_declarations)
+                classified_edges, cloud_facts = _classify_spring_edges(
+                    edges, persistence_receivers, redis_publishers, cloud_declarations,
+                )
                 result.edges.extend(classified_edges)
                 result.cloud_facts.extend(cloud_facts)
                 result.boundaries.extend(_boundaries_for_text(symbol, function_match.modifiers + "\n" + function_match.text, evidence))

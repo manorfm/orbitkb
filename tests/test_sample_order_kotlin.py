@@ -46,6 +46,13 @@ def test_sample_exposes_a_real_controller_route_without_feign_routes():
     assert "@EnableFeignClients" in hints.entry_excerpt.text
     assert "@EnableRabbit" in hints.entry_excerpt.text
     assert not analysis.message_contracts  # @EnableRabbit does not prove an actual publisher/consumer.
+    assert any(
+        edge.source == "OrderLifecycleEventProducer.itemAdded"
+        and edge.target == "redisTemplate.convertAndSend"
+        and edge.kind == "publishes"
+        and edge.boundary_kind == "redis_pubsub"
+        for edge in analysis.edges
+    )
 
 
 def test_sample_has_source_proven_security_and_catalog_calls():
@@ -112,6 +119,9 @@ def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
         (boundary.reason, boundary.target) for boundary in reached.boundaries
     }
     assert ("persistence_call", "mongoTemplate.execute") in {
+        (boundary.reason, boundary.target) for boundary in reached.boundaries
+    }
+    assert ("redis_publish", "redisTemplate.convertAndSend") in {
         (boundary.reason, boundary.target) for boundary in reached.boundaries
     }
     assert any(edge.source == "BillOrderService.addItem" and edge.target == "BillOrderDAO.add"

@@ -78,7 +78,7 @@ from orbitkb.analysis.resolution import BoundedFlowResolver
 from orbitkb.discovery.scan_helpers import SKIP_DIRS
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "36"
+STATIC_ANALYSIS_INPUT_VERSION = "37"
 
 # Shared with jvm_spring_analyzer.py's Kotlin/Java analyzers, and with
 # _feign_endpoints below (a Feign client's mapping annotation implies the same
@@ -420,16 +420,16 @@ def _spring_persistence_receivers(
     )
 
 
-def _spring_http_client_receivers(
-    injections: list[Injection], class_name: str, client_type: str,
+def _spring_injected_receivers(
+    injections: list[Injection], class_name: str, *type_names: str,
 ) -> frozenset[str]:
-    """Return locally injected members with one explicit HTTP client type."""
+    """Return locally injected members with an explicitly declared type."""
     prefix = f"{class_name}."
     return frozenset(
         injection.consumer.removeprefix(prefix)
         for injection in injections
         if injection.consumer.startswith(prefix)
-        and injection.contract.rsplit(".", 1)[-1] == client_type
+        and injection.contract.split("<", 1)[0].rsplit(".", 1)[-1] in type_names
     )
 
 

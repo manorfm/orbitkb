@@ -132,6 +132,10 @@ class KnowledgeNavigator:
                           and edge.attributes.get("relation") in {"reads", "writes", "invokes"}
                           and edge.status is FactStatus.CONFIRMED):
                         reason = "persistence_call"
+                    elif (edge.attributes.get("boundary_kind") == "redis_pubsub"
+                          and edge.attributes.get("relation") == "publishes"
+                          and edge.status is FactStatus.CONFIRMED):
+                        reason = "redis_publish"
                     else:
                         reason = "unresolved"
                     boundaries.append(TraversalBoundary(symbol, target, reason, edge.id))

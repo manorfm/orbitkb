@@ -636,6 +636,32 @@ def test_spring_analyzers_extract_literal_amqp_publications_with_declared_payloa
         ("orders", "order.created", "OrderCreated", "1"),
         ("payments", "payment.created", "PaymentCreated", None),
     ]
+    assert all(edge.boundary_kind != "redis_pubsub" for edge in result.edges)
+
+
+def test_redis_pubsub_requires_an_injected_redis_template(tmp_path: Path):
+    (tmp_path / "KotlinPublisher.kt").write_text('''class KotlinPublisher(private val redis: StringRedisTemplate) {
+  fun publish(channel: String, event: String) = redis.convertAndSend(channel, event)
+}
+''', encoding="utf-8")
+    (tmp_path / "JavaPublisher.java").write_text('''class JavaPublisher {
+  private final RedisTemplate<String, String> redis;
+  void publish(String event) { redis.convertAndSend("orders", event); }
+}
+''', encoding="utf-8")
+    (tmp_path / "Unproven.kt").write_text('''class Unproven(private val redis: OtherClient) {
+  fun publish(event: String) = redis.convertAndSend("orders", event)
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert {(edge.source, edge.kind, edge.boundary_kind) for edge in result.edges
+            if edge.target == "redis.convertAndSend"} >= {
+        ("KotlinPublisher.publish", "publishes", "redis_pubsub"),
+        ("JavaPublisher.publish", "publishes", "redis_pubsub"),
+        ("Unproven.publish", "invokes", None),
+    }
 
 
 def test_go_analyzer_extracts_literal_amqp_publications_with_declared_payloads(tmp_path: Path):
