@@ -506,6 +506,9 @@ source-backed paths, unresolved or known boundaries, and truncation reasons.
 The navigator is used by `describe_entrypoint` and `describe_error_flow`.
 The latter follows caller and target error evidence through their canonical
 snapshots and reports unresolved or truncated navigation in `unknowns`.
+An internal evidence composer can select route facts by profile for later prompt
+reduction. It preserves each fact's source, route path, status and content digest,
+and carries navigation boundaries and truncation forward without calling a model.
 `describe_entrypoint.boundaries` also reports unresolved local symbols, cycles
 and traversal limits alongside known static boundaries, with source locations
 when the bounded edge is included.
