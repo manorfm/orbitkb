@@ -217,6 +217,42 @@ def test_endpoint_evidence_excludes_excerpts_cut_from_the_prompt_budget(tmp_path
     assert all(json.loads(row["evidence_json"]) == [] for row in apis_repo.list_apis(conn, result.service_id))
 
 
+def test_aggregate_evidence_excludes_main_and_config_excerpts_cut_from_prompts(tmp_path: Path, monkeypatch):
+    from orbitkb.db.repositories import messages as messages_repo
+    from orbitkb.db.repositories import persistence as persistence_repo
+    from orbitkb.discovery.base import CodeExcerpt
+
+    class AbstractedDetector:
+        def __init__(self, detector):
+            self.detector = detector
+            self.id = detector.id
+
+        def collect_hints(self, root):
+            hints = self.detector.collect_hints(root)
+            for hint in hints.persistence:
+                hint.engine_hint = None
+            for hint in hints.messaging:
+                hint.provider_hint = "abstracted"
+            return hints
+
+    monkeypatch.setattr(orchestrator, "MAX_EXCERPT_CHARS", 1)
+    monkeypatch.setattr(
+        orchestrator, "collect_config_excerpts",
+        lambda root: [CodeExcerpt("config.yml", 1, 2, "BROKER_PASSWORD=production-secret-value")],
+    )
+    conn = open_db(tmp_path / "bounded-aggregate-evidence.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    backend = RecordingOrchestratorBackend()
+
+    result = index_service(conn, orders.name, orders.path, AbstractedDetector(orders.detector), backend)
+
+    assert result.status == "ok"
+    for kind in ("persistence", "messaging"):
+        assert backend.prompts_by_kind[kind][0].count("... (truncated, excerpt budget reached)") == 2
+    assert all(json.loads(row["evidence_json"]) == [] for row in persistence_repo.list_persistence(conn, result.service_id))
+    assert all(json.loads(row["evidence_json"]) == [] for row in messages_repo.list_messages(conn, result.service_id))
+
+
 def test_overview_prompt_is_composed_from_the_components_summary(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     backend = RecordingOrchestratorBackend()

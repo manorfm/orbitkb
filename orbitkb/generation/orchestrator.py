@@ -38,7 +38,7 @@ from orbitkb.discovery.walker import ServiceCandidate, discover_services
 from orbitkb.generation.architecture import recompute_architecture_view
 from orbitkb.generation.backend_base import LLMBackend, LLMUsage
 from orbitkb.generation.embeddings import EmbeddingBackend
-from orbitkb.generation.evidence import EvidenceSource
+from orbitkb.generation.evidence import AggregateEvidenceSource, EvidenceSource
 from orbitkb.generation.knowledge import (
     ComponentDocumentation,
     ComponentSummary,
@@ -115,10 +115,6 @@ class NullProgressReporter:
 # ---------------------------------------------------------------------------
 # prompt rendering helpers
 # ---------------------------------------------------------------------------
-
-def _join_excerpts(excerpts: list[CodeExcerpt], max_chars: int = MAX_EXCERPT_CHARS) -> str:
-    return EvidenceSource.from_excerpts(excerpts, max_chars).prompt_text
-
 
 def _evidence_from_excerpts(excerpts: list[CodeExcerpt]) -> list[dict]:
     """Turn discovery excerpts into persistable evidence pointers (file + line range).
@@ -231,16 +227,20 @@ def _persistence_needs_config_evidence(hints: ServiceHints) -> bool:
     return any(p.engine_hint is None for p in hints.persistence)
 
 
-def _render_persistence_prompt(name: str, stack: str, hints: ServiceHints, config_excerpts: list[CodeExcerpt]) -> str:
-    excerpts = [p.excerpt for p in hints.persistence]
+def _render_persistence_prompt(
+    name: str, stack: str, hints: ServiceHints, config_excerpts: list[CodeExcerpt],
+    evidence_source: AggregateEvidenceSource | None = None,
+) -> str:
+    source = evidence_source or AggregateEvidenceSource.from_groups(
+        [p.excerpt for p in hints.persistence], config_excerpts, MAX_EXCERPT_CHARS,
+    )
     engine_hints = "\n".join(
         f"- {p.name_hint} ({p.excerpt.file_path}:{p.excerpt.start_line}): {p.engine_hint or 'unknown'}"
         for p in hints.persistence
     ) or "(none found)"
-    config_evidence = _join_excerpts(config_excerpts) if config_excerpts else "(none found)"
     return load_prompt("persistence").substitute(
-        service_name=name, stack=stack, persistence_excerpts=_join_excerpts(excerpts),
-        engine_hints=engine_hints, config_evidence=config_evidence,
+        service_name=name, stack=stack, persistence_excerpts=source.primary.prompt_text,
+        engine_hints=engine_hints, config_evidence=source.config_text,
     )
 
 
@@ -250,17 +250,21 @@ def _needs_config_evidence(hints: ServiceHints) -> bool:
     return any(m.provider_hint == "abstracted" for m in hints.messaging)
 
 
-def _render_messaging_prompt(name: str, stack: str, hints: ServiceHints, config_excerpts: list[CodeExcerpt]) -> str:
-    excerpts = [m.excerpt for m in hints.messaging]
+def _render_messaging_prompt(
+    name: str, stack: str, hints: ServiceHints, config_excerpts: list[CodeExcerpt],
+    evidence_source: AggregateEvidenceSource | None = None,
+) -> str:
+    source = evidence_source or AggregateEvidenceSource.from_groups(
+        [m.excerpt for m in hints.messaging], config_excerpts, MAX_EXCERPT_CHARS,
+    )
     provider_hints = "\n".join(
         f"- {m.direction} {m.channel_hint} ({m.excerpt.file_path}:{m.excerpt.start_line}): "
         f"{m.provider_hint or 'unknown'}"
         for m in hints.messaging
     ) or "(none found)"
-    config_evidence = _join_excerpts(config_excerpts) if config_excerpts else "(none found)"
     return load_prompt("messaging").substitute(
-        service_name=name, stack=stack, messaging_excerpts=_join_excerpts(excerpts),
-        provider_hints=provider_hints, config_evidence=config_evidence,
+        service_name=name, stack=stack, messaging_excerpts=source.primary.prompt_text,
+        provider_hints=provider_hints, config_evidence=source.config_text,
     )
 
 
@@ -488,7 +492,12 @@ class PersistenceGenerator:
         persistence_config_excerpts = (
             collect_config_excerpts(ctx.root) if _persistence_needs_config_evidence(ctx.hints) else []
         )
-        prompt = _render_persistence_prompt(ctx.name, ctx.detector.id, ctx.hints, persistence_config_excerpts)
+        source = AggregateEvidenceSource.from_groups(
+            [p.excerpt for p in ctx.hints.persistence], persistence_config_excerpts, MAX_EXCERPT_CHARS,
+        )
+        prompt = _render_persistence_prompt(
+            ctx.name, ctx.detector.id, ctx.hints, persistence_config_excerpts, source,
+        )
         generation = generate_with_retry(
             ctx.backend, prompt, load_schema("persistence"), ctx.root, ctx.failures_root, f"{ctx.name}-persistence",
             on_attempt=lambda: unit.record_attempt(ctx),
@@ -501,7 +510,7 @@ class PersistenceGenerator:
                 PersistenceEntity(e["name"], e["kind"], e["engine"], e["fields"])
                 for e in result["entities"]
             ]
-            evidence = _evidence_from_excerpts([p.excerpt for p in ctx.hints.persistence] + persistence_config_excerpts)
+            evidence = source.pointers
             ctx.knowledge_writer.replace_persistence(ctx.service_id, PersistenceDocumentation(entities, evidence))
             unit.status = "success"
             outcome.add(unit)
@@ -532,7 +541,10 @@ class MessagingGenerator:
 
         ctx.progress.unit_started(ctx.name, "messaging")
         config_excerpts = collect_config_excerpts(ctx.root) if _needs_config_evidence(ctx.hints) else []
-        prompt = _render_messaging_prompt(ctx.name, ctx.detector.id, ctx.hints, config_excerpts)
+        source = AggregateEvidenceSource.from_groups(
+            [m.excerpt for m in ctx.hints.messaging], config_excerpts, MAX_EXCERPT_CHARS,
+        )
+        prompt = _render_messaging_prompt(ctx.name, ctx.detector.id, ctx.hints, config_excerpts, source)
         generation = generate_with_retry(
             ctx.backend, prompt, load_schema("messaging"), ctx.root, ctx.failures_root, f"{ctx.name}-messaging",
             on_attempt=lambda: unit.record_attempt(ctx),
@@ -545,7 +557,7 @@ class MessagingGenerator:
                 MessageDocumentation(m["direction"], m["channel"], m["provider"], m["shape"], m["description"])
                 for m in result["messages"]
             ]
-            evidence = _evidence_from_excerpts([m.excerpt for m in ctx.hints.messaging] + config_excerpts)
+            evidence = source.pointers
             ctx.knowledge_writer.replace_messaging(ctx.service_id, MessagingDocumentation(messages, evidence))
             unit.status = "success"
             outcome.add(unit)

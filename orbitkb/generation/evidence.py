@@ -42,3 +42,26 @@ class EvidenceSource:
             })
             total += len(block)
         return cls("\n".join(parts) if parts else "(no excerpts found)", pointers)
+
+
+@dataclass(frozen=True)
+class AggregateEvidenceSource:
+    primary: EvidenceSource
+    configuration: EvidenceSource | None
+
+    @classmethod
+    def from_groups(
+        cls, primary_excerpts: Sequence[SourceExcerpt], config_excerpts: Sequence[SourceExcerpt], max_chars: int,
+    ) -> "AggregateEvidenceSource":
+        return cls(
+            EvidenceSource.from_excerpts(primary_excerpts, max_chars),
+            EvidenceSource.from_excerpts(config_excerpts, max_chars) if config_excerpts else None,
+        )
+
+    @property
+    def config_text(self) -> str:
+        return self.configuration.prompt_text if self.configuration else "(none found)"
+
+    @property
+    def pointers(self) -> list[dict]:
+        return [*self.primary.pointers, *(self.configuration.pointers if self.configuration else [])]
