@@ -9,6 +9,8 @@ from orbitkb.domain.canonical import (
     CanonicalSnapshot,
     EntrypointKey,
     FactStatus,
+    MessageChannelKey,
+    PersistenceResourceKey,
     RoutePatternKey,
     ServiceKey,
     SourceReference,
@@ -106,5 +108,30 @@ def project_analysis(service: ServiceKey, analysis: AnalysisResult) -> Canonical
                         "public_code": error.public_code, "exposes_internal_detail": error.exposes_internal_detail,
                         "retryability": error.retryability},
             status=FactStatus.CONFIRMED, origin="static", sources=(source,),
+        ))
+    for message in analysis.message_contracts:
+        _add_fact(facts, CanonicalFact(
+            id=fact_id(service, "message_contract", message.direction, message.channel, message.routing_key,
+                       message.payload_type, message.message_version),
+            kind="message_contract", subject=MessageChannelKey(service, message.channel),
+            attributes={"direction": message.direction, "routing_key": message.routing_key,
+                        "payload_type": message.payload_type, "message_version": message.message_version},
+            status=FactStatus.CONFIRMED, origin="static", sources=(_source(message.evidence),),
+        ))
+    for resource in analysis.persistence_facts:
+        _add_fact(facts, CanonicalFact(
+            id=fact_id(service, "persistence_resource", resource.kind, resource.name, resource.owner),
+            kind="persistence_resource", subject=PersistenceResourceKey(service, resource.kind, resource.name),
+            attributes={"owner": resource.owner},
+            status=FactStatus.CONFIRMED, origin="static", sources=(_source(resource.evidence),),
+        ))
+    for migration in analysis.migration_facts:
+        _add_fact(facts, CanonicalFact(
+            id=fact_id(service, "migration", migration.table_name, migration.operation, migration.column_name,
+                       migration.destructive),
+            kind="migration", subject=PersistenceResourceKey(service, "sql_table", migration.table_name),
+            attributes={"operation": migration.operation, "column_name": migration.column_name,
+                        "destructive": migration.destructive},
+            status=FactStatus.CONFIRMED, origin="static", sources=(_source(migration.evidence),),
         ))
     return CanonicalSnapshot(service, tuple(facts.values()))

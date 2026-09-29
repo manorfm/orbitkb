@@ -485,8 +485,9 @@ and reconstruction when that digest is unchanged. It still reads those inputs to
 calculate the digest. `--force`, external depth enrichment, or a source change during
 analysis bypasses or withholds snapshot reuse, preserving correctness over speed.
 The canonical projection converts entrypoints, flow edges, service calls,
-configuration keys, security requirements and error contracts from
-`AnalysisResult` into language-neutral facts with stable IDs and source locations.
+configuration keys, security requirements, error contracts, message contracts,
+persistence resources and migration declarations from `AnalysisResult` into
+language-neutral facts with stable IDs and source locations.
 It keeps the known origin and confidence, and marks custom authorization logic
 as unknown rather than interpreting its behavior.
 This projection is currently internal; indexing and exports still use the existing

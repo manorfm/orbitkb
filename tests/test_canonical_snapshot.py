@@ -12,10 +12,20 @@ from orbitkb.analysis.models import (
     ErrorContract,
     Evidence,
     FlowEdge,
+    MessageContract,
+    MigrationFact,
+    PersistenceFact,
     SecurityRequirement,
     StaticServiceCall,
 )
-from orbitkb.domain.canonical import FactStatus, RoutePatternKey, ServiceKey, SymbolKey
+from orbitkb.domain.canonical import (
+    FactStatus,
+    MessageChannelKey,
+    PersistenceResourceKey,
+    RoutePatternKey,
+    ServiceKey,
+    SymbolKey,
+)
 
 
 def test_entrypoint_projection_has_stable_identity_and_preserves_sources():
@@ -184,3 +194,44 @@ def test_security_projection_rejects_rule_without_exactly_one_subject():
 
     with pytest.raises(ValueError, match="security requirement subject"):
         project_analysis(ServiceKey("menu-manager"), AnalysisResult(security_requirements=[invalid]))
+
+
+def test_message_and_persistence_projection_preserves_contracts_and_sources():
+    analysis = AnalysisResult(
+        message_contracts=[
+            MessageContract("publishes", "menus", "created", "MenuCreated", Evidence("Publisher.kt", 5, 5), "2"),
+            MessageContract("publishes", "menus", "created", "MenuCreated", Evidence("Publisher.kt", 8, 8), "2"),
+            MessageContract("consumes", "menus", None, "MenuCreated", Evidence("Listener.kt", 3, 3), "2"),
+        ],
+        persistence_facts=[
+            PersistenceFact("menu", "sql_table", "Menu", Evidence("Menu.kt", 1, 4)),
+            PersistenceFact("menu", "sql_table", "Menu", Evidence("Schema.sql", 10, 12)),
+        ],
+        migration_facts=[
+            MigrationFact("add_column", "menu", "published", False, Evidence("V2.sql", 2, 2)),
+            MigrationFact("drop_column", "menu", "legacy", True, Evidence("V3.sql", 3, 3)),
+        ],
+    )
+
+    snapshot = project_analysis(ServiceKey("menu-manager"), analysis)
+
+    assert len(snapshot.facts) == 5
+    published, consumed, resource, added, dropped = snapshot.facts
+    assert (published.kind, published.subject, published.attributes) == (
+        "message_contract", MessageChannelKey(ServiceKey("menu-manager"), "menus"),
+        {"direction": "publishes", "routing_key": "created", "payload_type": "MenuCreated", "message_version": "2"},
+    )
+    assert len(published.sources) == 2
+    assert consumed.attributes["direction"] == "consumes" and consumed.id != published.id
+    assert (resource.kind, resource.subject, resource.attributes) == (
+        "persistence_resource", PersistenceResourceKey(ServiceKey("menu-manager"), "sql_table", "menu"),
+        {"owner": "Menu"},
+    )
+    assert len(resource.sources) == 2
+    assert (added.kind, added.subject, added.attributes) == (
+        "migration", resource.subject,
+        {"operation": "add_column", "column_name": "published", "destructive": False},
+    )
+    assert dropped.attributes["destructive"] is True and dropped.id != added.id
+    assert project_analysis(ServiceKey("menu-manager"), AnalysisResult(message_contracts=[analysis.message_contracts[1]])
+                            ).facts[0].id == published.id

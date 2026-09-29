@@ -53,6 +53,19 @@ class RoutePatternKey:
 
 
 @dataclass(frozen=True)
+class MessageChannelKey:
+    service: ServiceKey
+    channel: str
+
+
+@dataclass(frozen=True)
+class PersistenceResourceKey:
+    service: ServiceKey
+    kind: str
+    name: str
+
+
+@dataclass(frozen=True)
 class SourceReference:
     file_path: str
     start_line: int
@@ -70,7 +83,7 @@ class FactStatus(str, Enum):
 class CanonicalFact:
     id: str
     kind: str
-    subject: EntrypointKey | SymbolKey | RoutePatternKey
+    subject: EntrypointKey | SymbolKey | RoutePatternKey | MessageChannelKey | PersistenceResourceKey
     attributes: dict
     status: FactStatus
     origin: str
