@@ -839,6 +839,7 @@ CREATE TABLE IF NOT EXISTS index_run_units (
     llm_invocations     INTEGER NOT NULL CHECK (llm_invocations >= 0),
     input_tokens        INTEGER,
     output_tokens       INTEGER,
+    cached_input_tokens INTEGER,
     cost_usd            REAL,
     backend_duration_ms REAL NOT NULL CHECK (backend_duration_ms >= 0),
     PRIMARY KEY (run_id, unit_kind, unit_key)

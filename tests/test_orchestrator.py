@@ -530,6 +530,22 @@ def test_per_unit_usage_tracks_success_and_incremental_skips_with_stable_opaque_
         )
 
 
+def test_per_unit_usage_preserves_reported_cache_tokens(tmp_path: Path):
+    class CachedBackend(FakeOrchestratorBackend):
+        def generate(self, prompt: str, schema: dict, cwd: Path) -> GenerationOutcome:
+            outcome = super().generate(prompt, schema, cwd)
+            return GenerationOutcome(structured=outcome.structured, usage=LLMUsage(cached_input_tokens=7))
+
+    conn = open_db(tmp_path / "cached-units.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    result = index_service(conn, orders.name, orders.path, orders.detector, CachedBackend())
+    run = index_runs_repo.recent_index_runs(conn, result.service_id, limit=1)[0]
+    units = index_runs_repo.list_run_units(conn, run["id"])
+
+    assert sum(unit["cached_input_tokens"] for unit in units) == result.llm_invocations * 7
+    assert all(unit["cached_input_tokens"] is None for unit in units if unit["status"] == "skipped")
+
+
 def test_failed_unit_keeps_retry_count_and_unknown_cost(tmp_path: Path):
     conn = open_db(tmp_path / "failed-units.db")
     orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")

@@ -346,7 +346,8 @@ def _cmd_status(args: argparse.Namespace) -> int:
                     print(
                         f"      unit {unit['unit_kind']} key={unit['unit_key']} "
                         f"status={unit['status']} attempts={unit['llm_invocations']} "
-                        f"tokens=(in={unit['input_tokens']},out={unit['output_tokens']}) "
+                        f"tokens=(in={unit['input_tokens']},out={unit['output_tokens']},"
+                        f"cached={unit['cached_input_tokens']}) "
                         f"cost_usd={unit['cost_usd']} backend_duration_ms={unit['backend_duration_ms']}"
                     )
         totals = index_runs_repo.usage_totals(conn, row["id"])

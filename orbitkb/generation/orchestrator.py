@@ -706,7 +706,7 @@ def _index_service_unlocked(
             index_runs_repo.record_run_unit(
                 conn, run_id, service_id, unit.kind, unit.identity, unit.status,
                 unit.llm_invocations, unit.usage.input_tokens, unit.usage.output_tokens,
-                unit.usage.cost_usd, unit.backend_duration_ms,
+                unit.usage.cost_usd, unit.backend_duration_ms, unit.usage.cached_input_tokens,
             )
         index_runs_repo.record_unit_usage(
             conn, run_id, generator.kind, outcome.llm_calls,

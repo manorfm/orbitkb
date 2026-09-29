@@ -502,6 +502,8 @@ store endpoint names, paths, prompts or source code; older runs have no per-kind
 breakdown.
 Use `orbitkb status <service> --units` to inspect each unit's `skipped`,
 `success` or `failed` state, backend attempts, reported usage and duration.
+Reported cache-read input tokens are shown per unit when available; historical
+rows retain an unknown value.
 Unit keys are database-local HMAC values, stable across runs in that database;
 the telemetry table contains no route, file, symbol, prompt or source text.
 Runs recorded before per-unit telemetry have no unit rows.
