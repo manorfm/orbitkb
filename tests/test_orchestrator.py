@@ -159,6 +159,9 @@ def test_index_service_uses_injected_knowledge_reader_for_component_prompts(tmp_
         def __init__(self):
             self.service_ids: list[int] = []
 
+        def endpoint_keys(self, service_id: int) -> set[tuple[str, str]]:
+            return set()
+
         def api_summaries(self, service_id: int) -> dict[tuple[str, str], str]:
             self.service_ids.append(service_id)
             return {("GET", "/orders/{order_id}"): "Summary from the reader"}
@@ -178,6 +181,29 @@ def test_index_service_uses_injected_knowledge_reader_for_component_prompts(tmp_
     assert any("Summary from the reader" in prompt for prompt in backend.prompts_by_kind["component"])
 
 
+def test_injected_reader_controls_endpoint_regeneration_without_file_changes(tmp_path: Path):
+    from orbitkb.generation.legacy_knowledge import LegacyKnowledgeAdapter
+
+    class MissingRoutesReader(LegacyKnowledgeAdapter):
+        def endpoint_keys(self, service_id: int) -> set[tuple[str, str]]:
+            return set()
+
+    conn = open_db(tmp_path / "reader-routes.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    first = index_service(conn, orders.name, orders.path, orders.detector, FakeOrchestratorBackend())
+    backend = FakeOrchestratorBackend()
+
+    second = index_service(
+        conn, orders.name, orders.path, orders.detector, backend,
+        knowledge_reader=MissingRoutesReader(conn),
+    )
+
+    assert first.status == second.status == "ok"
+    assert second.files_changed == 0
+    assert second.llm_invocations == backend.calls
+    assert second.llm_calls == 5  # four routes plus the overview they refresh
+
+
 def test_overview_prompt_is_composed_from_the_components_summary(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     backend = RecordingOrchestratorBackend()
@@ -191,6 +217,9 @@ def test_index_service_uses_injected_component_summaries_for_overview(tmp_path: 
     from orbitkb.generation.knowledge import ComponentSummary
 
     class StubReader:
+        def endpoint_keys(self, service_id: int) -> set[tuple[str, str]]:
+            return set()
+
         def api_summaries(self, service_id: int) -> dict[tuple[str, str], str]:
             return {}
 

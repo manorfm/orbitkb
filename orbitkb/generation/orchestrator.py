@@ -10,7 +10,6 @@ from typing import Protocol
 from orbitkb.analysis.depth import DepthProvider, NoopDepthProvider
 from orbitkb.analysis.engine import STATIC_ANALYSIS_INPUT_VERSION, StaticAnalysisEngine
 from orbitkb.ci.scanner import scan_github_actions_commands
-from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import ci_commands as ci_commands_repo
 from orbitkb.db.repositories import cloud_iac as cloud_iac_repo
 from orbitkb.db.repositories import components as components_repo
@@ -360,14 +359,14 @@ class EndpointGenerator:
 
     def run(self, ctx: IndexContext) -> UnitOutcome:
         outcome = UnitOutcome()
+        existing_keys = ctx.knowledge_reader.endpoint_keys(ctx.service_id)
         keep_api_keys: set[tuple[str, str]] = set()
         for endpoint in ctx.hints.endpoints:
             key = (endpoint.method, endpoint.path)
             unit = UnitMeasurement(self.kind, key)
             keep_api_keys.add(key)
-            existing_api = apis_repo.get_api_by_key(ctx.conn, ctx.service_id, *key)
             dep_files = endpoint.dependency_files()
-            needs_regen = ctx.force or existing_api is None or bool(dep_files & ctx.changed)
+            needs_regen = ctx.force or key not in existing_keys or bool(dep_files & ctx.changed)
             label = f"{endpoint.method} {endpoint.path}"
             if not needs_regen:
                 outcome.add(unit)

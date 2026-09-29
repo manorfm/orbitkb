@@ -16,6 +16,9 @@ class LegacyKnowledgeAdapter:
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
 
+    def endpoint_keys(self, service_id: int) -> set[RouteKey]:
+        return apis_repo.list_api_keys(self._conn, service_id)
+
     def api_summaries(self, service_id: int) -> dict[RouteKey, str]:
         return {
             (row["method"], row["path"]): row["summary"]

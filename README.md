@@ -516,6 +516,8 @@ Endpoint generation writes the API, its validations and outbound calls through
 `KnowledgeWriter`; the default adapter uses the existing SQLite repositories.
 Those three writes are atomic for each endpoint, including when indexing runs
 inside an existing database transaction.
+The reader obtains existing endpoint keys in one query per service before
+deciding which routes need regeneration.
 
 Architecture rules have fact-mutation tests for cycles and fan-out (both at
 service level and their intra-service component analog), shared storage,
