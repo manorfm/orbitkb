@@ -154,6 +154,27 @@ def test_components_are_synthesized_from_endpoint_summaries_not_raw_code(tmp_pat
     assert all(c["summary"] == "Fake component summary." for c in components)
 
 
+def test_index_service_uses_injected_knowledge_reader_for_component_prompts(tmp_path: Path):
+    class StubReader:
+        def __init__(self):
+            self.service_ids: list[int] = []
+
+        def api_summaries(self, service_id: int) -> dict[tuple[str, str], str]:
+            self.service_ids.append(service_id)
+            return {("GET", "/orders/{order_id}"): "Summary from the reader"}
+
+    conn = open_db(tmp_path / "injected-reader.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    backend = RecordingOrchestratorBackend()
+    reader = StubReader()
+
+    result = index_service(conn, orders.name, orders.path, orders.detector, backend, knowledge_reader=reader)
+
+    assert result.status == "ok"
+    assert reader.service_ids == [result.service_id]
+    assert any("Summary from the reader" in prompt for prompt in backend.prompts_by_kind["component"])
+
+
 def test_overview_prompt_is_composed_from_the_components_summary(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     backend = RecordingOrchestratorBackend()

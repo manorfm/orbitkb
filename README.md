@@ -507,6 +507,10 @@ rows retain an unknown value.
 Unit keys are database-local HMAC values, stable across runs in that database;
 the telemetry table contains no route, file, symbol, prompt or source text.
 Runs recorded before per-unit telemetry have no unit rows.
+Component prompts read API summaries through a small `KnowledgeReader` contract;
+the default `LegacyKnowledgeAdapter` reads the existing SQLite rows. Indexing
+continues to generate endpoints before components and accepts an injected reader
+for alternate views or isolated tests.
 
 Architecture rules have fact-mutation tests for cycles and fan-out (both at
 service level and their intra-service component analog), shared storage,

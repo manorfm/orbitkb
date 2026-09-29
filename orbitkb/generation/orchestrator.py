@@ -42,6 +42,8 @@ from orbitkb.discovery.walker import ServiceCandidate, discover_services
 from orbitkb.generation.architecture import recompute_architecture_view
 from orbitkb.generation.backend_base import LLMBackend, LLMUsage
 from orbitkb.generation.embeddings import EmbeddingBackend
+from orbitkb.generation.knowledge import KnowledgeReader, compose_endpoint_summaries
+from orbitkb.generation.legacy_knowledge import LegacyKnowledgeAdapter
 from orbitkb.generation.llm_harness import generate_with_retry, load_prompt, load_schema
 from orbitkb.iac.scanner import scan_repository_facts
 from orbitkb.security.findings import find_security_findings
@@ -329,6 +331,7 @@ class IndexContext:
     force: bool
     failures_root: Path
     progress: ProgressReporter
+    knowledge_reader: KnowledgeReader
     embedding_backend: EmbeddingBackend | None = None
     any_endpoint_regenerated: bool = False
     any_component_regenerated: bool = False
@@ -406,9 +409,7 @@ class ComponentGenerator:
 
     def run(self, ctx: IndexContext) -> UnitOutcome:
         outcome = UnitOutcome()
-        current_apis_by_key = {
-            (row["method"], row["path"]): row for row in apis_repo.list_apis(ctx.conn, ctx.service_id)
-        }
+        api_summaries = ctx.knowledge_reader.api_summaries(ctx.service_id)
         keep_component_keys: set[tuple[str, str]] = set()
         for component_name, group in ctx.component_groups.items():
             component_file = group[0].excerpt.file_path
@@ -424,15 +425,9 @@ class ComponentGenerator:
                 ctx.progress.unit_finished(ctx.name, label, "skipped")
                 continue
             ctx.progress.unit_started(ctx.name, label)
-            summary_lines = []
-            summarized_routes: set[tuple[str, str]] = set()
-            for endpoint in group:
-                route_key = (endpoint.method, endpoint.path)
-                api_row = current_apis_by_key.get(route_key)
-                if api_row is not None and route_key not in summarized_routes:
-                    summary_lines.append(f"- {endpoint.method} {endpoint.path}: {api_row['summary']}")
-                    summarized_routes.add(route_key)
-            endpoint_summaries = "\n".join(summary_lines) or "(no endpoint summaries available yet)"
+            endpoint_summaries = compose_endpoint_summaries(
+                [(endpoint.method, endpoint.path) for endpoint in group], api_summaries,
+            )
             prompt = _render_component_prompt(ctx.name, component_name, component_file, endpoint_summaries)
             generation = generate_with_retry(
                 ctx.backend, prompt, load_schema("component"), ctx.root, ctx.failures_root,
@@ -630,6 +625,7 @@ def _index_service_unlocked(
     repository_id: int | None = None,
     embedding_backend: EmbeddingBackend | None = None,
     depth_provider: DepthProvider | None = None,
+    knowledge_reader: KnowledgeReader | None = None,
 ) -> IndexResult:
     failures_root = failures_root or (Path.home() / ".orbitkb" / "failures")
     progress = progress or NullProgressReporter()
@@ -689,6 +685,7 @@ def _index_service_unlocked(
         conn=conn, name=name, root=root, detector=detector, backend=backend, hints=hints,
         component_groups=component_groups, service_id=service_id, is_new=is_new, existing=existing,
         changed=changed, removed=removed, force=force, failures_root=failures_root, progress=progress,
+        knowledge_reader=knowledge_reader if knowledge_reader is not None else LegacyKnowledgeAdapter(conn),
         embedding_backend=embedding_backend,
     )
 
@@ -761,6 +758,7 @@ def index_service(
     force: bool = False, failures_root: Path | None = None, progress: ProgressReporter | None = None,
     repository_id: int | None = None, embedding_backend: EmbeddingBackend | None = None,
     depth_provider: DepthProvider | None = None,
+    knowledge_reader: KnowledgeReader | None = None,
 ) -> IndexResult:
     """Serialize one service identity while retaining independent-service parallelism."""
     lock_key = f"{repository_id if repository_id is not None else 'standalone'}:{name}"
@@ -769,7 +767,7 @@ def index_service(
     try:
         return _index_service_unlocked(
             conn, name, root, detector, backend, force, failures_root, progress,
-            repository_id, embedding_backend, depth_provider,
+            repository_id, embedding_backend, depth_provider, knowledge_reader,
         )
     finally:
         index_runs_repo.release_service_lock(conn, lock_key)
