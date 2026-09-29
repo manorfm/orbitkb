@@ -484,6 +484,10 @@ OpenAPI, Protobuf and supported migrations) and skips AST parsing, flow replacem
 and reconstruction when that digest is unchanged. It still reads those inputs to
 calculate the digest. `--force`, external depth enrichment, or a source change during
 analysis bypasses or withholds snapshot reuse, preserving correctness over speed.
+The first canonical projection converts static entrypoints from `AnalysisResult`
+into language-neutral facts with stable IDs and all source locations retained.
+This projection is currently internal; indexing and exports still use the existing
+SQLite representation.
 For Spring indexing, class-level `@RequestMapping` declarations are not separate
 endpoint generation units; handler mappings create those units with the class path
 prefix included.
