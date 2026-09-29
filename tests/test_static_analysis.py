@@ -3868,6 +3868,36 @@ class Flow {
     ]
 
 
+def test_kotlin_local_from_explicit_method_return_is_an_inferred_flow_path(tmp_path: Path):
+    (tmp_path / "Flow.kt").write_text('''class Bill { fun isOpen() = true }
+class BillService {
+  fun get(): Bill = Bill()
+  fun unknown() = Bill()
+}
+class Flow(private val service: BillService) {
+  fun check(): Boolean {
+    val bill = service.get()
+    return bill.isOpen()
+  }
+  fun unknown(): Boolean {
+    val bill = service.unknown()
+    return bill.isOpen()
+  }
+  fun chained(): Boolean {
+    val bill = service.get().copy()
+    return bill.isOpen()
+  }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Flow.check" and edge.target == "Bill.isOpen" and edge.confidence == "medium"
+               for edge in result.edges)
+    assert any(edge.source == "Flow.unknown" and edge.target == "bill.isOpen" for edge in result.edges)
+    assert any(edge.source == "Flow.chained" and edge.target == "bill.isOpen" for edge in result.edges)
+
+
 def test_java_interface_injection_resolves_a_unique_implementation_method(tmp_path: Path):
     (tmp_path / "OrdersController.java").write_text(
         '''class OrdersController {

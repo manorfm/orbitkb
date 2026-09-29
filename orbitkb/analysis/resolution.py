@@ -36,12 +36,54 @@ class BoundedFlowResolver:
         }
         qualifiers = {injection.consumer: injection.qualifier for injection in result.injections}
         injections.update({injection.consumer: injection.contract for injection in result.injections})
-        result.edges = [
+        original_edges = result.edges
+        resolved_edges = [
             self._resolve_edge(edge, symbols, implementations, injections, qualifiers, implementation_types,
                                overloaded)
-            for edge in result.edges
+            for edge in original_edges
         ]
+        local_types = self._local_return_types(symbols, overloaded, original_edges, resolved_edges)
+        result.edges = [self._resolve_local_edge(edge, local_types.get(edge.source, {}), implementations)
+                        for edge in resolved_edges]
         return result
+
+    @staticmethod
+    def _local_return_types(
+        symbols: dict[str, Symbol], overloaded: set[str], original_edges: list[FlowEdge],
+        resolved_edges: list[FlowEdge],
+    ) -> dict[str, dict[str, tuple[str, int]]]:
+        calls: dict[tuple[str, str, int], list[FlowEdge]] = {}
+        for original, resolved in zip(original_edges, resolved_edges, strict=True):
+            calls.setdefault((original.source, original.target, original.evidence.start_line), []).append(resolved)
+        bindings: dict[str, dict[str, tuple[str, int]]] = {}
+        for symbol in symbols.values():
+            if symbol.name in overloaded:
+                continue
+            names = [name for name, _, _ in symbol.local_assignments]
+            for name, callee, line in symbol.local_assignments:
+                if names.count(name) != 1:
+                    continue
+                matches = calls.get((symbol.name, callee, line), ())
+                if len(matches) != 1 or matches[0].confidence != "high":
+                    continue
+                target = symbols.get(matches[0].target)
+                if target is not None and target.return_type and target.name not in overloaded:
+                    bindings.setdefault(symbol.name, {})[name] = (target.return_type, line)
+        return bindings
+
+    @staticmethod
+    def _resolve_local_edge(
+        edge: FlowEdge, bindings: dict[str, tuple[str, int]], implementations: set[str],
+    ) -> FlowEdge:
+        if edge.kind != "invokes" or edge.target in implementations:
+            return edge
+        receiver, separator, method = edge.target.rpartition(".")
+        binding = bindings.get(receiver) if separator else None
+        if binding is None or binding[1] >= edge.evidence.start_line:
+            return edge
+        type_name = binding[0].split("<", 1)[0].rsplit(".", 1)[-1]
+        candidate = f"{type_name}.{method}"
+        return replace(edge, target=candidate, confidence="medium") if candidate in implementations else edge
 
     @staticmethod
     def _implementation_types(symbols: Iterable[Symbol]) -> dict[str, set[str]]:

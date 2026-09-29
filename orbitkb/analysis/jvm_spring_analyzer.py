@@ -54,6 +54,10 @@ from orbitkb.analysis.models import (
 _REQUEST_HEADER_RE = re.compile(r'@RequestHeader\s*\(\s*(?:(?:name|value)\s*=\s*)?"(?P<name>[^"]+)"')
 _HANDLER_MAPPING_RE = re.compile(r"@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\b")
 _RESPONSE_HEADER_CALL_RE = re.compile(r'\.header\s*\(\s*"(?P<name>[^"]+)"')
+_DIRECT_LOCAL_CALL_RE = re.compile(
+    r"(?m)^[ \t]*val[ \t]+(?P<name>[A-Za-z_]\w*)[ \t]*=[ \t]*"
+    r"(?P<callee>[A-Za-z_]\w*\.[A-Za-z_]\w*)[ \t]*\("
+)
 # `ResponseEntity.BodyBuilder`'s own named header setters -- a fixed, well-known
 # Spring API surface, not a guess: calling `.eTag(...)` always sets the `ETag`
 # header, regardless of the (often computed) argument, same as the generic
@@ -265,6 +269,23 @@ def _jvm_edges_for_text(symbol: str, function_match: FunctionMatch, path: Path, 
     return edges
 
 
+def _direct_kotlin_local_assignments(function_match: FunctionMatch) -> tuple[tuple[str, str, int], ...]:
+    body = function_match.text[function_match.body_offset:]
+    assignments = []
+    for match in _DIRECT_LOCAL_CALL_RE.finditer(body):
+        closing = find_matching_paren(body, match.end() - 1)
+        if closing < 0:
+            continue
+        tail = body[closing + 1:]
+        if tail.split("\n", 1)[0].strip() not in {"", ";"}:
+            continue
+        if re.match(r"[^\S\n]*\n[ \t]*(?:\.|\?\.|!!)", tail):
+            continue
+        line = function_match.start_line + function_match.text.count("\n", 0, function_match.body_offset + match.start())
+        assignments.append((match.group("name"), match.group("callee"), line))
+    return tuple(assignments)
+
+
 def _kotlin_extension_imports(text: str, function_match: FunctionMatch) -> tuple[tuple[str, str], ...]:
     """Map calls on typed parameters to explicitly imported extension declarations."""
     imports = parse_jvm_imports(text)
@@ -380,11 +401,14 @@ class _KotlinSpringAnalyzer:
                 symbol = f"{class_name}.{function_match.name}"
                 evidence = Evidence(path.relative_to(root).as_posix(), function_match.start_line, function_match.end_line)
                 imports = _kotlin_extension_imports(text, function_match)
-                result.symbols.append(Symbol(symbol, class_name, function_match.name, evidence,
-                                             implements, imports, qualifiers, primary,
-                                             tuple(engine._declared_parameter_types(
-                                                 function_match.text[:function_match.body_offset], kotlin=True,
-                                             ).items())))
+                signature = function_match.text[:function_match.body_offset]
+                result.symbols.append(Symbol(
+                    symbol, class_name, function_match.name, evidence,
+                    implements, imports, qualifiers, primary,
+                    parameters=tuple(engine._declared_parameter_types(signature, kotlin=True).items()),
+                    return_type=engine._spring_return_type(signature, kotlin=True),
+                    local_assignments=_direct_kotlin_local_assignments(function_match),
+                ))
                 edges = _jvm_edges_for_text(symbol, function_match, path, root)
                 classified_edges, cloud_facts = _classify_spring_edges(
                     edges, persistence_receivers, redis_publishers, cloud_declarations,

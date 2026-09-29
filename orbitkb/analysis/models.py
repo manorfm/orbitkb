@@ -48,6 +48,8 @@ class Symbol:
     qualifiers: tuple[str, ...] = ()
     primary: bool = False
     parameters: tuple[tuple[str, str], ...] = ()
+    return_type: str | None = None
+    local_assignments: tuple[tuple[str, str, int], ...] = ()
 
 
 @dataclass(frozen=True)

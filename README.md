@@ -534,6 +534,9 @@ ambiguous declarations remain unresolved.
 Kotlin and Java calls on explicitly typed method parameters also resolve to a
 unique local method as possible paths; local variables without a proven type
 remain unresolved.
+For Kotlin, an immutable local assigned directly from a uniquely resolved method
+with an explicit return type can also add an inferred flow path. Chained calls
+and methods without a declared return type do not supply that link.
 When a source location has exactly one call edge and one proven outbound service
 call, navigation reports that edge as an external boundary. A different source
 or competing edge remains unresolved.

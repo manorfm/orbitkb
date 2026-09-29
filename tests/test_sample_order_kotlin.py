@@ -148,6 +148,8 @@ def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
     }
     assert any(edge.source == "BillOrderService.addItem" and edge.target == "Bill.add"
                for edge in analysis.edges)
+    assert any(edge.source == "AddItemUserCase.add" and edge.target == "Bill.isOpen"
+               and edge.confidence == "medium" for edge in analysis.edges)
     assert any(edge.source == "FetchItemMediator.get" and edge.target == "ItemDTO.hasChange"
                for edge in analysis.edges)
     assert any(edge.source == "BillOrderService.addItem" and edge.target == "BillOrderDAO.add"
