@@ -102,6 +102,14 @@ def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
         "/venues/{restaurantId}/ingredients/{ingredientId}",
     }
     assert all("FetchItemMediator.get" in reached.path_to(call.id) for call in catalog_calls)
+    extension_edges = {
+        fact.attributes["target"]: fact
+        for fact in reached.facts
+        if fact.kind == "flow_edge" and fact.subject.name == "BillOrderController.addItem"
+    }
+    assert any(target.endswith(".Jwt.getUserId") for target in extension_edges)
+    assert any(target.endswith(".ItemIn.toDTO") for target in extension_edges)
+    assert not any(boundary.target in {"jwt.getUserId", "itemIn.toDTO"} for boundary in reached.boundaries)
 
     sufficiency = route_sufficiency(snapshot, "POST", ROUTE)
     assert sufficiency is not None

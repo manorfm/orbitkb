@@ -1636,6 +1636,75 @@ def test_kotlin_analyzer_resolves_a_bounded_flow_across_injected_classes(tmp_pat
     }
 
 
+def test_kotlin_imported_extension_requires_a_unique_matching_receiver(tmp_path: Path):
+    (tmp_path / "OrdersController.kt").write_text('''package example.web
+import example.mapping.toDTO
+class OrdersController {
+  @PostMapping("/orders")
+  fun create(input: OrderIn, other: OtherIn) = input.toDTO()
+  fun skip(input: OtherIn) = input.toDTO()
+}
+''', encoding="utf-8")
+    (tmp_path / "OrderMapper.kt").write_text('''package example.mapping
+fun OrderIn.toDTO() = OrderDTO()
+''', encoding="utf-8")
+    (tmp_path / "OtherMapper.kt").write_text('''package example.mapping
+fun OtherIn.toDTO() = OtherDTO()
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "OrdersController.create" and edge.target == "example.mapping.OrderIn.toDTO"
+               for edge in result.edges)
+    assert any(edge.source == "OrdersController.skip" and edge.target == "example.mapping.OtherIn.toDTO"
+               for edge in result.edges)
+
+
+def test_kotlin_duplicate_extension_declarations_stay_unresolved(tmp_path: Path):
+    (tmp_path / "OrdersController.kt").write_text('''package example.web
+import example.mapping.toDTO
+class OrdersController {
+  @PostMapping("/orders")
+  fun create(input: OrderIn) = input.toDTO()
+}
+''', encoding="utf-8")
+    for filename in ("FirstMapper.kt", "SecondMapper.kt"):
+        (tmp_path / filename).write_text('''package example.mapping
+fun OrderIn.toDTO() = OrderDTO()
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "OrdersController.create" and edge.target == "input.toDTO"
+               for edge in result.edges)
+
+
+def test_kotlin_extension_does_not_resolve_without_import_or_matching_type(tmp_path: Path):
+    (tmp_path / "ImportedController.kt").write_text('''package example.web
+import example.mapping.toDTO
+class ImportedController {
+  @PostMapping("/imported")
+  fun create(input: OtherIn) = input.toDTO()
+}
+''', encoding="utf-8")
+    (tmp_path / "UnimportedController.kt").write_text('''package example.web
+class UnimportedController {
+  @PostMapping("/unimported")
+  fun create(input: OrderIn) = input.toDTO()
+}
+''', encoding="utf-8")
+    (tmp_path / "Mapper.kt").write_text('''package example.mapping
+fun OrderIn.toDTO() = OrderDTO()
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert {(edge.source, edge.target) for edge in result.edges} >= {
+        ("ImportedController.create", "input.toDTO"),
+        ("UnimportedController.create", "input.toDTO"),
+    }
+
+
 def test_java_spring_analyzer_maps_controller_and_cross_file_use_case(tmp_path: Path):
     (tmp_path / "OrdersController.java").write_text(
         '''@RestController

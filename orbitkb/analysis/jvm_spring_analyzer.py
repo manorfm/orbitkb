@@ -27,7 +27,9 @@ from orbitkb.analysis.cloud_detection import (
     cloud_edge_kind_and_fact,
     jvm_client_declarations,
 )
+from orbitkb.analysis.jvm_imports import parse_jvm_imports
 from orbitkb.analysis.jvm_scanner import (
+    ClassMatch,
     FunctionMatch,
     find_calls,
     find_classes,
@@ -257,6 +259,48 @@ def _jvm_edges_for_text(symbol: str, function_match: FunctionMatch, path: Path, 
     return edges
 
 
+def _kotlin_extension_imports(text: str, function_match: FunctionMatch) -> tuple[tuple[str, str], ...]:
+    """Map calls on typed parameters to explicitly imported extension declarations."""
+    imports = parse_jvm_imports(text)
+    parameters = engine._declared_parameter_types(function_match.text[:function_match.body_offset], kotlin=True)
+    body = function_match.text[function_match.body_offset:]
+    resolved = []
+    for call, _ in find_calls(body):
+        receiver, separator, name = call.rpartition(".")
+        receiver_type = parameters.get(receiver) if separator else None
+        imported = imports.get(name)
+        if not receiver_type or not imported or "." not in imported:
+            continue
+        package, _, declared_name = imported.rpartition(".")
+        resolved.append((call, f"{package}.{_last_type_token(receiver_type)}.{declared_name}"))
+    return tuple(dict.fromkeys(resolved))
+
+
+def _kotlin_top_level_extensions(
+    text: str, classes: list[ClassMatch], path: Path, root: Path,
+) -> tuple[list[Symbol], list[FlowEdge], list[FlowBoundary]]:
+    package_match = re.search(r"(?m)^\s*package\s+([\w.]+)\s*$", text)
+    if package_match is None:
+        return [], [], []
+    package = package_match.group(1)
+    symbols: list[Symbol] = []
+    edges: list[FlowEdge] = []
+    boundaries: list[FlowBoundary] = []
+    for function in find_functions(text, 0, len(text), kotlin=True):
+        if any(class_match.body_start <= function.start_offset <= class_match.body_end for class_match in classes):
+            continue
+        declaration = re.match(r"fun\s+([A-Za-z_]\w*)\.([A-Za-z_]\w*)\s*\(", function.text)
+        if declaration is None:
+            continue
+        receiver_type, name = declaration.groups()
+        symbol = f"{package}.{receiver_type}.{name}"
+        evidence = Evidence(path.relative_to(root).as_posix(), function.start_line, function.end_line)
+        symbols.append(Symbol(symbol, f"{package}.{receiver_type}", name, evidence))
+        edges.extend(_jvm_edges_for_text(symbol, function, path, root))
+        boundaries.extend(_boundaries_for_text(symbol, function.text, evidence))
+    return symbols, edges, boundaries
+
+
 def _spring_handler_route(modifiers: str, prefix: str | None) -> tuple[str, str] | None:
     mapping = _HANDLER_MAPPING_RE.search(modifiers)
     if mapping is None:
@@ -294,7 +338,8 @@ class _KotlinSpringAnalyzer:
         text = source.decode("utf-8", errors="ignore")
         cloud_declarations = jvm_client_declarations(text)
         result = AnalysisResult()
-        for class_match in find_classes(text):
+        classes = find_classes(text)
+        for class_match in classes:
             class_name = class_match.name
             implements = engine._kotlin_supertypes(class_match.header)
             annotations = class_match.annotations
@@ -325,7 +370,9 @@ class _KotlinSpringAnalyzer:
             for function_match in find_functions(text, class_match.body_start, class_match.body_end, kotlin=True):
                 symbol = f"{class_name}.{function_match.name}"
                 evidence = Evidence(path.relative_to(root).as_posix(), function_match.start_line, function_match.end_line)
-                result.symbols.append(Symbol(symbol, class_name, function_match.name, evidence, implements, (), qualifiers, primary))
+                imports = _kotlin_extension_imports(text, function_match)
+                result.symbols.append(Symbol(symbol, class_name, function_match.name, evidence,
+                                             implements, imports, qualifiers, primary))
                 edges = _jvm_edges_for_text(symbol, function_match, path, root)
                 classified_edges, cloud_facts = _classify_spring_edges(edges, persistence_receivers, cloud_declarations)
                 result.edges.extend(classified_edges)
@@ -372,6 +419,10 @@ class _KotlinSpringAnalyzer:
                 if kafka_listener:
                     result.entrypoints.append(EntryPoint("message", "CONSUME", kafka_listener.group(1), symbol, evidence))
                     result.contracts[symbol] = engine._message_contract(kafka_listener.group(1), function_match.text, "kotlin", transport="kafka")
+        symbols, edges, boundaries = _kotlin_top_level_extensions(text, classes, path, root)
+        result.symbols.extend(symbols)
+        result.edges.extend(edges)
+        result.boundaries.extend(boundaries)
         return result
 
 

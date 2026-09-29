@@ -520,6 +520,9 @@ source-backed paths, unresolved or known boundaries, and truncation reasons.
 The navigator is used by `describe_entrypoint` and `describe_error_flow`.
 The latter follows caller and target error evidence through their canonical
 snapshots and reports unresolved or truncated navigation in `unknowns`.
+For Kotlin/Spring, explicitly imported extension calls on typed parameters
+resolve to local declarations when the receiver has a unique matching symbol;
+ambiguous declarations remain unresolved.
 An internal evidence composer can select route facts by profile for later prompt
 reduction. It preserves each fact's source, route path, status and content digest,
 and carries navigation boundaries and truncation forward without calling a model.

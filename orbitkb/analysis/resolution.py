@@ -6,6 +6,7 @@ flow, preferring constructor/field injection over a method-name fallback.
 """
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import replace
 
@@ -16,7 +17,8 @@ class BoundedFlowResolver:
     """Links local call expressions to known symbols without inventing edges."""
 
     def resolve(self, result: AnalysisResult) -> AnalysisResult:
-        symbols = {symbol.name: symbol for symbol in result.symbols}
+        counts = Counter(symbol.name for symbol in result.symbols)
+        symbols = {symbol.name: symbol for symbol in result.symbols if counts[symbol.name] == 1}
         implementations = set(symbols)
         implementation_types = self._implementation_types(symbols.values())
         injections = {
