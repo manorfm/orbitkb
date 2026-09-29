@@ -76,17 +76,24 @@ _CLASS_RE = re.compile(r"^\s*(?:public\s+|private\s+)?(?:class|interface)\s+(\w+
 _TYPE_AFTER_MAPPING_RE = re.compile(
     r"\s*(?:@[\w.]+(?:\([^)]*\))?\s*)*"
     r"(?:(?:public|private|protected|internal|open|abstract|final|sealed|data)\s+)*"
-    r"(?:class|interface|enum)\b"
+    r"(?:class|interface|enum)\s+(?P<name>[A-Za-z_]\w*)\b"
 )
 
 
-def _is_type_mapping(match: re.Match[str]) -> bool:
+def _mapped_type(match: re.Match[str]) -> str | None:
     source = match.string
     opening = source.find("(", match.start(), match.end())
     if opening < 0:
-        return False
+        return None
     closing = find_matching_paren(source, opening)
-    return closing >= 0 and bool(_TYPE_AFTER_MAPPING_RE.match(source, closing + 1))
+    if closing < 0:
+        return None
+    declaration = _TYPE_AFTER_MAPPING_RE.match(source, closing + 1)
+    return declaration.group("name") if declaration else None
+
+
+def _join_route(prefix: str, route: str) -> str:
+    return f"/{'/'.join(part for part in (prefix.strip('/'), route.strip('/')) if part)}"
 
 
 def _endpoint_hint(
@@ -106,11 +113,24 @@ def _endpoint_hint(
 
 def endpoint_matches(scan_root: Path) -> list[tuple[str, str, Path, int]]:
     """Return route annotations on handlers, excluding type-level route prefixes."""
-    return [
-        (_METHOD_BY_ANNOTATION[match.group(1)], match.group(2) or "/", path, line_no)
-        for path, line_no, match in find_matches(scan_root, EXTENSIONS, _MAPPING_RE)
-        if not _is_type_mapping(match)
-    ]
+    matches = find_matches(scan_root, EXTENSIONS, _MAPPING_RE)
+    prefixes: dict[tuple[Path, str], str] = {}
+    for path, _, match in matches:
+        if match.group(1) != "RequestMapping":
+            continue
+        type_name = _mapped_type(match)
+        if type_name and match.group(2).startswith("/"):
+            prefixes[(path, type_name)] = match.group(2)
+
+    endpoints: list[tuple[str, str, Path, int]] = []
+    for path, line_no, match in matches:
+        if _mapped_type(match):
+            continue
+        route = match.group(2) or "/"
+        component = component_hint_for(path, line_no, _CLASS_RE)
+        prefix = prefixes.get((path, component))
+        endpoints.append((_METHOD_BY_ANNOTATION[match.group(1)], _join_route(prefix, route) if prefix else route, path, line_no))
+    return endpoints
 
 
 def endpoint_hints_for_matches(

@@ -80,7 +80,7 @@ def test_kotlin_endpoint_resolves_a_statically_imported_extension_function_into_
     (out.kt) — the exact same-package-different-file mapper idiom that a
     same-file-only regex heuristic can't follow."""
     hints = JvmSpringDetector().collect_hints(COMPONENT_KOTLIN_ROOT)
-    endpoint = next(e for e in hints.endpoints if e.path == "/{id}")
+    endpoint = next(e for e in hints.endpoints if e.path == "/restaurants/{id}")
     assert len(endpoint.extra_excerpts) == 1
     assert endpoint.extra_excerpts[0].file_path == "out.kt"
     assert "fun Restaurant.out()" in endpoint.extra_excerpts[0].text
@@ -119,7 +119,23 @@ def test_multiline_spring_class_request_mapping_is_not_an_endpoint(tmp_path: Pat
 
     endpoints = JvmSpringDetector().collect_hints(tmp_path).endpoints
 
-    assert [(endpoint.method, endpoint.path) for endpoint in endpoints] == [("GET", "/menus")]
+    assert [(endpoint.method, endpoint.path) for endpoint in endpoints] == [("GET", "/clusters/{clusterId}/menus")]
+
+
+def test_spring_handler_path_includes_class_route_prefix(tmp_path: Path):
+    (tmp_path / "RestaurantController.kt").write_text(
+        '@RestController\n'
+        '@RequestMapping("/restaurants")\n'
+        'class RestaurantController {\n'
+        '    @GetMapping("/{id}")\n'
+        '    fun get(id: String) = id\n'
+        '}\n',
+        encoding="utf-8",
+    )
+
+    endpoints = JvmSpringDetector().collect_hints(tmp_path).endpoints
+
+    assert [(endpoint.method, endpoint.path) for endpoint in endpoints] == [("GET", "/restaurants/{id}")]
 
 
 def test_kotlin_endpoint_with_a_return_typed_let_chain_resolves_the_static_import(tmp_path: Path):

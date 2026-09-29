@@ -471,7 +471,8 @@ and reconstruction when that digest is unchanged. It still reads those inputs to
 calculate the digest. `--force`, external depth enrichment, or a source change during
 analysis bypasses or withholds snapshot reuse, preserving correctness over speed.
 For Spring indexing, class-level `@RequestMapping` declarations are not separate
-endpoint generation units; only handler mappings create those units.
+endpoint generation units; handler mappings create those units with the class path
+prefix included.
 
 Architecture rules have fact-mutation tests for cycles and fan-out (both at
 service level and their intra-service component analog), shared storage,
