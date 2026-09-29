@@ -48,6 +48,28 @@ def project_analysis(service: ServiceKey, analysis: AnalysisResult) -> Canonical
             id=key.fact_id, kind="entrypoint", subject=key, attributes=attributes,
             status=FactStatus.CONFIRMED, origin="static", sources=(source,),
         ))
+    for symbol in analysis.symbols:
+        _add_fact(facts, CanonicalFact(
+            id=fact_id(service, "symbol", symbol.name, symbol.owner, symbol.member),
+            kind="symbol", subject=SymbolKey(service, symbol.name),
+            attributes={"owner": symbol.owner, "member": symbol.member, "implements": symbol.implements,
+                        "imports": symbol.imports, "qualifiers": symbol.qualifiers, "primary": symbol.primary},
+            status=FactStatus.CONFIRMED, origin="static", sources=(_source(symbol.evidence),),
+        ))
+    for injection in analysis.injections:
+        _add_fact(facts, CanonicalFact(
+            id=fact_id(service, "injection", injection.consumer, injection.contract, injection.qualifier),
+            kind="injection", subject=SymbolKey(service, injection.consumer),
+            attributes={"contract": injection.contract, "qualifier": injection.qualifier},
+            status=FactStatus.CONFIRMED, origin="static", sources=(_source(injection.evidence),),
+        ))
+    for boundary in analysis.boundaries:
+        _add_fact(facts, CanonicalFact(
+            id=fact_id(service, "flow_boundary", boundary.source, boundary.kind),
+            kind="flow_boundary", subject=SymbolKey(service, boundary.source),
+            attributes={"boundary_kind": boundary.kind},
+            status=FactStatus.CONFIRMED, origin="static", sources=(_source(boundary.evidence),),
+        ))
     for edge in analysis.edges:
         source = _source(edge.evidence)
         _add_fact(facts, CanonicalFact(

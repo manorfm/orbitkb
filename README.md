@@ -484,7 +484,8 @@ OpenAPI, Protobuf and supported migrations) and skips AST parsing, flow replacem
 and reconstruction when that digest is unchanged. It still reads those inputs to
 calculate the digest. `--force`, external depth enrichment, or a source change during
 analysis bypasses or withholds snapshot reuse, preserving correctness over speed.
-The canonical projection converts entrypoints, flow edges, service calls,
+The canonical projection converts entrypoints, symbol declarations, injections,
+flow boundary markers, flow edges, service calls,
 configuration keys, security requirements, error contracts, message contracts,
 persistence resources and migration declarations from `AnalysisResult` into
 language-neutral facts with stable IDs and source locations.

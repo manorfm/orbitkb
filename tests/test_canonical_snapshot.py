@@ -11,12 +11,15 @@ from orbitkb.analysis.models import (
     EntryPoint,
     ErrorContract,
     Evidence,
+    FlowBoundary,
     FlowEdge,
+    Injection,
     MessageContract,
     MigrationFact,
     PersistenceFact,
     SecurityRequirement,
     StaticServiceCall,
+    Symbol,
 )
 from orbitkb.domain.canonical import (
     FactStatus,
@@ -100,6 +103,10 @@ def test_entrypoint_projection_accepts_existing_go_and_kotlin_analysis(tmp_path:
 
         assert snapshot.facts
         assert all(fact.sources and fact.subject.service.value == directory for fact in snapshot.facts)
+        if stack == "jvm-spring":
+            assert {"entrypoint", "symbol", "injection", "flow_edge"} <= {
+                fact.kind for fact in snapshot.facts
+            }
 
 
 def test_relationship_projection_preserves_origin_confidence_and_all_sources():
@@ -235,3 +242,49 @@ def test_message_and_persistence_projection_preserves_contracts_and_sources():
     assert dropped.attributes["destructive"] is True and dropped.id != added.id
     assert project_analysis(ServiceKey("menu-manager"), AnalysisResult(message_contracts=[analysis.message_contracts[1]])
                             ).facts[0].id == published.id
+
+
+def test_flow_structure_projection_keeps_declarations_and_unresolved_boundaries_distinct():
+    first_symbol = Symbol(
+        "MenuController.list", "MenuController", "list", Evidence("Menu.kt", 8, 12),
+        implements=("MenuApi",), imports=(("MenuService", "app.MenuService"),),
+        qualifiers=("primary",), primary=True,
+    )
+    duplicate_symbol = Symbol(
+        "MenuController.list", "MenuController", "list", Evidence("Menu.kt", 20, 24),
+        implements=("MenuApi",), imports=(("MenuService", "app.MenuService"),),
+        qualifiers=("primary",), primary=True,
+    )
+    analysis = AnalysisResult(
+        symbols=[first_symbol, duplicate_symbol],
+        injections=[
+            Injection("MenuController", "MenuService", "primary", Evidence("Menu.kt", 3, 3)),
+            Injection("MenuController", "MenuService", "primary", Evidence("Config.kt", 9, 9)),
+        ],
+        boundaries=[
+            FlowBoundary("MenuController.list", "branch", Evidence("Menu.kt", 11, 11)),
+            FlowBoundary("MenuController.list", "branch", Evidence("Menu.kt", 22, 22)),
+        ],
+    )
+
+    snapshot = project_analysis(ServiceKey("menu-manager"), analysis)
+
+    assert len(snapshot.facts) == 3
+    symbol, injection, boundary = snapshot.facts
+    assert (symbol.kind, symbol.subject, symbol.attributes) == (
+        "symbol", SymbolKey(ServiceKey("menu-manager"), "MenuController.list"),
+        {"owner": "MenuController", "member": "list", "implements": ("MenuApi",),
+         "imports": (("MenuService", "app.MenuService"),), "qualifiers": ("primary",), "primary": True},
+    )
+    assert len(symbol.sources) == 2
+    assert (injection.kind, injection.subject, injection.attributes) == (
+        "injection", SymbolKey(ServiceKey("menu-manager"), "MenuController"),
+        {"contract": "MenuService", "qualifier": "primary"},
+    )
+    assert len(injection.sources) == 2
+    assert (boundary.kind, boundary.subject, boundary.status, boundary.attributes) == (
+        "flow_boundary", SymbolKey(ServiceKey("menu-manager"), "MenuController.list"),
+        FactStatus.CONFIRMED, {"boundary_kind": "branch"},
+    )
+    assert len(boundary.sources) == 2
+    assert not any(fact.kind == "flow_edge" for fact in snapshot.facts)
