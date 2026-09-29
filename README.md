@@ -574,6 +574,10 @@ regenerated endpoints; this does not skip generation or change LLM call counts.
 The assessment distinguishes a source-proven integration target from its business
 purpose and exchanged data. A Feign destination alone leaves
 `integration_purpose` ambiguous, so it cannot authorize zero-call generation.
+For a route with no outbound calls, the integration dimensions become sufficient
+only when the selected evidence covers flow and service calls, the entrypoint is
+confirmed, and navigation has no limits or boundaries. A partial evidence
+profile cannot prove an empty call list.
 An explicit OpenAPI operation description can satisfy the business behavior
 dimension for its exact matching HTTP route. Missing or blank descriptions
 remain missing; other incomplete dimensions still require generation.

@@ -99,6 +99,13 @@ class DeterministicSufficiencyEvaluator:
             boundary.reason in {"unresolved", "depth_limit", "node_limit", "edge_limit"}
             for boundary in capsule.boundaries
         )
+        no_outbound_proven = (
+            bool(entrypoints)
+            and len(entrypoints) == len(capsule.entrypoints)
+            and all(fact.status == FactStatus.CONFIRMED for fact in entrypoints)
+            and {"entrypoint", "flow_edge", "service_call"}.issubset(capsule.selected_kinds or ())
+            and not calls and not capsule.truncated and not capsule.boundaries
+        )
         authorization_limited = (
             capsule.navigation_truncated
             or "security_requirement" in capsule.report.omitted_fact_kinds
@@ -139,19 +146,22 @@ class DeterministicSufficiencyEvaluator:
             ),
             DimensionAssessment(
                 "integrations",
-                (SufficiencyStatus.AMBIGUOUS if capsule.truncated or not calls
-                 else SufficiencyStatus.ENOUGH),
-                tuple(fact.id for fact in calls),
-                "limited or absent route call evidence" if capsule.truncated or not calls
-                else "route-reachable calls have source evidence",
+                SufficiencyStatus.ENOUGH if no_outbound_proven or (calls and not capsule.truncated)
+                else SufficiencyStatus.AMBIGUOUS,
+                tuple(fact.id for fact in calls) if calls else (
+                    tuple(fact.id for fact in entrypoints) if no_outbound_proven else ()
+                ),
+                "no outbound calls in complete route flow" if no_outbound_proven
+                else "route-reachable calls have source evidence" if calls and not capsule.truncated
+                else "limited or absent route call evidence",
             ),
             DimensionAssessment(
                 "integration_purpose",
-                SufficiencyStatus.ENOUGH if not calls and not flow_incomplete
+                SufficiencyStatus.ENOUGH if no_outbound_proven
                 else SufficiencyStatus.AMBIGUOUS,
                 tuple(fact.id for fact in calls),
                 "static call targets do not establish purpose or exchanged data" if calls
-                else "limited flow may omit calls" if flow_incomplete
+                else "limited flow may omit calls" if not no_outbound_proven
                 else "no route-reachable call requires a purpose",
             ),
             DimensionAssessment(

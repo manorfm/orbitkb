@@ -134,6 +134,82 @@ def test_unresolved_flow_cannot_prove_that_no_call_purpose_is_needed():
     assert result.status("integration_purpose") == SufficiencyStatus.AMBIGUOUS
 
 
+def test_simple_local_kotlin_route_has_known_empty_integrations(tmp_path: Path):
+    (tmp_path / "StatusController.kt").write_text(
+        '''data class Status(val value: String)
+@RestController
+class StatusController {
+    @GetMapping("/status")
+    fun get(): Status = Status("ok")
+}
+''', encoding="utf-8",
+    )
+    (tmp_path / "SecurityConfig.kt").write_text(
+        '''class SecurityConfig {
+    fun filterChain(http: HttpSecurity): SecurityFilterChain {
+        http {
+            authorizeHttpRequests {
+                authorize(HttpMethod.GET, "/status", permitAll)
+            }
+        }
+        return http.build()
+    }
+}
+''', encoding="utf-8",
+    )
+    (tmp_path / "openapi.yaml").write_text(
+        '''openapi: 3.0.3
+paths:
+  /status:
+    get:
+      description: Returns the current service status.
+      responses:
+        "200": {}
+''', encoding="utf-8",
+    )
+    snapshot = project_analysis(ServiceKey("status"), StaticAnalysisEngine().analyze(tmp_path, "jvm-spring"))
+    route = next(fact.subject for fact in snapshot.facts if fact.kind == "entrypoint")
+    profile = EvidenceProfile(frozenset({"entrypoint", "flow_edge", "service_call", "security_requirement"}))
+    evidence = EvidenceComposer(KnowledgeNavigator(snapshot)).compose(route, profile, TraversalPolicy())
+    capsule = EvidenceReducer().reduce((evidence,), EvidenceBudget(20_000))
+
+    result = DeterministicSufficiencyEvaluator().evaluate(capsule)
+
+    assert not capsule.boundaries
+    assert result.status("integrations") == SufficiencyStatus.ENOUGH
+    assert result.status("integration_purpose") == SufficiencyStatus.ENOUGH
+    assert result.evidence_ids("integrations") == (route.fact_id,)
+    assert result.overall == SufficiencyStatus.ENOUGH
+
+    entrypoint_only = EvidenceComposer(KnowledgeNavigator(snapshot)).compose(
+        route, EvidenceProfile(frozenset({"entrypoint"})), TraversalPolicy(),
+    )
+    partial_capsule = EvidenceReducer().reduce((entrypoint_only,), EvidenceBudget(20_000))
+    partial_result = DeterministicSufficiencyEvaluator().evaluate(partial_capsule)
+
+    assert partial_result.status("integrations") == SufficiencyStatus.AMBIGUOUS
+    assert partial_result.status("integration_purpose") == SufficiencyStatus.AMBIGUOUS
+
+    mixed_capsule = EvidenceReducer().reduce((evidence, entrypoint_only), EvidenceBudget(20_000))
+    assert DeterministicSufficiencyEvaluator().evaluate(mixed_capsule).status(
+        "integrations",
+    ) == SufficiencyStatus.AMBIGUOUS
+
+
+def test_known_boundary_cannot_prove_empty_integrations():
+    route = EntrypointKey(ServiceKey("orders"), "http", "GET", "/orders", "Orders.list")
+    entry = EvidenceFact("entry", "entrypoint", {"contract": {}}, FactStatus.CONFIRMED,
+                         "static", None, (), (route.symbol,), "entry")
+    boundary = TraversalBoundary(route.symbol, "dynamic_dispatch", "known_boundary", "flow")
+    capsule = EvidenceReducer().reduce((EvidenceSet(route, (entry,), (boundary,), False),),
+                                       EvidenceBudget(20_000))
+
+    result = DeterministicSufficiencyEvaluator().evaluate(capsule)
+
+    assert result.status("integrations") == SufficiencyStatus.AMBIGUOUS
+    assert result.status("integration_purpose") == SufficiencyStatus.AMBIGUOUS
+
+
 def test_openapi_body_absence_cannot_override_source_request_type_without_fields():
     route = EntrypointKey(ServiceKey("orders"), "http", "POST", "/orders", "Orders.create")
     entry = EvidenceFact(

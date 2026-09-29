@@ -47,6 +47,7 @@ class ContextCapsule:
     report: ReductionReport
     truncated: bool
     navigation_truncated: bool
+    selected_kinds: frozenset[str] | None = None
 
 
 def _estimated_size(fact: EvidenceFact, uses: Sequence[EvidenceUse]) -> int:
@@ -111,5 +112,9 @@ class EvidenceReducer:
                                  tuple(omitted), input_chars, selected_chars, tuple(omitted_kinds))
         entrypoints = tuple(dict.fromkeys(item.entrypoint for item in evidence))
         navigation_truncated = any(item.truncated for item in evidence)
+        selected_kinds = (
+            frozenset.intersection(*(item.selected_kinds for item in evidence))
+            if all(item.selected_kinds is not None for item in evidence) else None
+        )
         return ContextCapsule(entrypoints, tuple(retained), tuple(retained_uses), tuple(boundaries.values()), report,
-                              navigation_truncated or bool(omitted), navigation_truncated)
+                              navigation_truncated or bool(omitted), navigation_truncated, selected_kinds)

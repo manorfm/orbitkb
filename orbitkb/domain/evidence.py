@@ -63,6 +63,7 @@ class EvidenceSet:
     facts: tuple[EvidenceFact, ...]
     boundaries: tuple[TraversalBoundary, ...]
     truncated: bool
+    selected_kinds: frozenset[str] | None = None
 
 
 class EvidenceComposer:
@@ -87,4 +88,4 @@ class EvidenceComposer:
                         and route_pattern_covers(subject.pattern, entrypoint.name)):
                     facts.append(EvidenceFact.from_canonical(fact, (entrypoint.symbol,)))
                     break
-        return EvidenceSet(entrypoint, tuple(facts), traversal.boundaries, traversal.truncated)
+        return EvidenceSet(entrypoint, tuple(facts), traversal.boundaries, traversal.truncated, profile.kinds)
