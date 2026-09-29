@@ -88,6 +88,28 @@ def recent_index_runs(conn: sqlite3.Connection, service_id: int | None = None, l
     return conn.execute("SELECT * FROM index_runs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
 
 
+def record_unit_usage(
+    conn: sqlite3.Connection, run_id: int, unit_kind: str, generated_units: int,
+    llm_invocations: int, had_failure: bool, input_tokens: int | None,
+    output_tokens: int | None, cost_usd: float | None,
+) -> None:
+    conn.execute(
+        """INSERT INTO index_run_unit_usage
+           (run_id, unit_kind, generated_units, llm_invocations, had_failure,
+            input_tokens, output_tokens, cost_usd)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (run_id, unit_kind, generated_units, llm_invocations, int(had_failure),
+         input_tokens, output_tokens, cost_usd),
+    )
+    conn.commit()
+
+
+def list_unit_usage(conn: sqlite3.Connection, run_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM index_run_unit_usage WHERE run_id = ? ORDER BY unit_kind", (run_id,)
+    ).fetchall()
+
+
 def usage_totals(conn: sqlite3.Connection, service_id: int | None = None) -> dict:
     """Cumulative token/cost usage across every index_runs row (optionally scoped to
     one service) — the number `orbitkb status` prints alongside the recent-runs list,

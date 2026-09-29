@@ -331,6 +331,13 @@ def _cmd_status(args: argparse.Namespace) -> int:
                 f"tokens=(in={run['input_tokens']},out={run['output_tokens']}) cost_usd={run['cost_usd']} "
                 f"notes={run['notes']}"
             )
+            for unit in index_runs_repo.list_unit_usage(conn, run["id"]):
+                print(
+                    f"    {unit['unit_kind']}: generated={unit['generated_units']} "
+                    f"invocations={unit['llm_invocations']} failed={bool(unit['had_failure'])} "
+                    f"tokens=(in={unit['input_tokens']},out={unit['output_tokens']}) "
+                    f"cost_usd={unit['cost_usd']}"
+                )
         totals = index_runs_repo.usage_totals(conn, row["id"])
         print(
             f"cumulative usage: input_tokens={totals['input_tokens']} output_tokens={totals['output_tokens']} "

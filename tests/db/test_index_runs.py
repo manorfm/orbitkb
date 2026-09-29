@@ -36,6 +36,25 @@ def test_finish_index_run_defaults_usage_to_none(tmp_path: Path):
     assert run["cost_usd"] is None
 
 
+def test_unit_usage_is_scoped_to_one_run(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")
+    first = repository.start_index_run(conn, service_id, "claude")
+    second = repository.start_index_run(conn, service_id, "claude")
+
+    repository.record_unit_usage(conn, first, "endpoint", 2, 3, False, 100, 20, 0.1)
+    repository.record_unit_usage(conn, second, "endpoint", 0, 0, False, None, None, None)
+
+    first_usage = repository.list_unit_usage(conn, first)
+    second_usage = repository.list_unit_usage(conn, second)
+    assert [(row["generated_units"], row["llm_invocations"], row["cost_usd"]) for row in first_usage] == [
+        (2, 3, 0.1),
+    ]
+    assert [(row["generated_units"], row["llm_invocations"], row["cost_usd"]) for row in second_usage] == [
+        (0, 0, None),
+    ]
+
+
 def test_usage_totals_sums_across_runs_for_one_service(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")

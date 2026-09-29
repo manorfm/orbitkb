@@ -14,6 +14,7 @@ from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import ci_commands as ci_commands_repo
 from orbitkb.db.repositories import components as components_repo
 from orbitkb.db.repositories import embeddings as embeddings_repo
+from orbitkb.db.repositories import index_runs as index_runs_repo
 from orbitkb.db.repositories import (
     kubernetes_configuration as kubernetes_configuration_repo,
 )
@@ -22,7 +23,7 @@ from orbitkb.db.repositories import services as services_repo
 from orbitkb.discovery.registry import detector_for
 from orbitkb.discovery.walker import discover_services
 from orbitkb.generation import orchestrator
-from orbitkb.generation.backend_base import GenerationError, GenerationOutcome
+from orbitkb.generation.backend_base import GenerationError, GenerationOutcome, LLMUsage
 from orbitkb.generation.mock_backend import kind_for_schema
 from orbitkb.generation.orchestrator import DiscoveryError, index_path, index_service
 
@@ -388,8 +389,15 @@ def test_generation_failure_is_isolated_per_unit(tmp_path: Path):
     assert result.status == "partial"
     assert result.llm_invocations == backend.calls - calls_before
     assert result.llm_invocations == result.llm_calls + 2
-    run = conn2.execute("SELECT llm_invocations FROM index_runs WHERE service_id = ?", (result.service_id,)).fetchone()
+    run = conn2.execute("SELECT id, llm_invocations FROM index_runs WHERE service_id = ?", (result.service_id,)).fetchone()
     assert run["llm_invocations"] == result.llm_invocations
+    unit_usage = {row["unit_kind"]: row for row in index_runs_repo.list_unit_usage(conn2, run["id"])}
+    assert sum(row["llm_invocations"] for row in unit_usage.values()) == result.llm_invocations
+    assert unit_usage["endpoint"]["generated_units"] == 4
+    assert unit_usage["overview"]["generated_units"] == 0
+    assert unit_usage["overview"]["llm_invocations"] == 2
+    assert unit_usage["overview"]["had_failure"] == 1
+    assert not {"endpoint", "path", "prompt"} & set(unit_usage["overview"].keys())
     # the API unit still succeeded even though overview failed for this service
     orders_row = services_repo.get_service_by_name(conn2, "orders-service")
     assert orders_row["short_desc"] is None  # overview failed, never written
@@ -401,6 +409,30 @@ def test_generation_failure_is_isolated_per_unit(tmp_path: Path):
     # results from the first index_path call are still meaningful: overview failed
     # for every service (since fail_kind applies globally), so every one is partial
     assert all(r.status == "partial" for r in results)
+
+
+def test_invalid_responses_keep_reported_usage_in_unit_metrics(tmp_path: Path):
+    class InvalidOverviewBackend(FakeOrchestratorBackend):
+        def generate(self, prompt: str, schema: dict, cwd: Path) -> GenerationOutcome:
+            if kind_for_schema(schema) == "service_overview":
+                self.calls += 1
+                return GenerationOutcome(structured={}, usage=LLMUsage(input_tokens=10, cost_usd=0.02))
+            return super().generate(prompt, schema, cwd)
+
+    conn = open_db(tmp_path / "usage.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    result = index_service(
+        conn, orders.name, orders.path, orders.detector, InvalidOverviewBackend(),
+        failures_root=tmp_path / "failures",
+    )
+    run = index_runs_repo.recent_index_runs(conn, result.service_id, limit=1)[0]
+    overview = next(row for row in index_runs_repo.list_unit_usage(conn, run["id"]) if row["unit_kind"] == "overview")
+
+    assert result.status == "partial"
+    assert overview["llm_invocations"] == 2
+    assert overview["input_tokens"] == 20
+    assert overview["cost_usd"] == pytest.approx(0.04)
+    assert run["cost_usd"] == pytest.approx(0.04)
 
 
 def test_index_path_raises_discovery_error_on_empty_directory(tmp_path: Path):

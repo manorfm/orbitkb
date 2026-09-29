@@ -814,6 +814,20 @@ CREATE TABLE IF NOT EXISTS index_runs (
     cost_usd      REAL
 );
 
+-- Aggregate indexing usage by generation kind. No route, file, prompt or code
+-- identifiers are stored here; old runs have no rows instead of invented zeros.
+CREATE TABLE IF NOT EXISTS index_run_unit_usage (
+    run_id          INTEGER NOT NULL REFERENCES index_runs(id) ON DELETE CASCADE,
+    unit_kind       TEXT NOT NULL CHECK (unit_kind IN ('endpoint', 'component', 'persistence', 'messaging', 'overview')),
+    generated_units INTEGER NOT NULL CHECK (generated_units >= 0),
+    llm_invocations INTEGER NOT NULL CHECK (llm_invocations >= 0),
+    had_failure     INTEGER NOT NULL CHECK (had_failure IN (0, 1)),
+    input_tokens    INTEGER,
+    output_tokens   INTEGER,
+    cost_usd        REAL,
+    PRIMARY KEY (run_id, unit_kind)
+);
+
 -- Deterministic, whole-graph structural findings and bounded flow hypotheses (cycles,
 -- fan-in/out imbalance, shared database, duplicate external integration, BFF-policy
 -- and non-atomic-publish candidates) recomputed after every index/update from

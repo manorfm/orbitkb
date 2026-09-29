@@ -45,6 +45,7 @@ def load_schema(name: str) -> dict:
 def generate_with_retry(
     backend: LLMBackend, prompt: str, schema: dict, cwd: Path, failures_dir: Path, label: str,
     on_attempt: Callable[[], None] | None = None,
+    on_usage: Callable[[LLMUsage], None] | None = None,
 ) -> GenerationOutcome | None:
     last_error: Exception | None = None
     safe_prompt = redact_sensitive_values(prompt)
@@ -56,6 +57,8 @@ def generate_with_retry(
                 on_attempt()
             outcome = backend.generate(current_prompt, schema, cwd)
             total_usage = total_usage + outcome.usage  # a retried call is still a billed call
+            if on_usage is not None:
+                on_usage(outcome.usage)
             jsonschema.validate(outcome.structured, schema)
             return GenerationOutcome(structured=redact_structured_values(outcome.structured), usage=total_usage)
         except (GenerationError, jsonschema.ValidationError) as exc:

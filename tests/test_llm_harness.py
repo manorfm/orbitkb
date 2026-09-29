@@ -103,6 +103,23 @@ def test_invocation_observer_counts_failed_backend_attempts(tmp_path: Path):
     assert len(attempts) == backend.calls == 2
 
 
+def test_usage_observer_keeps_usage_from_invalid_responses(tmp_path: Path):
+    backend = ScriptedBackend([
+        GenerationOutcome(structured={"wrong": "shape"}, usage=LLMUsage(input_tokens=10, cost_usd=0.02)),
+        GenerationOutcome(structured={"wrong": "again"}, usage=LLMUsage(input_tokens=15, cost_usd=0.03)),
+    ])
+    usage: list[LLMUsage] = []
+
+    result = generate_with_retry(
+        backend, "prompt", SCHEMA, tmp_path, tmp_path / "failures", "label",
+        on_usage=usage.append,
+    )
+
+    assert result is None
+    assert sum(item.input_tokens for item in usage) == 25
+    assert sum(item.cost_usd for item in usage) == pytest.approx(0.05)
+
+
 def test_generation_boundary_redacts_prompt_output_and_failure_log(tmp_path: Path):
     secret = "production-secret-value"
     backend = ScriptedBackend([
