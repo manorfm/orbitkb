@@ -39,6 +39,8 @@ def test_spring_route_has_proven_call_and_response_but_missing_semantic_document
 
     assert result.status("contract") == SufficiencyStatus.ENOUGH
     assert result.status("integrations") == SufficiencyStatus.ENOUGH
+    assert result.status("integration_purpose") == SufficiencyStatus.AMBIGUOUS
+    assert result.evidence_ids("integration_purpose") == result.evidence_ids("integrations")
     assert result.status("business_behavior") == SufficiencyStatus.MISSING
     assert result.status("request_shape") == SufficiencyStatus.MISSING
     assert result.status("response_shape") == SufficiencyStatus.ENOUGH
@@ -120,6 +122,18 @@ def test_optional_or_unresolved_openapi_body_does_not_prove_empty_request_shape(
     assert assess(None) == SufficiencyStatus.MISSING
 
 
+def test_unresolved_flow_cannot_prove_that_no_call_purpose_is_needed():
+    route = EntrypointKey(ServiceKey("orders"), "http", "GET", "/orders", "Orders.list")
+    unresolved = EvidenceSet(route, (), (
+        TraversalBoundary(route.symbol, "client.fetch", "unresolved", "flow"),
+    ), False)
+    capsule = EvidenceReducer().reduce((unresolved,), EvidenceBudget(20_000))
+
+    result = DeterministicSufficiencyEvaluator().evaluate(capsule)
+
+    assert result.status("integration_purpose") == SufficiencyStatus.AMBIGUOUS
+
+
 def test_openapi_body_absence_cannot_override_source_request_type_without_fields():
     route = EntrypointKey(ServiceKey("orders"), "http", "POST", "/orders", "Orders.create")
     entry = EvidenceFact(
@@ -153,6 +167,7 @@ def test_unsupported_transport_stays_explicit_even_with_no_retained_facts():
 
     assert result.overall == SufficiencyStatus.UNSUPPORTED
     assert result.status("contract") == SufficiencyStatus.UNSUPPORTED
+    assert result.status("integration_purpose") == SufficiencyStatus.UNSUPPORTED
 
 
 def test_authorization_ignores_only_unrelated_budget_omissions():

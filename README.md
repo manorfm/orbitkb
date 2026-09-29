@@ -571,6 +571,9 @@ limited navigation or omitted calls instead of treating missing evidence as no c
 The endpoint indexer also assesses canonical evidence by documentation dimension
 in shadow mode. `IndexResult.sufficiency_shadow` counts assessed statuses for
 regenerated endpoints; this does not skip generation or change LLM call counts.
+The assessment distinguishes a source-proven integration target from its business
+purpose and exchanged data. A Feign destination alone leaves
+`integration_purpose` ambiguous, so it cannot authorize zero-call generation.
 An explicit OpenAPI operation description can satisfy the business behavior
 dimension for its exact matching HTTP route. Missing or blank descriptions
 remain missing; other incomplete dimensions still require generation.

@@ -74,7 +74,7 @@ class DeterministicSufficiencyEvaluator:
                 DimensionAssessment(dimension, SufficiencyStatus.UNSUPPORTED, (),
                                     "deterministic endpoint assessment currently supports HTTP only")
                 for dimension in (
-                    "contract", "request_shape", "response_shape", "integrations",
+                    "contract", "request_shape", "response_shape", "integrations", "integration_purpose",
                     "authorization", "flow", "business_behavior",
                 )
             ), capsule.report.omitted_fact_ids)
@@ -94,6 +94,10 @@ class DeterministicSufficiencyEvaluator:
         behavior_enough = bool(described) and len(described) == len(entrypoints)
         request_enough = bool(contracts) and len(contracts) == len(entrypoints) and all(
             _has_proven_request_shape(contract) for contract in contracts
+        )
+        flow_incomplete = capsule.truncated or any(
+            boundary.reason in {"unresolved", "depth_limit", "node_limit", "edge_limit"}
+            for boundary in capsule.boundaries
         )
         authorization_limited = (
             capsule.navigation_truncated
@@ -142,6 +146,15 @@ class DeterministicSufficiencyEvaluator:
                 else "route-reachable calls have source evidence",
             ),
             DimensionAssessment(
+                "integration_purpose",
+                SufficiencyStatus.ENOUGH if not calls and not flow_incomplete
+                else SufficiencyStatus.AMBIGUOUS,
+                tuple(fact.id for fact in calls),
+                "static call targets do not establish purpose or exchanged data" if calls
+                else "limited flow may omit calls" if flow_incomplete
+                else "no route-reachable call requires a purpose",
+            ),
+            DimensionAssessment(
                 "authorization",
                 (SufficiencyStatus.ENOUGH if security and all(
                     fact.status == FactStatus.CONFIRMED for fact in security
@@ -151,10 +164,7 @@ class DeterministicSufficiencyEvaluator:
             ),
             DimensionAssessment(
                 "flow",
-                SufficiencyStatus.AMBIGUOUS if capsule.truncated or any(
-                    boundary.reason in {"unresolved", "depth_limit", "node_limit", "edge_limit"}
-                    for boundary in capsule.boundaries
-                ) else SufficiencyStatus.ENOUGH,
+                SufficiencyStatus.AMBIGUOUS if flow_incomplete else SufficiencyStatus.ENOUGH,
                 tuple(fact.id for fact in capsule.facts if fact.kind == "flow_edge"),
                 "unresolved or limited flow must remain explicit",
             ),
