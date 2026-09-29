@@ -39,6 +39,15 @@ def test_endpoint_prompt_uses_route_proven_feign_evidence_without_another_model_
     assert result.status == "ok"
     assert result.llm_calls == 4
     assert result.sufficiency_shadow == {"missing": 2}
+    assert {(item.method, item.path) for item in result.sufficiency_details} == {
+        ("GET", "/menus/{id}"), ("GET", "/menus/by-restaurant/{id}"),
+    }
+    detail = next(item for item in result.sufficiency_details if item.method == "GET")
+    assert detail.status == "missing"
+    assert detail.assessment is not None
+    behavior = next(item for item in detail.assessment.dimensions if item.dimension == "business_behavior")
+    assert behavior.status.value == "missing"
+    assert "business description" in behavior.reason
     assert "restaurant-service" in prompt
     assert "GET /restaurants/{id}" in prompt
     assert "MenuGateway.kt" in prompt

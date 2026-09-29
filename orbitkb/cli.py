@@ -87,6 +87,8 @@ def _cmd_index(args: argparse.Namespace) -> int:
             f"llm_invocations={r.llm_invocations} "
             f"cost_usd={r.cost_usd}"
         )
+        if args.sufficiency_details:
+            _print_sufficiency_details(r)
     if args.depth_mode != DepthMode.OFF.value:
         print(f"depth_provider_metrics={json.dumps(depth_provider.metrics(), sort_keys=True)}")
     return 0 if all(r.status == "ok" for r in results) else 1
@@ -122,7 +124,32 @@ def _update_one_service(
         f"{result.service_name}: status={result.status} files_changed={result.files_changed} "
         f"llm_calls={result.llm_calls} llm_invocations={result.llm_invocations} cost_usd={result.cost_usd}"
     )
+    if args.sufficiency_details:
+        _print_sufficiency_details(result)
     return result.status == "ok"
+
+
+def _print_sufficiency_details(result) -> None:
+    for detail in result.sufficiency_details:
+        assessment = detail.assessment
+        payload = {
+            "service": result.service_name,
+            "method": detail.method,
+            "path": detail.path,
+            "status": detail.status,
+            "dimensions": [
+                {
+                    "dimension": item.dimension,
+                    "status": item.status.value,
+                    "reason": item.reason,
+                    "evidence_ids": item.evidence_ids,
+                }
+                for item in assessment.dimensions
+            ] if assessment else [],
+            "omitted_fact_ids": assessment.omitted_fact_ids if assessment else (),
+            "reason": None if assessment else "matching canonical endpoint was not found",
+        }
+        print(f"sufficiency={json.dumps(payload, sort_keys=True)}")
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
@@ -694,6 +721,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_index.add_argument("--repository-name", default=None, help="Explicit repository name; avoids collisions when indexing several repos into one shared DB")
     p_index.add_argument("--force", action="store_true", help="Regenerate everything, ignoring file-hash skip")
+    p_index.add_argument("--sufficiency-details", action="store_true", help="Print per-route evidence sufficiency as JSON lines")
     p_index.add_argument(
         "--verbose", "-v", action="store_true",
         help="Log every file and function being statically analyzed at DEBUG level (to stderr) — "
@@ -716,6 +744,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Update every service in this repository instead of one by name (see `orbitkb list`)",
     )
     p_update.add_argument("--force", action="store_true", help="Regenerate everything, ignoring file-hash skip")
+    p_update.add_argument("--sufficiency-details", action="store_true", help="Print per-route evidence sufficiency as JSON lines")
     p_update.add_argument(
         "--verbose", "-v", action="store_true",
         help="Log every file and function being statically analyzed at DEBUG level (to stderr) — "

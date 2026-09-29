@@ -86,6 +86,25 @@ def test_index_command_accepts_verbose_flag(tmp_path: Path):
     assert args.verbose is True
 
 
+def test_index_command_can_show_route_sufficiency(tmp_path: Path, capsys):
+    args = _parse([
+        "index", str(SAMPLE_ROOT), "--db", str(tmp_path / "t.db"),
+        "--sufficiency-details",
+    ])
+
+    assert cli._cmd_index(args) == 0
+    output = capsys.readouterr().out
+    assert "sufficiency=" in output
+    assert '"dimension": "business_behavior"' in output
+    assert '"reason": "canonical static facts do not establish a business description"' in output
+
+
+def test_update_command_accepts_sufficiency_details_flag(tmp_path: Path):
+    args = _parse(["update", "orders-service", "--db", str(tmp_path / "t.db"), "--sufficiency-details"])
+
+    assert args.sufficiency_details is True
+
+
 def test_index_command_verbose_defaults_to_false(tmp_path: Path):
     args = _parse(["index", str(SAMPLE_ROOT), "--db", str(tmp_path / "t.db")])
 

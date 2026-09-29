@@ -36,6 +36,7 @@ from orbitkb.discovery.hashing import file_hash, git_head_commit
 from orbitkb.discovery.registry import detector_by_id
 from orbitkb.discovery.scan_helpers import SKIP_DIRS, collect_config_excerpts
 from orbitkb.discovery.walker import ServiceCandidate, discover_services
+from orbitkb.domain.sufficiency import SufficiencyResult
 from orbitkb.generation.architecture import recompute_architecture_view
 from orbitkb.generation.backend_base import LLMBackend, LLMUsage
 from orbitkb.generation.embeddings import EmbeddingBackend
@@ -84,6 +85,18 @@ class IndexResult:
     output_tokens: int | None = None
     cost_usd: float | None = None
     sufficiency_shadow: dict[str, int] = field(default_factory=dict)
+    sufficiency_details: tuple[RouteSufficiency, ...] = ()
+
+
+@dataclass(frozen=True)
+class RouteSufficiency:
+    method: str
+    path: str
+    assessment: SufficiencyResult | None
+
+    @property
+    def status(self) -> str:
+        return self.assessment.overall.value if self.assessment else "unassessed"
 
 
 class ProgressReporter(Protocol):
@@ -323,6 +336,7 @@ class IndexContext:
     any_component_regenerated: bool = False
     llm_invocations: int = 0
     sufficiency_shadow: dict[str, int] = field(default_factory=dict)
+    sufficiency_details: list[RouteSufficiency] = field(default_factory=list)
 
     def record_llm_invocation(self, unit: IndexUnit) -> None:
         self.llm_invocations += 1
@@ -359,7 +373,9 @@ class EndpointGenerator:
                 continue
             ctx.progress.unit_started(ctx.name, label)
             sufficiency = route_sufficiency(snapshot, endpoint.method, endpoint.path) if snapshot else None
-            shadow_status = sufficiency.overall.value if sufficiency else "unassessed"
+            detail = RouteSufficiency(endpoint.method, endpoint.path, sufficiency)
+            ctx.sufficiency_details.append(detail)
+            shadow_status = detail.status
             ctx.sufficiency_shadow[shadow_status] = ctx.sufficiency_shadow.get(shadow_status, 0) + 1
             source = EvidenceSource.from_excerpts(
                 [endpoint.excerpt, *endpoint.extra_excerpts], MAX_EXCERPT_CHARS,
@@ -763,6 +779,7 @@ def _index_service_unlocked(
         llm_invocations=ctx.llm_invocations,
         input_tokens=total_usage.input_tokens, output_tokens=total_usage.output_tokens, cost_usd=total_usage.cost_usd,
         sufficiency_shadow=ctx.sufficiency_shadow,
+        sufficiency_details=tuple(ctx.sufficiency_details),
     )
 
 

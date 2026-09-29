@@ -520,6 +520,10 @@ limited navigation or omitted calls instead of treating missing evidence as no c
 The endpoint indexer also assesses canonical evidence by documentation dimension
 in shadow mode. `IndexResult.sufficiency_shadow` counts assessed statuses for
 regenerated endpoints; this does not skip generation or change LLM call counts.
+Use `orbitkb index <path> --sufficiency-details` or
+`orbitkb update <service> --sufficiency-details` to print one JSON line per
+regenerated route with each dimension's status, reason and evidence IDs. An
+`unassessed` route indicates that no matching canonical endpoint was available.
 `describe_entrypoint.boundaries` also reports unresolved local symbols, cycles
 and traversal limits alongside known static boundaries, with source locations
 when the bounded edge is included.
