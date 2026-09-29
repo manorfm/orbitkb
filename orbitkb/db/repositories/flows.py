@@ -417,30 +417,3 @@ def list_all_static_cloud_facts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
            JOIN services s ON s.id = scf.service_id
            ORDER BY from_name, scf.service_name"""
     ).fetchall()
-
-
-def list_reachable_edges(conn: sqlite3.Connection, service_id: int, symbol: str, max_edges: int = 100) -> list[sqlite3.Row]:
-    """Breadth-first bounded traversal from one entrypoint's resolved symbol."""
-    pending = [symbol]
-    seen_symbols: set[str] = set()
-    seen_edges: set[int] = set()
-    result: list[sqlite3.Row] = []
-    while pending and len(result) < max_edges:
-        source = pending.pop(0)
-        if source in seen_symbols:
-            continue
-        seen_symbols.add(source)
-        rows = conn.execute(
-            "SELECT * FROM flow_edges WHERE service_id = ? AND from_symbol = ? ORDER BY id",
-            (service_id, source),
-        ).fetchall()
-        for edge in rows:
-            if edge["id"] in seen_edges:
-                continue
-            seen_edges.add(edge["id"])
-            result.append(edge)
-            if edge["to_symbol"] not in seen_symbols:
-                pending.append(edge["to_symbol"])
-            if len(result) >= max_edges:
-                break
-    return result

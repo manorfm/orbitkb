@@ -32,6 +32,7 @@ READ_ENTRYPOINT_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 BROAD_EXCEPTION_TYPES = frozenset({"exception", "throwable", "error", "runtimeexception"})
 POTENTIALLY_NON_IDEMPOTENT_HTTP_METHODS = frozenset({"POST", "PATCH"})
 CLIENT_ERROR_KINDS = frozenset({"authorization", "conflict", "not_found", "rate_limit", "validation"})
+DOWNSTREAM_FLOW_TRUNCATED_UNKNOWN = "The downstream endpoint flow was truncated before all errors could be checked."
 
 
 def _internal_edges(conn: sqlite3.Connection) -> list[tuple[int, int]]:
@@ -1532,13 +1533,13 @@ def find_retries_on_downstream_client_errors(conn: sqlite3.Connection) -> list[d
                     call.target_path, call.file_path, call.start_line""",
     ).fetchall()
     policies_by_source = _retry_policies_by_source(conn)
-    endpoint_contracts: dict[tuple[int, str, str], tuple[str, list[sqlite3.Row]]] = {}
+    endpoint_contracts: dict[tuple[int, str | None, str | None], tuple[str, list[dict], bool]] = {}
     findings: list[dict] = []
     for call in calls:
         policies = policies_by_source.get((call["from_service_id"], call["caller_source"]))
         if not policies:
             continue
-        scope, contracts = _downstream_contract_scope(conn, call, endpoint_contracts)
+        scope, contracts, truncated = _downstream_contract_scope(conn, call, endpoint_contracts)
         for contract in contracts:
             if not _is_client_error_contract(contract):
                 continue
@@ -1582,6 +1583,7 @@ def find_retries_on_downstream_client_errors(conn: sqlite3.Connection) -> list[d
                             if scope == "endpoint_flow"
                             else "The downstream mapping may be global or may not apply to this endpoint."
                         ),
+                        *([DOWNSTREAM_FLOW_TRUNCATED_UNKNOWN] if truncated else []),
                     ],
                     "remediation": [
                         "Review retry predicates and exclude permanent client errors unless the downstream contract explicitly marks them transient.",
@@ -1875,7 +1877,7 @@ def _static_unmapped_downstream_error_findings(
     partially indexed systems, but deliberately carries lower confidence.
     """
     caller_mappings: dict[int, set[str]] = {}
-    endpoint_contracts: dict[tuple[int, str, str], tuple[str, list[sqlite3.Row]]] = {}
+    endpoint_contracts: dict[tuple[int, str | None, str | None], tuple[str, list[dict], bool]] = {}
     findings: list[dict] = []
     for call in calls:
         caller_id = call["from_service_id"]
@@ -1884,7 +1886,7 @@ def _static_unmapped_downstream_error_findings(
         if mapped_types is None:
             mapped_types = _mapped_client_error_types(conn, caller_id)
             caller_mappings[caller_id] = mapped_types
-        scope, contracts = _downstream_contract_scope(conn, call, endpoint_contracts)
+        scope, contracts, truncated = _downstream_contract_scope(conn, call, endpoint_contracts)
         for contract in contracts:
             if not _is_client_error_contract(contract) or contract["internal_type"] in mapped_types:
                 continue
@@ -1924,6 +1926,7 @@ def _static_unmapped_downstream_error_findings(
                     "unknowns": [
                         target_unknown,
                         "The caller may translate the downstream error to another local type or rely on a handler outside the indexed source.",
+                        *([DOWNSTREAM_FLOW_TRUNCATED_UNKNOWN] if truncated else []),
                     ],
                     "remediation": [
                         "Review the client boundary and preserve, explicitly translate, or document this downstream client-error contract.",
@@ -1936,30 +1939,53 @@ def _static_unmapped_downstream_error_findings(
 def _downstream_contract_scope(
     conn: sqlite3.Connection,
     call: sqlite3.Row,
-    endpoint_contracts: dict[tuple[int, str, str], tuple[str, list[sqlite3.Row]]],
-) -> tuple[str, list[sqlite3.Row]]:
+    endpoint_contracts: dict[tuple[int, str | None, str | None], tuple[str, list[dict], bool]],
+) -> tuple[str, list[dict], bool]:
     """Return endpoint-reachable contracts when the literal target is indexed."""
     method = call["api_method"]
     path = call["api_path"]
     target_id = call["to_service_id"]
-    if not isinstance(method, str) or not isinstance(path, str):
-        return "service_contracts", flows_repo.list_static_error_contracts(conn, target_id)
-    key = (target_id, method, path)
+    key = (target_id, method if isinstance(method, str) else None,
+           path if isinstance(path, str) else None)
     if key not in endpoint_contracts:
-        entrypoint = flows_repo.get_entrypoint(conn, target_id, "http", method, path)
+        if not canonical_snapshots_repo.has_snapshot(conn, target_id):
+            endpoint_contracts[key] = ("service_contracts", [], False)
+            return endpoint_contracts[key]
+        snapshot = canonical_snapshots_repo.read_snapshot(conn, target_id)
+        if snapshot is None:
+            endpoint_contracts[key] = ("service_contracts", [], False)
+            return endpoint_contracts[key]
+        entrypoint = (
+            flows_repo.get_entrypoint(conn, target_id, "http", method, path)
+            if isinstance(method, str) and isinstance(path, str) else None
+        )
         if entrypoint is None:
-            endpoint_contracts[key] = ("service_contracts", flows_repo.list_static_error_contracts(conn, target_id))
+            endpoint_contracts[key] = ("service_contracts", _canonical_error_contract_rows(snapshot.facts), False)
         else:
-            edges = flows_repo.list_reachable_edges(conn, target_id, entrypoint["symbol"], max_edges=200)
-            symbols = {entrypoint["symbol"]}
-            for edge in edges:
-                symbols.add(edge["from_symbol"])
-                symbols.add(edge["to_symbol"])
-            endpoint_contracts[key] = (
-                "endpoint_flow",
-                flows_repo.list_static_error_contracts_for_sources(conn, target_id, symbols),
+            entry_key = EntrypointKey(snapshot.service, "http", entrypoint["method"],
+                                      entrypoint["name"], entrypoint["symbol"])
+            traversal = KnowledgeNavigator(snapshot).reachable(
+                entry_key, TraversalPolicy(max_depth=200, max_nodes=201, max_edges=200),
             )
+            endpoint_contracts[key] = ("endpoint_flow", _canonical_error_contract_rows(traversal.facts),
+                                       traversal.truncated)
     return endpoint_contracts[key]
+
+
+def _canonical_error_contract_rows(facts: tuple[CanonicalFact, ...]) -> list[dict]:
+    rows = []
+    for fact in facts:
+        if fact.kind != "error_contract":
+            continue
+        if not isinstance(fact.subject, SymbolKey):
+            raise ValueError("error contract must belong to a symbol")
+        for source in fact.sources:
+            rows.append({
+                "source": fact.subject.name, **fact.attributes,
+                "file_path": source.file_path, "start_line": source.start_line,
+                "end_line": source.end_line,
+            })
+    return rows
 
 
 def _mapped_client_error_types(conn: sqlite3.Connection, service_id: int) -> set[str]:

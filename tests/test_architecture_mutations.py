@@ -389,6 +389,7 @@ def test_unmapped_downstream_error_uses_a_proven_feign_client_call(tmp_path: Pat
     )
     flows_repo.replace_analysis(conn, checkout, AnalysisResult(static_service_calls=[feign_call]))
     flows_repo.replace_analysis(conn, inventory, AnalysisResult(error_contracts=[downstream]))
+    conn.execute("DELETE FROM static_error_contracts WHERE service_id = ?", (inventory,))
 
     findings = find_unmapped_downstream_errors(conn)
 
@@ -536,6 +537,8 @@ def test_retry_on_downstream_client_error_disappears_without_a_retry_policy(tmp_
             error_contracts=[conflict],
         ),
     )
+    conn.execute("DELETE FROM flow_edges WHERE service_id = ?", (inventory,))
+    conn.execute("DELETE FROM static_error_contracts WHERE service_id = ?", (inventory,))
 
     findings = find_retries_on_downstream_client_errors(conn)
 
@@ -1065,6 +1068,8 @@ def test_unmapped_downstream_error_scopes_static_call_to_the_target_endpoint_flo
             error_contracts=[reservation_error, unrelated_error],
         ),
     )
+    conn.execute("DELETE FROM flow_edges WHERE service_id = ?", (inventory,))
+    conn.execute("DELETE FROM static_error_contracts WHERE service_id = ?", (inventory,))
 
     findings = find_unmapped_downstream_errors(conn)
 
@@ -1072,6 +1077,33 @@ def test_unmapped_downstream_error_scopes_static_call_to_the_target_endpoint_flo
     assert findings[0]["detail"]["downstream"]["error_type"] == "InsufficientStockException"
     assert findings[0]["detail"]["scope"] == "endpoint_flow"
     assert findings[0]["detail"]["confidence"] == 0.75
+
+
+def test_downstream_error_finding_reports_truncated_target_flow(tmp_path: Path):
+    conn = open_db(tmp_path / "bounded-downstream-error.db")
+    checkout = services_repo.ensure_service(conn, "checkout", "/tmp/checkout", "jvm-spring")
+    inventory = services_repo.ensure_service(conn, "inventory", "/tmp/inventory", "jvm-spring")
+    symbols = ["InventoryController.reserve", *(f"Node{i}.run" for i in range(201))]
+    flows_repo.replace_analysis(conn, checkout, AnalysisResult(static_service_calls=[StaticServiceCall(
+        source="CheckoutService.checkout", target_service="inventory", protocol="http",
+        target_method="POST", target_path="/reservations", evidence=STATIC_EVIDENCE,
+    )]))
+    flows_repo.replace_analysis(conn, inventory, AnalysisResult(
+        entrypoints=[EntryPoint("http", "POST", "/reservations", symbols[0], STATIC_EVIDENCE)],
+        edges=[FlowEdge(source, target, "invokes", STATIC_EVIDENCE)
+               for source, target in zip(symbols, symbols[1:])],
+        error_contracts=[ErrorContract(
+            source=symbols[0], role="raises", error_kind="conflict",
+            internal_type="InsufficientStockException", protocol="http", transport_code="409",
+            public_code="OUT_OF_STOCK", exposes_internal_detail=False,
+            retryability="not_retryable", evidence=STATIC_EVIDENCE,
+        )],
+    ))
+
+    findings = find_unmapped_downstream_errors(conn)
+
+    assert len(findings) == 1
+    assert any("truncated" in item for item in findings[0]["detail"]["unknowns"])
 
 
 def _replace_calls(conn, service_id: int, api_id: int, targets: list[str]) -> None:
