@@ -276,6 +276,8 @@ is plain text — versionable and diffable in a PR, unlike a generated image.
 When source analysis confirms a Spring Redis Pub/Sub publication, topology shows
 a Redis node for that producer. It does not assign an unknown channel, consumer
 or shared Redis instance.
+Source-proven HTTP calls also appear with their declared target marked
+`unresolved` when no existing service call has established the destination.
 
 Both accept `--service <name>` to export just one service instead of every
 indexed one.

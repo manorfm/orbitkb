@@ -59,7 +59,7 @@ def test_sample_exposes_a_real_controller_route_without_feign_routes():
     )
 
 
-def test_sample_topology_shows_redis_publication_without_inventing_channel(tmp_path: Path):
+def test_sample_topology_shows_proven_dependencies_without_inventing_destinations(tmp_path: Path):
     analysis = StaticAnalysisEngine().analyze(SAMPLE, "jvm-spring")
     conn = open_db(tmp_path / "sample.db")
     service_id = services_repo.ensure_service(conn, "sample-order", str(SAMPLE), "jvm-spring")
@@ -71,6 +71,7 @@ def test_sample_topology_shows_redis_publication_without_inventing_channel(tmp_p
     assert 'broker_sample_order_redis[("Redis Pub/Sub")]' in diagram
     assert "events:spot" not in diagram
     assert "RabbitMQ" not in diagram
+    assert 'svc_sample_order -.->|http (unresolved)| ext_catalog_service_declared_target' in diagram
 
 
 def test_sample_has_source_proven_security_and_catalog_calls():

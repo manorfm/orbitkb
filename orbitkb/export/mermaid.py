@@ -79,8 +79,10 @@ def generate_topology_diagram(
     """`graph TD` over every indexed service (or, with `root_services`, only the
     subgraph reachable within `hops` steps of them): each as a node, external
     vendors as rounded nodes, service_calls as solid edges, message links as dashed
-    edges. A confirmed Redis Pub/Sub publication adds a broker node scoped to
-    its producer service; the source does not prove a channel or shared instance.
+    edges. Source-proven HTTP calls without a reconciled destination retain a
+    declared target node, marked unresolved. A confirmed Redis Pub/Sub
+    publication adds a broker node scoped to its producer service; the source
+    does not prove a channel or shared instance.
     Services involved in a cycle (find_architecture_smells) are styled
     distinctly — the one piece of interpretation on top of otherwise purely
     structural facts. Cycle styling and DB nodes are scoped the same way: a service
@@ -89,9 +91,10 @@ def generate_topology_diagram(
     cycle_names = _cycle_service_names(conn)
     included = _reachable_service_names(conn, root_services, hops) if root_services is not None else None
     lines = ["graph TD"]
+    services = services_repo.list_services(conn)
 
     service_ids: dict[str, str] = {}
-    for svc in services_repo.list_services(conn):
+    for svc in services:
         if included is not None and svc["name"] not in included:
             continue
         node_id = f"svc_{_slug(svc['name'])}"
@@ -107,12 +110,14 @@ def generate_topology_diagram(
             lines.append(f'  {node_id}(("{name}"))')
         return external_ids[name]
 
+    rendered_targets: set[tuple[str, str]] = set()
     for edge in service_calls_repo.list_internal_edges(conn):
         from_id = service_ids.get(edge["from_name"])
         to_id = service_ids.get(edge["to_name"])
         if from_id is None or to_id is None:
             continue
         lines.append(f"  {from_id} -->|{edge['call_kind']}| {to_id}")
+        rendered_targets.add((edge["from_name"], edge["to_name"]))
 
     for edge in service_calls_repo.list_external_edges(conn):
         from_id = service_ids.get(edge["from_name"])
@@ -121,6 +126,7 @@ def generate_topology_diagram(
         target_id = external_node(edge["to_service_name"])
         label = edge["resource_type"] or "external"
         lines.append(f"  {from_id} -.->|{label}| {target_id}")
+        rendered_targets.add((edge["from_name"], edge["to_service_name"]))
 
     for edge in service_calls_repo.list_unresolved_edges(conn):
         from_id = service_ids.get(edge["from_name"])
@@ -128,6 +134,19 @@ def generate_topology_diagram(
             continue
         target_id = external_node(edge["to_service_name"])
         lines.append(f"  {from_id} -.->|{edge['call_kind']} (unresolved)| {target_id}")
+        rendered_targets.add((edge["from_name"], edge["to_service_name"]))
+
+    for svc in services:
+        from_id = service_ids.get(svc["name"])
+        if from_id is None:
+            continue
+        for call in flows_repo.list_static_service_calls(conn, svc["id"]):
+            key = (svc["name"], call["target_service"])
+            if call["protocol"] != "http" or key in rendered_targets:
+                continue
+            target_id = external_node(f"{call['target_service']} (declared target)")
+            lines.append(f"  {from_id} -.->|http (unresolved)| {target_id}")
+            rendered_targets.add(key)
 
     for fact in flows_repo.list_all_static_cloud_facts(conn):
         from_id = service_ids.get(fact["from_name"])
@@ -156,7 +175,7 @@ def generate_topology_diagram(
         else:
             lines.append(f"  {broker_id} -.->|{row['channel']}| {from_id}")
 
-    for svc in services_repo.list_services(conn):
+    for svc in services:
         from_id = service_ids.get(svc["name"])
         if from_id is None:
             continue

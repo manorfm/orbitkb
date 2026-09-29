@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from orbitkb.analysis.models import AnalysisResult, CloudFact, Evidence, FlowEdge
+from orbitkb.analysis.models import (
+    AnalysisResult,
+    CloudFact,
+    Evidence,
+    FlowEdge,
+    StaticServiceCall,
+)
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import flows as flows_repo
@@ -102,6 +108,49 @@ def test_topology_shows_only_confirmed_redis_publishers_without_a_channel(tmp_pa
 
     flows_repo.replace_analysis(conn, proven_id, AnalysisResult())
     assert "broker_orders_service_redis" not in generate_topology_diagram(conn)
+
+
+def test_topology_shows_static_http_target_without_claiming_a_resolved_service(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    caller_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    services_repo.ensure_service(conn, "catalog-service", "/tmp/catalog", "jvm-spring")
+    flows_repo.replace_analysis(conn, caller_id, AnalysisResult(static_service_calls=[
+        StaticServiceCall("MenuClient.getItem", "catalog-service", "http", "GET", "/items/{id}",
+                          Evidence("MenuClient.kt", 8, 9)),
+        StaticServiceCall("MenuClient.getIngredient", "catalog-service", "http", "GET", "/ingredients/{id}",
+                          Evidence("MenuClient.kt", 12, 13)),
+    ]))
+
+    diagram = generate_topology_diagram(conn)
+
+    assert 'ext_catalog_service_declared_target(("catalog-service (declared target)"))' in diagram
+    assert diagram.count('svc_orders_service -.->|http (unresolved)| ext_catalog_service_declared_target') == 1
+    assert "svc_orders_service -->|http| svc_catalog_service" not in diagram
+    assert "ext_catalog_service_declared_target" not in generate_topology_diagram(
+        conn, root_services={"catalog-service"}, hops=0,
+    )
+
+    flows_repo.replace_analysis(conn, caller_id, AnalysisResult())
+    assert "ext_catalog_service_declared_target" not in generate_topology_diagram(conn)
+
+
+def test_topology_does_not_duplicate_a_reconciled_http_target(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    caller_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    services_repo.ensure_service(conn, "catalog-service", "/tmp/catalog", "jvm-spring")
+    flows_repo.replace_analysis(conn, caller_id, AnalysisResult(static_service_calls=[
+        StaticServiceCall("MenuClient.getItem", "catalog-service", "http", "GET", "/items/{id}",
+                          Evidence("MenuClient.kt", 8, 9)),
+    ]))
+    api_id = apis_repo.upsert_api(conn, caller_id, "GET", "/orders", "s", "d", [], EVIDENCE)
+    service_calls_repo.replace_calls_for_api(conn, caller_id, api_id, [
+        {"to_service_name": "catalog-service", "call_kind": "http", "target_kind": "unknown"},
+    ], EVIDENCE)
+
+    diagram = generate_topology_diagram(conn)
+
+    assert 'svc_orders_service -->|http| svc_catalog_service' in diagram
+    assert "ext_catalog_service_declared_target" not in diagram
 
 
 def test_generate_topology_diagram_keeps_unresolved_indexed_calls(tmp_path: Path):
