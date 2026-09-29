@@ -171,6 +171,8 @@ def test_index_path_indexes_all_three_sample_services(tmp_path: Path):
     assert names == {"orders-service", "payments-service", "inventory-service"}
     assert all(r.status == "ok" for r in results)
     assert all(r.llm_calls > 0 for r in results)
+    assert sum(r.llm_invocations for r in results) == backend.calls
+    assert all(r.llm_invocations == r.llm_calls for r in results)
 
     services = {s["name"] for s in services_repo.list_services(conn)}
     assert services == names
@@ -227,6 +229,7 @@ def test_reindexing_unchanged_files_skips_generation(tmp_path: Path):
     assert second_backend.calls == 0  # nothing changed, every unit skipped
     assert all(r.status == "ok" for r in results)
     assert all(r.llm_calls == 0 for r in results)
+    assert all(r.llm_invocations == 0 for r in results)
     assert calls_after_first_run > 0  # sanity: the first run did do real work
 
 
@@ -379,9 +382,14 @@ def test_generation_failure_is_isolated_per_unit(tmp_path: Path):
     conn2 = open_db(tmp_path / "test2.db")
     candidates = discover_services(SAMPLE_ROOT)
     orders = next(c for c in candidates if c.name == "orders-service")
+    calls_before = backend.calls
     result = index_service(conn2, orders.name, orders.path, orders.detector, backend, failures_root=failures_root)
 
     assert result.status == "partial"
+    assert result.llm_invocations == backend.calls - calls_before
+    assert result.llm_invocations == result.llm_calls + 2
+    run = conn2.execute("SELECT llm_invocations FROM index_runs WHERE service_id = ?", (result.service_id,)).fetchone()
+    assert run["llm_invocations"] == result.llm_invocations
     # the API unit still succeeded even though overview failed for this service
     orders_row = services_repo.get_service_by_name(conn2, "orders-service")
     assert orders_row["short_desc"] is None  # overview failed, never written

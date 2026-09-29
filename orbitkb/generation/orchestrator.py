@@ -63,6 +63,7 @@ class IndexResult:
     files_changed: int
     llm_calls: int
     status: str
+    llm_invocations: int = 0
     input_tokens: int | None = None
     output_tokens: int | None = None
     cost_usd: float | None = None
@@ -285,6 +286,10 @@ class IndexContext:
     embedding_backend: EmbeddingBackend | None = None
     any_endpoint_regenerated: bool = False
     any_component_regenerated: bool = False
+    llm_invocations: int = 0
+
+    def record_llm_invocation(self) -> None:
+        self.llm_invocations += 1
 
 
 class UnitGenerator(Protocol):
@@ -313,6 +318,7 @@ class EndpointGenerator:
             generation = generate_with_retry(
                 ctx.backend, prompt, load_schema("api_detail"), ctx.root, ctx.failures_root,
                 f"{ctx.name}-{endpoint.method}-{endpoint.path}",
+                on_attempt=ctx.record_llm_invocation,
             )
             if not generation:
                 outcome.had_failure = True
@@ -369,6 +375,7 @@ class ComponentGenerator:
             generation = generate_with_retry(
                 ctx.backend, prompt, load_schema("component"), ctx.root, ctx.failures_root,
                 f"{ctx.name}-component-{component_name}",
+                on_attempt=ctx.record_llm_invocation,
             )
             if not generation:
                 outcome.had_failure = True
@@ -407,7 +414,8 @@ class PersistenceGenerator:
         )
         prompt = _render_persistence_prompt(ctx.name, ctx.detector.id, ctx.hints, persistence_config_excerpts)
         generation = generate_with_retry(
-            ctx.backend, prompt, load_schema("persistence"), ctx.root, ctx.failures_root, f"{ctx.name}-persistence"
+            ctx.backend, prompt, load_schema("persistence"), ctx.root, ctx.failures_root, f"{ctx.name}-persistence",
+            on_attempt=ctx.record_llm_invocation,
         )
         if generation:
             result = generation.structured
@@ -443,7 +451,8 @@ class MessagingGenerator:
         config_excerpts = collect_config_excerpts(ctx.root) if _needs_config_evidence(ctx.hints) else []
         prompt = _render_messaging_prompt(ctx.name, ctx.detector.id, ctx.hints, config_excerpts)
         generation = generate_with_retry(
-            ctx.backend, prompt, load_schema("messaging"), ctx.root, ctx.failures_root, f"{ctx.name}-messaging"
+            ctx.backend, prompt, load_schema("messaging"), ctx.root, ctx.failures_root, f"{ctx.name}-messaging",
+            on_attempt=ctx.record_llm_invocation,
         )
         if generation:
             result = generation.structured
@@ -489,7 +498,8 @@ class OverviewGenerator:
         components = components_repo.list_components(ctx.conn, ctx.service_id)
         prompt = _render_service_overview_prompt(ctx.name, ctx.detector.id, ctx.root, ctx.hints, components)
         generation = generate_with_retry(
-            ctx.backend, prompt, load_schema("service_overview"), ctx.root, ctx.failures_root, f"{ctx.name}-overview"
+            ctx.backend, prompt, load_schema("service_overview"), ctx.root, ctx.failures_root, f"{ctx.name}-overview",
+            on_attempt=ctx.record_llm_invocation,
         )
         if generation:
             result = generation.structured
@@ -565,11 +575,10 @@ def _index_service_unlocked(
             static_analysis_repo.delete_snapshot(conn, service_id)
         analysis = static_engine.analyze(root, detector.id)
         flows_repo.replace_analysis(conn, service_id, analysis)
-        if cacheable_static_analysis and static_digest is not None:
-            if static_engine.input_digest(root, detector.id) == static_digest:
-                static_analysis_repo.replace_snapshot(
-                    conn, service_id, static_digest, STATIC_ANALYSIS_INPUT_VERSION,
-                )
+        if cacheable_static_analysis and static_digest is not None and static_engine.input_digest(root, detector.id) == static_digest:
+            static_analysis_repo.replace_snapshot(
+                conn, service_id, static_digest, STATIC_ANALYSIS_INPUT_VERSION,
+            )
     security_findings_repo.replace_findings(conn, service_id, find_security_findings(root))
 
     old_hashes = indexed_files_repo.get_indexed_file_hashes(conn, service_id)
@@ -635,12 +644,14 @@ def _index_service_unlocked(
         conn, run_id, status, len(changed) + len(removed), llm_calls,
         run_error,
         input_tokens=total_usage.input_tokens, output_tokens=total_usage.output_tokens, cost_usd=total_usage.cost_usd,
+        llm_invocations=ctx.llm_invocations,
     )
     progress.service_finished(name)
 
     return IndexResult(
         service_name=name, service_id=service_id,
         files_changed=len(changed) + len(removed), llm_calls=llm_calls, status=status,
+        llm_invocations=ctx.llm_invocations,
         input_tokens=total_usage.input_tokens, output_tokens=total_usage.output_tokens, cost_usd=total_usage.cost_usd,
     )
 

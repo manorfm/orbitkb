@@ -8,14 +8,20 @@ from __future__ import annotations
 import json
 import logging
 import time
-from functools import lru_cache
+from collections.abc import Callable
+from functools import cache
 from importlib import resources
 from pathlib import Path
 from string import Template
 
 import jsonschema
 
-from orbitkb.generation.backend_base import GenerationError, GenerationOutcome, LLMBackend, LLMUsage
+from orbitkb.generation.backend_base import (
+    GenerationError,
+    GenerationOutcome,
+    LLMBackend,
+    LLMUsage,
+)
 from orbitkb.security.redaction import redact_sensitive_values, redact_structured_values
 
 logger = logging.getLogger(__name__)
@@ -24,20 +30,21 @@ PROMPTS_PKG = "orbitkb.generation.prompts"
 SCHEMAS_PKG = "orbitkb.generation.schemas"
 
 
-@lru_cache(maxsize=None)
+@cache
 def load_prompt(name: str) -> Template:
     text = resources.files(PROMPTS_PKG).joinpath(f"{name}.md").read_text(encoding="utf-8")
     return Template(text)
 
 
-@lru_cache(maxsize=None)
+@cache
 def load_schema(name: str) -> dict:
     text = resources.files(SCHEMAS_PKG).joinpath(f"{name}.schema.json").read_text(encoding="utf-8")
     return json.loads(text)
 
 
 def generate_with_retry(
-    backend: LLMBackend, prompt: str, schema: dict, cwd: Path, failures_dir: Path, label: str
+    backend: LLMBackend, prompt: str, schema: dict, cwd: Path, failures_dir: Path, label: str,
+    on_attempt: Callable[[], None] | None = None,
 ) -> GenerationOutcome | None:
     last_error: Exception | None = None
     safe_prompt = redact_sensitive_values(prompt)
@@ -45,6 +52,8 @@ def generate_with_retry(
     total_usage = LLMUsage()
     for _attempt in range(2):
         try:
+            if on_attempt is not None:
+                on_attempt()
             outcome = backend.generate(current_prompt, schema, cwd)
             total_usage = total_usage + outcome.usage  # a retried call is still a billed call
             jsonschema.validate(outcome.structured, schema)

@@ -804,6 +804,7 @@ CREATE TABLE IF NOT EXISTS index_runs (
     backend       TEXT,
     files_changed INTEGER DEFAULT 0,
     llm_calls     INTEGER DEFAULT 0,
+    llm_invocations INTEGER,
     notes         TEXT,
     -- Best-effort token/cost accounting summed across every unit generated in this
     -- run (see generation.backend_base.LLMUsage) — NULL, never a guess, whenever the

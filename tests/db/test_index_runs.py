@@ -12,12 +12,16 @@ def test_finish_index_run_persists_usage_columns(tmp_path: Path):
     service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")
     run_id = repository.start_index_run(conn, service_id, "claude")
 
-    repository.finish_index_run(conn, run_id, "ok", 3, 2, None, input_tokens=1000, output_tokens=200, cost_usd=0.05)
+    repository.finish_index_run(
+        conn, run_id, "ok", 3, 2, None,
+        input_tokens=1000, output_tokens=200, cost_usd=0.05, llm_invocations=3,
+    )
 
     run = repository.recent_index_runs(conn, service_id, limit=1)[0]
     assert run["input_tokens"] == 1000
     assert run["output_tokens"] == 200
     assert run["cost_usd"] == 0.05
+    assert run["llm_invocations"] == 3
 
 
 def test_finish_index_run_defaults_usage_to_none(tmp_path: Path):

@@ -2,8 +2,8 @@
 service, used by `orbitkb status` to show indexing history and token/cost usage."""
 from __future__ import annotations
 
-import sqlite3
 import os
+import sqlite3
 
 from ._util import now
 
@@ -56,13 +56,14 @@ def finish_index_run(
     input_tokens: int | None = None,
     output_tokens: int | None = None,
     cost_usd: float | None = None,
+    llm_invocations: int | None = None,
 ) -> None:
     conn.execute(
         """UPDATE index_runs
            SET finished_at = ?, status = ?, files_changed = ?, llm_calls = ?, notes = ?,
-               input_tokens = ?, output_tokens = ?, cost_usd = ?
+               input_tokens = ?, output_tokens = ?, cost_usd = ?, llm_invocations = ?
            WHERE id = ?""",
-        (now(), status, files_changed, llm_calls, notes, input_tokens, output_tokens, cost_usd, run_id),
+        (now(), status, files_changed, llm_calls, notes, input_tokens, output_tokens, cost_usd, llm_invocations, run_id),
     )
     conn.commit()
 

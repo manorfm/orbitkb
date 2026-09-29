@@ -84,6 +84,7 @@ def _cmd_index(args: argparse.Namespace) -> int:
     for r in results:
         print(
             f"{r.service_name}: status={r.status} files_changed={r.files_changed} llm_calls={r.llm_calls} "
+            f"llm_invocations={r.llm_invocations} "
             f"cost_usd={r.cost_usd}"
         )
     if args.depth_mode != DepthMode.OFF.value:
@@ -119,7 +120,7 @@ def _update_one_service(
         return False
     print(
         f"{result.service_name}: status={result.status} files_changed={result.files_changed} "
-        f"llm_calls={result.llm_calls} cost_usd={result.cost_usd}"
+        f"llm_calls={result.llm_calls} llm_invocations={result.llm_invocations} cost_usd={result.cost_usd}"
     )
     return result.status == "ok"
 
@@ -326,6 +327,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
             print(
                 f"  run#{run['id']} {run['started_at']} status={run['status']} backend={run['backend']} "
                 f"files_changed={run['files_changed']} llm_calls={run['llm_calls']} "
+                f"llm_invocations={run['llm_invocations']} "
                 f"tokens=(in={run['input_tokens']},out={run['output_tokens']}) cost_usd={run['cost_usd']} "
                 f"notes={run['notes']}"
             )
@@ -342,7 +344,8 @@ def _cmd_status(args: argparse.Namespace) -> int:
             name = svc["name"] if svc else "?"
             print(
                 f"  run#{run['id']} service={name} status={run['status']} backend={run['backend']} "
-                f"files_changed={run['files_changed']} llm_calls={run['llm_calls']} cost_usd={run['cost_usd']}"
+                f"files_changed={run['files_changed']} llm_calls={run['llm_calls']} "
+                f"llm_invocations={run['llm_invocations']} cost_usd={run['cost_usd']}"
             )
         totals = index_runs_repo.usage_totals(conn)
         print(
