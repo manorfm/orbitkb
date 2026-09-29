@@ -278,6 +278,9 @@ a Redis node for that producer. It does not assign an unknown channel, consumer
 or shared Redis instance.
 Source-proven HTTP calls also appear with their declared target marked
 `unresolved` when no existing service call has established the destination.
+Confirmed calls on an injected Spring Mongo template add a per-service MongoDB
+node labeled `accesses`; the diagram does not infer the collection or operation
+direction from `MongoTemplate.execute`.
 
 Both accept `--service <name>` to export just one service instead of every
 indexed one.

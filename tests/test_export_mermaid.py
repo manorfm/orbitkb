@@ -5,6 +5,7 @@ from orbitkb.analysis.models import (
     CloudFact,
     Evidence,
     FlowEdge,
+    Injection,
     StaticServiceCall,
 )
 from orbitkb.db.connection import open_db
@@ -108,6 +109,57 @@ def test_topology_shows_only_confirmed_redis_publishers_without_a_channel(tmp_pa
 
     flows_repo.replace_analysis(conn, proven_id, AnalysisResult())
     assert "broker_orders_service_redis" not in generate_topology_diagram(conn)
+
+
+def test_topology_requires_a_confirmed_call_on_an_injected_mongo_template(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    proven_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    unused_id = services_repo.ensure_service(conn, "unused-service", "/tmp/unused", "jvm-spring")
+    inferred_id = services_repo.ensure_service(conn, "maybe-service", "/tmp/maybe", "jvm-spring")
+    other_id = services_repo.ensure_service(conn, "other-service", "/tmp/other", "jvm-spring")
+    mongo = Injection("Store.mongo", "MongoTemplate", None, Evidence("Store.kt", 2, 2))
+    proven_call = FlowEdge("Store.save", "mongo.execute", "invokes", Evidence("Store.kt", 4, 4),
+                           boundary_kind="persistence")
+    flows_repo.replace_analysis(conn, proven_id, AnalysisResult(injections=[mongo], edges=[proven_call]))
+    flows_repo.replace_analysis(conn, unused_id, AnalysisResult(injections=[mongo]))
+    flows_repo.replace_analysis(conn, inferred_id, AnalysisResult(injections=[mongo], edges=[
+        FlowEdge("Store.save", "mongo.execute", "invokes", Evidence("Store.kt", 4, 4),
+                 confidence="medium", boundary_kind="persistence"),
+    ]))
+    flows_repo.replace_analysis(conn, other_id, AnalysisResult(
+        injections=[Injection("Store.mongo", "OtherClient", None, Evidence("Store.kt", 2, 2))],
+        edges=[proven_call],
+    ))
+
+    diagram = generate_topology_diagram(conn)
+
+    assert 'db_orders_service_mongodb[("MongoDB")]' in diagram
+    assert 'svc_orders_service -.->|accesses| db_orders_service_mongodb' in diagram
+    assert "db_unused_service_mongodb" not in diagram
+    assert "db_maybe_service_mongodb" not in diagram
+    assert "db_other_service_mongodb" not in diagram
+    assert "mongo.execute" not in diagram
+
+    flows_repo.replace_analysis(conn, proven_id, AnalysisResult(edges=[proven_call]))
+    assert "db_orders_service_mongodb" not in generate_topology_diagram(conn)
+
+
+def test_topology_does_not_duplicate_existing_mongo_engine(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(
+        injections=[Injection("Store.mongo", "MongoTemplate", None, Evidence("Store.kt", 2, 2))],
+        edges=[FlowEdge("Store.save", "mongo.save", "writes", Evidence("Store.kt", 4, 4),
+                        boundary_kind="persistence")],
+    ))
+    persistence_repo.replace_persistence_entities(
+        conn, service_id,
+        [{"name": "orders", "kind": "document", "engine": "mongodb", "schema_json": []}], EVIDENCE,
+    )
+
+    diagram = generate_topology_diagram(conn)
+
+    assert diagram.count("db_orders_service_mongodb") == 2  # declaration and edge
 
 
 def test_topology_shows_static_http_target_without_claiming_a_resolved_service(tmp_path: Path):

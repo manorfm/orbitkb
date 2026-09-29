@@ -72,6 +72,9 @@ def test_sample_topology_shows_proven_dependencies_without_inventing_destination
     assert "events:spot" not in diagram
     assert "RabbitMQ" not in diagram
     assert 'svc_sample_order -.->|http (unresolved)| ext_catalog_service_declared_target' in diagram
+    assert 'svc_sample_order -.->|accesses| db_sample_order_mongodb' in diagram
+    assert 'db_sample_order_mongodb[("MongoDB")]' in diagram
+    assert "checks" not in diagram
 
 
 def test_sample_has_source_proven_security_and_catalog_calls():

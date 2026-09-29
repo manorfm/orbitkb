@@ -17,7 +17,7 @@ from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
-from orbitkb.domain.canonical import FactStatus
+from orbitkb.domain.canonical import CanonicalSnapshot, FactStatus
 
 
 def _slug(text: str) -> str:
@@ -73,6 +73,30 @@ def _reachable_service_names(conn: sqlite3.Connection, roots: set[str], hops: in
     return reached
 
 
+def _has_confirmed_mongo_template_call(snapshot: CanonicalSnapshot) -> bool:
+    receivers = {
+        fact.subject.name
+        for fact in snapshot.facts
+        if fact.kind == "injection"
+        and fact.status is FactStatus.CONFIRMED
+        and fact.attributes.get("contract", "").split("<", 1)[0].rsplit(".", 1)[-1]
+        in {"MongoTemplate", "ReactiveMongoTemplate"}
+    }
+    for fact in snapshot.facts:
+        if (fact.kind != "flow_edge" or fact.status is not FactStatus.CONFIRMED
+                or fact.attributes.get("boundary_kind") != "persistence"
+                or fact.attributes.get("relation") not in {"reads", "writes", "invokes"}):
+            continue
+        target = fact.attributes.get("target")
+        if not isinstance(target, str):
+            continue
+        owner, owner_separator, _ = fact.subject.name.rpartition(".")
+        receiver, receiver_separator, _ = target.rpartition(".")
+        if owner_separator and receiver_separator and f"{owner}.{receiver}" in receivers:
+            return True
+    return False
+
+
 def generate_topology_diagram(
     conn: sqlite3.Connection, root_services: set[str] | None = None, hops: int = 1,
 ) -> str:
@@ -82,7 +106,9 @@ def generate_topology_diagram(
     edges. Source-proven HTTP calls without a reconciled destination retain a
     declared target node, marked unresolved. A confirmed Redis Pub/Sub
     publication adds a broker node scoped to its producer service; the source
-    does not prove a channel or shared instance.
+    does not prove a channel or shared instance. A confirmed call on an injected
+    Mongo template adds a per-service MongoDB node, without assigning a collection
+    or read/write direction.
     Services involved in a cycle (find_architecture_smells) are styled
     distinctly — the one piece of interpretation on top of otherwise purely
     structural facts. Cycle styling and DB nodes are scoped the same way: a service
@@ -191,6 +217,11 @@ def generate_topology_diagram(
             lines.append(f'  {broker_id}[("Redis Pub/Sub")]')
             lines.append(f"  {from_id} -.->|publish| {broker_id}")
         engines = {entity["engine"] for entity in persistence_repo.list_persistence(conn, svc["id"])}
+        if (snapshot is not None and _has_confirmed_mongo_template_call(snapshot)
+                and not any(_slug(engine) in {"mongo", "mongodb"} for engine in engines)):
+            node_id = f"db_{_slug(svc['name'])}_mongodb"
+            lines.append(f'  {node_id}[("MongoDB")]')
+            lines.append(f"  {from_id} -.->|accesses| {node_id}")
         for engine in sorted(engines):
             # Never shared across services — a same-named engine on two services isn't
             # evidence they're the same physical database, just the same technology.
