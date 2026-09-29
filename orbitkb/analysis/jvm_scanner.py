@@ -12,7 +12,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from orbitkb.discovery.scan_helpers import find_matching_paren
+from orbitkb.discovery.scan_helpers import (
+    _skip_char_literal,
+    _skip_string,
+    find_matching_brace,
+    find_matching_paren,
+)
 
 _CLASS_KEYWORD_RE = re.compile(r"\bclass\s+(?P<name>[A-Za-z_]\w*)")
 _ANNOTATION_LINE_RE = re.compile(r"^[ \t]*(?:@[\w.]+(?:\([^\n]*\))?[ \t]*)+$")
@@ -54,71 +59,6 @@ class FunctionMatch:
 
 def _line_of(text: str, index: int) -> int:
     return text.count("\n", 0, index) + 1
-
-
-def _skip_string(text: str, i: int) -> int:
-    n = len(text)
-    if text[i : i + 3] == '"""':
-        end = text.find('"""', i + 3)
-        return end + 3 if end != -1 else n
-    i += 1
-    while i < n:
-        if text[i] == "\\":
-            i += 2
-            continue
-        if text[i] == '"':
-            return i + 1
-        i += 1
-    return n
-
-
-def _skip_char_literal(text: str, i: int) -> int:
-    n = len(text)
-    i += 1
-    while i < n:
-        if text[i] == "\\":
-            i += 2
-            continue
-        if text[i] == "'":
-            return i + 1
-        i += 1
-    return n
-
-
-def find_matching_brace(text: str, open_index: int) -> int:
-    """Given the index of an opening `{` in `text`, return the index of its matching
-    `}` -- skipping braces inside string/char literals and comments. Returns
-    `len(text) - 1` if unmatched (malformed/truncated source): callers treat that as
-    "to end of text" rather than raising, since a heuristic scanner over real-world
-    source must degrade gracefully, not blow up on the one file it can't fully follow.
-    """
-    depth = 0
-    i = open_index
-    n = len(text)
-    while i < n:
-        ch = text[i]
-        if ch == '"':
-            i = _skip_string(text, i)
-            continue
-        if ch == "'":
-            i = _skip_char_literal(text, i)
-            continue
-        if ch == "/" and i + 1 < n and text[i + 1] == "/":
-            nl = text.find("\n", i)
-            i = nl if nl != -1 else n
-            continue
-        if ch == "/" and i + 1 < n and text[i + 1] == "*":
-            end = text.find("*/", i + 2)
-            i = end + 2 if end != -1 else n
-            continue
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return i
-        i += 1
-    return n - 1
 
 
 def _find_header_end(text: str, start: int) -> int:

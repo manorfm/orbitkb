@@ -19,6 +19,7 @@ from orbitkb.discovery.scan_helpers import (
     engine_hint_from_manifest,
     excerpt_around,
     find_matches,
+    find_matching_brace,
     find_matching_paren,
 )
 
@@ -78,6 +79,22 @@ _TYPE_AFTER_MAPPING_RE = re.compile(
     r"(?:(?:public|private|protected|internal|open|abstract|final|sealed|data)\s+)*"
     r"(?:class|interface|enum)\s+(?P<name>[A-Za-z_]\w*)\b"
 )
+_FEIGN_INTERFACE_AFTER_ANNOTATION_RE = re.compile(r"\s*(?:(?:public|internal)\s+)?interface\s+\w+[^@{}]*\{")
+
+
+def _feign_interface_ranges(source: str) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    for annotation in re.finditer(r"@FeignClient\b\s*\(", source):
+        opening = source.find("(", annotation.start(), annotation.end())
+        closing = find_matching_paren(source, opening)
+        if closing < 0:
+            continue
+        interface = _FEIGN_INTERFACE_AFTER_ANNOTATION_RE.match(source, closing + 1)
+        if interface is None:
+            continue
+        brace_open = interface.end() - 1
+        ranges.append((brace_open, find_matching_brace(source, brace_open)))
+    return ranges
 
 
 def _mapped_type(match: re.Match[str]) -> str | None:
@@ -116,6 +133,9 @@ def _endpoint_hint(
 def endpoint_matches(scan_root: Path) -> list[tuple[str, str, Path, int]]:
     """Return route annotations on handlers, excluding type-level route prefixes."""
     matches = find_matches(scan_root, EXTENSIONS, _MAPPING_RE)
+    feign_ranges: dict[Path, list[tuple[int, int]]] = {}
+    for path, _, match in matches:
+        feign_ranges.setdefault(path, _feign_interface_ranges(match.string))
     prefixes: dict[tuple[Path, str], str] = {}
     for path, _, match in matches:
         if match.group(1) != "RequestMapping":
@@ -126,6 +146,8 @@ def endpoint_matches(scan_root: Path) -> list[tuple[str, str, Path, int]]:
 
     endpoints: list[tuple[str, str, Path, int]] = []
     for path, line_no, match in matches:
+        if any(start < match.start() < end for start, end in feign_ranges[path]):
+            continue
         if _mapped_type(match):
             continue
         route = match.group(2) or "/"

@@ -85,6 +85,70 @@ def find_matching_paren(text: str, open_index: int) -> int:
     return -1
 
 
+def _skip_string(text: str, i: int) -> int:
+    n = len(text)
+    if text[i : i + 3] == '"""':
+        end = text.find('"""', i + 3)
+        return end + 3 if end != -1 else n
+    i += 1
+    while i < n:
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == '"':
+            return i + 1
+        i += 1
+    return n
+
+
+def _skip_char_literal(text: str, i: int) -> int:
+    n = len(text)
+    i += 1
+    while i < n:
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == "'":
+            return i + 1
+        i += 1
+    return n
+
+
+def find_matching_brace(text: str, open_index: int) -> int:
+    """Find a closing brace, ignoring strings and comments.
+
+    An unmatched opening brace extends to the end of the source, matching the
+    JVM scanner's conservative behavior on incomplete files.
+    """
+    depth = 0
+    i = open_index
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            i = _skip_string(text, i)
+            continue
+        if ch == "'":
+            i = _skip_char_literal(text, i)
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "/":
+            nl = text.find("\n", i)
+            i = nl if nl != -1 else n
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "*":
+            end = text.find("*/", i + 2)
+            i = end + 2 if end != -1 else n
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return n - 1
+
+
 def excerpt_around(
     path: Path,
     folder: Path,
