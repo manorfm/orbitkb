@@ -507,6 +507,9 @@ rows retain an unknown value.
 Unit keys are database-local HMAC values, stable across runs in that database;
 the telemetry table contains no route, file, symbol, prompt or source text.
 Runs recorded before per-unit telemetry have no unit rows.
+Each planned generation slot uses an `IndexUnit` to track its identity, status,
+attempts, token usage and backend time. The orchestrator aggregates these units
+into service totals; skipped slots remain visible with zero attempts.
 Component and overview prompts read previously generated API and component
 summaries through a small `KnowledgeReader` contract; the default
 `LegacyKnowledgeAdapter` reads the existing SQLite rows. Indexing keeps the

@@ -56,6 +56,7 @@ from orbitkb.generation.knowledge import (
 from orbitkb.generation.legacy_knowledge import LegacyKnowledgeAdapter
 from orbitkb.generation.llm_harness import generate_with_retry, load_prompt, load_schema
 from orbitkb.generation.policy import GenerationPolicy
+from orbitkb.generation.unit import IndexUnit
 from orbitkb.iac.scanner import scan_repository_facts
 from orbitkb.security.findings import find_security_findings
 from orbitkb.security.redaction import redact_sensitive_values
@@ -267,28 +268,6 @@ def _render_messaging_prompt(
 # ---------------------------------------------------------------------------
 
 @dataclass
-class UnitMeasurement:
-    """One planned generation unit and the backend usage observed for it."""
-
-    kind: str
-    identity: tuple[str, ...]
-    status: str = "skipped"
-    llm_invocations: int = 0
-    usage: LLMUsage = field(default_factory=LLMUsage)
-    backend_duration_ms: float = 0.0
-
-    def record_attempt(self, ctx: IndexContext) -> None:
-        ctx.record_llm_invocation()
-        self.llm_invocations += 1
-
-    def record_usage(self, usage: LLMUsage) -> None:
-        self.usage = self.usage + usage
-
-    def record_duration(self, duration_ms: float) -> None:
-        self.backend_duration_ms += duration_ms
-
-
-@dataclass
 class UnitOutcome:
     """Generator totals plus files to retry after a failed unit."""
 
@@ -297,9 +276,9 @@ class UnitOutcome:
     failed_files: set[str] = field(default_factory=set)
     usage: LLMUsage = field(default_factory=LLMUsage)
     backend_duration_ms: float = 0.0
-    units: list[UnitMeasurement] = field(default_factory=list)
+    units: list[IndexUnit] = field(default_factory=list)
 
-    def add(self, unit: UnitMeasurement) -> None:
+    def add(self, unit: IndexUnit) -> None:
         self.units.append(unit)
         if unit.status == "success":
             self.llm_calls += 1
@@ -337,8 +316,9 @@ class IndexContext:
     any_component_regenerated: bool = False
     llm_invocations: int = 0
 
-    def record_llm_invocation(self) -> None:
+    def record_llm_invocation(self, unit: IndexUnit) -> None:
         self.llm_invocations += 1
+        unit.record_attempt()
 
 
 class UnitGenerator(Protocol):
@@ -359,7 +339,7 @@ class EndpointGenerator:
         keep_api_keys: set[tuple[str, str]] = set()
         for endpoint in ctx.hints.endpoints:
             key = (endpoint.method, endpoint.path)
-            unit = UnitMeasurement(self.kind, key)
+            unit = IndexUnit(self.kind, key)
             keep_api_keys.add(key)
             dep_files = endpoint.dependency_files()
             needs_regen = ctx.force or key not in existing_keys or bool(dep_files & ctx.changed)
@@ -376,7 +356,7 @@ class EndpointGenerator:
             generation = generate_with_retry(
                 ctx.backend, prompt, load_schema("api_detail"), ctx.root, ctx.failures_root,
                 f"{ctx.name}-{endpoint.method}-{endpoint.path}",
-                on_attempt=lambda unit=unit: unit.record_attempt(ctx),
+                on_attempt=lambda unit=unit: ctx.record_llm_invocation(unit),
                 on_usage=unit.record_usage,
                 on_duration_ms=unit.record_duration,
             )
@@ -418,7 +398,7 @@ class ComponentGenerator:
         keep_component_keys: set[tuple[str, str]] = set()
         for component_name, group in ctx.component_groups.items():
             component_file = group[0].excerpt.file_path
-            unit = UnitMeasurement(self.kind, (component_name, component_file))
+            unit = IndexUnit(self.kind, (component_name, component_file))
             keep_component_keys.add((component_name, component_file))
             group_dep_files: set[str] = set()
             for endpoint in group:
@@ -437,7 +417,7 @@ class ComponentGenerator:
             generation = generate_with_retry(
                 ctx.backend, prompt, load_schema("component"), ctx.root, ctx.failures_root,
                 f"{ctx.name}-component-{component_name}",
-                on_attempt=lambda unit=unit: unit.record_attempt(ctx),
+                on_attempt=lambda unit=unit: ctx.record_llm_invocation(unit),
                 on_usage=unit.record_usage,
                 on_duration_ms=unit.record_duration,
             )
@@ -471,7 +451,7 @@ class PersistenceGenerator:
             ctx.knowledge_writer.replace_persistence(ctx.service_id, PersistenceDocumentation([], []))
             return outcome
 
-        unit = UnitMeasurement(self.kind, ())
+        unit = IndexUnit(self.kind, ())
         if not ctx.generation_policy.should_regenerate_aggregate(persistence_files):
             outcome.add(unit)
             ctx.progress.unit_finished(ctx.name, "persistence", "skipped")
@@ -489,7 +469,7 @@ class PersistenceGenerator:
         )
         generation = generate_with_retry(
             ctx.backend, prompt, load_schema("persistence"), ctx.root, ctx.failures_root, f"{ctx.name}-persistence",
-            on_attempt=lambda: unit.record_attempt(ctx),
+            on_attempt=lambda: ctx.record_llm_invocation(unit),
             on_usage=unit.record_usage,
             on_duration_ms=unit.record_duration,
         )
@@ -522,7 +502,7 @@ class MessagingGenerator:
             ctx.knowledge_writer.replace_messaging(ctx.service_id, MessagingDocumentation([], []))
             return outcome
 
-        unit = UnitMeasurement(self.kind, ())
+        unit = IndexUnit(self.kind, ())
         if not ctx.generation_policy.should_regenerate_aggregate(messaging_files):
             outcome.add(unit)
             ctx.progress.unit_finished(ctx.name, "messaging", "skipped")
@@ -536,7 +516,7 @@ class MessagingGenerator:
         prompt = _render_messaging_prompt(ctx.name, ctx.detector.id, ctx.hints, config_excerpts, source)
         generation = generate_with_retry(
             ctx.backend, prompt, load_schema("messaging"), ctx.root, ctx.failures_root, f"{ctx.name}-messaging",
-            on_attempt=lambda: unit.record_attempt(ctx),
+            on_attempt=lambda: ctx.record_llm_invocation(unit),
             on_usage=unit.record_usage,
             on_duration_ms=unit.record_duration,
         )
@@ -567,7 +547,7 @@ class OverviewGenerator:
 
     def run(self, ctx: IndexContext) -> UnitOutcome:
         outcome = UnitOutcome()
-        unit = UnitMeasurement(self.kind, ())
+        unit = IndexUnit(self.kind, ())
         entry_files = {ctx.hints.entry_excerpt.file_path} if ctx.hints.entry_excerpt else set()
         needs_overview = (
             ctx.force or ctx.is_new or bool(ctx.changed & entry_files)
@@ -584,7 +564,7 @@ class OverviewGenerator:
         prompt = _render_service_overview_prompt(ctx.name, ctx.detector.id, ctx.root, ctx.hints, components)
         generation = generate_with_retry(
             ctx.backend, prompt, load_schema("service_overview"), ctx.root, ctx.failures_root, f"{ctx.name}-overview",
-            on_attempt=lambda: unit.record_attempt(ctx),
+            on_attempt=lambda: ctx.record_llm_invocation(unit),
             on_usage=unit.record_usage,
             on_duration_ms=unit.record_duration,
         )
