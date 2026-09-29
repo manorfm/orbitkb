@@ -47,6 +47,7 @@ from orbitkb.analysis.jvm_scanner import find_matching_brace
 from orbitkb.analysis.jvm_security_analyzer import (
     spring_filter_chain_security_requirements,
 )
+from orbitkb.analysis.kotlin_dto_shapes import kotlin_data_class_shapes
 from orbitkb.analysis.models import (
     AnalysisResult,
     CloudFact,
@@ -4084,6 +4085,8 @@ def _dto_shapes(files: list[Path]) -> dict[str, list[dict]]:
     for path in files:
         source = path.read_text(encoding="utf-8", errors="ignore")
         shapes.update(_java_dto_shapes(source))
+        if path.suffix == ".kt":
+            shapes.update(kotlin_data_class_shapes(source))
         shapes.update(_go_dto_shapes(source))
     return shapes
 

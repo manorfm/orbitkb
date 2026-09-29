@@ -211,6 +211,9 @@ The supported deterministic subset is intentionally focused:
 Kotlin/Spring flow tracing follows a uniquely resolved interface implementation through constructor injection, including controller → use case → gateway → Feign paths.
 Spring route extraction includes multiline class `@RequestMapping` prefixes and handler mappings without a path argument, such as `@GetMapping` and `@GetMapping()`.
 Java/Spring request and response DTO shapes include declared primitive fields as well as object fields.
+Kotlin/Spring request and response DTO shapes include `val`/`var` properties
+from data-class primary constructors, with nullable and defaulted fields
+marked optional. Types inferred only from expression bodies remain unknown.
 Feign interface methods remain outbound client declarations; their mappings are not generated as service entrypoints.
 
 An optional external depth provider can enrich a selected flow when native resolution

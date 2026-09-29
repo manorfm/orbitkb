@@ -65,9 +65,16 @@ def test_sample_has_source_proven_security_and_catalog_calls():
 
 
 def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
-    snapshot = project_analysis(
-        ServiceKey("sample-order"), StaticAnalysisEngine().analyze(SAMPLE, "jvm-spring"),
-    )
+    analysis = StaticAnalysisEngine().analyze(SAMPLE, "jvm-spring")
+    request = analysis.contracts["BillOrderController.addItem"]["request"]
+    assert request["fields"] == [
+        {"name": "id", "type": "ULID", "required": True, "validations": []},
+        {"name": "menuId", "type": "ULID", "required": True, "validations": []},
+        {"name": "annotation", "type": "String", "required": False, "validations": []},
+        {"name": "ingredientsAdded", "type": "List<IngredientIn>", "required": False, "validations": []},
+        {"name": "ingredientsRemoved", "type": "List<IngredientIn>", "required": False, "validations": []},
+    ]
+    snapshot = project_analysis(ServiceKey("sample-order"), analysis)
     route = next(
         fact.subject for fact in snapshot.facts
         if fact.kind == "entrypoint" and fact.subject.name == ROUTE
@@ -84,7 +91,7 @@ def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
     sufficiency = route_sufficiency(snapshot, "POST", ROUTE)
     assert sufficiency is not None
     assert sufficiency.overall.value == "missing"
-    assert sufficiency.status("request_shape").value == "missing"
+    assert sufficiency.status("request_shape").value == "enough"
     assert sufficiency.status("response_shape").value == "missing"
     assert sufficiency.status("business_behavior").value == "missing"
     assert sufficiency.status("flow").value == "ambiguous"

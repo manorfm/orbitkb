@@ -23,7 +23,7 @@ def _capsule(max_chars=100_000):
     return EvidenceReducer().reduce((evidence,), EvidenceBudget(max_chars))
 
 
-def test_spring_route_has_proven_call_but_missing_semantic_documentation_fields():
+def test_spring_route_has_proven_call_and_response_but_missing_semantic_documentation_fields():
     capsule = _capsule()
 
     result = DeterministicSufficiencyEvaluator().evaluate(capsule)
@@ -32,7 +32,7 @@ def test_spring_route_has_proven_call_but_missing_semantic_documentation_fields(
     assert result.status("integrations") == SufficiencyStatus.ENOUGH
     assert result.status("business_behavior") == SufficiencyStatus.MISSING
     assert result.status("request_shape") == SufficiencyStatus.MISSING
-    assert result.status("response_shape") == SufficiencyStatus.MISSING
+    assert result.status("response_shape") == SufficiencyStatus.ENOUGH
     assert result.status("authorization") == SufficiencyStatus.AMBIGUOUS
     assert result.overall != SufficiencyStatus.ENOUGH
     assert result.evidence_ids("integrations") == tuple(
