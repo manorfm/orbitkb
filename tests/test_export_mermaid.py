@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from orbitkb.analysis.models import AnalysisResult, CloudFact, Evidence
+from orbitkb.analysis.models import AnalysisResult, CloudFact, Evidence, FlowEdge
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import flows as flows_repo
@@ -70,6 +70,38 @@ def test_generate_topology_diagram_includes_cloud_nodes(tmp_path: Path):
 
     assert "sqs" in diagram
     assert "orders-queue" in diagram
+
+
+def test_topology_shows_only_confirmed_redis_publishers_without_a_channel(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    proven_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    inferred_id = services_repo.ensure_service(conn, "maybe-service", "/tmp/maybe", "jvm-spring")
+    flows_repo.replace_analysis(conn, proven_id, AnalysisResult(edges=[
+        FlowEdge("Publisher.send", "redis.convertAndSend", "publishes", Evidence("Publisher.kt", 4, 4),
+                 boundary_kind="redis_pubsub"),
+        FlowEdge("Other.send", "other.convertAndSend", "invokes", Evidence("Other.kt", 5, 5)),
+    ]))
+    flows_repo.replace_analysis(conn, inferred_id, AnalysisResult(edges=[
+        FlowEdge("Publisher.send", "redis.convertAndSend", "publishes", Evidence("Publisher.kt", 4, 4),
+                 confidence="medium", boundary_kind="redis_pubsub"),
+    ]))
+
+    diagram = generate_topology_diagram(conn)
+
+    assert 'broker_orders_service_redis[("Redis Pub/Sub")]' in diagram
+    assert 'svc_orders_service -.->|publish| broker_orders_service_redis' in diagram
+    assert "broker_maybe_service_redis" not in diagram
+    assert "redis.convertAndSend" not in diagram
+    assert "unknown" not in diagram
+
+    scoped = generate_topology_diagram(conn, root_services={"maybe-service"})
+    assert "broker_orders_service_redis" not in scoped
+    assert "broker_orders_service_redis" in generate_topology_diagram(
+        conn, root_services={"orders-service"}, hops=0,
+    )
+
+    flows_repo.replace_analysis(conn, proven_id, AnalysisResult())
+    assert "broker_orders_service_redis" not in generate_topology_diagram(conn)
 
 
 def test_generate_topology_diagram_keeps_unresolved_indexed_calls(tmp_path: Path):

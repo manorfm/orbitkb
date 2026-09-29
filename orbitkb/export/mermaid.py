@@ -11,11 +11,13 @@ import sqlite3
 from pathlib import Path
 
 from orbitkb.db.repositories import architecture as architecture_repo
+from orbitkb.db.repositories import canonical_snapshots as snapshots_repo
 from orbitkb.db.repositories import flows as flows_repo
 from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
+from orbitkb.domain.canonical import FactStatus
 
 
 def _slug(text: str) -> str:
@@ -77,7 +79,9 @@ def generate_topology_diagram(
     """`graph TD` over every indexed service (or, with `root_services`, only the
     subgraph reachable within `hops` steps of them): each as a node, external
     vendors as rounded nodes, service_calls as solid edges, message links as dashed
-    edges. Services involved in a cycle (find_architecture_smells) are styled
+    edges. A confirmed Redis Pub/Sub publication adds a broker node scoped to
+    its producer service; the source does not prove a channel or shared instance.
+    Services involved in a cycle (find_architecture_smells) are styled
     distinctly — the one piece of interpretation on top of otherwise purely
     structural facts. Cycle styling and DB nodes are scoped the same way: a service
     filtered out of the subgraph never contributes its own persistence nodes either.
@@ -156,6 +160,17 @@ def generate_topology_diagram(
         from_id = service_ids.get(svc["name"])
         if from_id is None:
             continue
+        snapshot = snapshots_repo.read_snapshot(conn, svc["id"])
+        if snapshot is not None and any(
+            fact.kind == "flow_edge"
+            and fact.status is FactStatus.CONFIRMED
+            and fact.attributes.get("relation") == "publishes"
+            and fact.attributes.get("boundary_kind") == "redis_pubsub"
+            for fact in snapshot.facts
+        ):
+            broker_id = f"broker_{_slug(svc['name'])}_redis"
+            lines.append(f'  {broker_id}[("Redis Pub/Sub")]')
+            lines.append(f"  {from_id} -.->|publish| {broker_id}")
         engines = {entity["engine"] for entity in persistence_repo.list_persistence(conn, svc["id"])}
         for engine in sorted(engines):
             # Never shared across services — a same-named engine on two services isn't

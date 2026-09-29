@@ -4,10 +4,14 @@ from pathlib import Path
 
 from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.engine import StaticAnalysisEngine
+from orbitkb.db.connection import open_db
+from orbitkb.db.repositories import flows as flows_repo
+from orbitkb.db.repositories import services as services_repo
 from orbitkb.discovery.jvm_stack import JvmSpringDetector
 from orbitkb.domain.canonical import ServiceKey
 from orbitkb.domain.evidence import EvidenceComposer, EvidenceProfile
 from orbitkb.domain.navigation import KnowledgeNavigator, TraversalPolicy
+from orbitkb.export.mermaid import generate_topology_diagram
 from orbitkb.generation.route_evidence import route_sufficiency
 
 SAMPLE = Path(__file__).resolve().parents[1] / "verify/flow_corpus/sample-order-kotlin-service"
@@ -53,6 +57,20 @@ def test_sample_exposes_a_real_controller_route_without_feign_routes():
         and edge.boundary_kind == "redis_pubsub"
         for edge in analysis.edges
     )
+
+
+def test_sample_topology_shows_redis_publication_without_inventing_channel(tmp_path: Path):
+    analysis = StaticAnalysisEngine().analyze(SAMPLE, "jvm-spring")
+    conn = open_db(tmp_path / "sample.db")
+    service_id = services_repo.ensure_service(conn, "sample-order", str(SAMPLE), "jvm-spring")
+    flows_repo.replace_analysis(conn, service_id, analysis)
+
+    diagram = generate_topology_diagram(conn)
+
+    assert 'svc_sample_order -.->|publish| broker_sample_order_redis' in diagram
+    assert 'broker_sample_order_redis[("Redis Pub/Sub")]' in diagram
+    assert "events:spot" not in diagram
+    assert "RabbitMQ" not in diagram
 
 
 def test_sample_has_source_proven_security_and_catalog_calls():

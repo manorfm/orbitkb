@@ -273,6 +273,9 @@ dependencies, external/cloud nodes, architecture cycles highlighted) and one
 `docs/<service>.er.mmd` entity-relationship diagram per service, from detected
 persistence facts. Mermaid renders natively in GitHub/GitLab/most editors, and
 is plain text — versionable and diffable in a PR, unlike a generated image.
+When source analysis confirms a Spring Redis Pub/Sub publication, topology shows
+a Redis node for that producer. It does not assign an unknown channel, consumer
+or shared Redis instance.
 
 Both accept `--service <name>` to export just one service instead of every
 indexed one.
