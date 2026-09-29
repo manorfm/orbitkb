@@ -103,6 +103,47 @@ def test_describe_entrypoint_navigates_the_persisted_canonical_snapshot(tmp_path
     assert detail["flow_pagination"] == {"max_edges": 50, "truncated": False}
 
 
+def test_describe_entrypoint_uses_canonical_attached_facts(tmp_path):
+    conn = open_db(tmp_path / "canonical-attached.db")
+    service_id = services.ensure_service(conn, "checkout", "/repos/checkout", "jvm-spring")
+    evidence = Evidence("CheckoutService.kt", 12, 15)
+    flows.replace_analysis(conn, service_id, AnalysisResult(
+        entrypoints=[EntryPoint("http", "POST", "/orders", "Checkout.create", evidence,
+                                contract={"request": "Order"})],
+        edges=[FlowEdge("Checkout.create", "CheckoutService.run", "invokes", evidence)],
+        boundaries=[FlowBoundary("CheckoutService.run", "transaction", evidence)],
+        error_contracts=[ErrorContract(
+            "CheckoutService.run", "maps", "conflict", "StockError", "http", "409", "OUT_OF_STOCK",
+            False, "not_retryable", evidence,
+        )],
+        static_service_calls=[StaticServiceCall(
+            "CheckoutService.run", "inventory", "http", "POST", "/reservations", evidence,
+        )],
+        resilience_policies=[ResiliencePolicy(
+            "CheckoutService.run", "timeout", "reactor", 2000, "milliseconds", evidence,
+        )],
+    ))
+    for table in ("flow_boundaries", "static_error_contracts", "static_service_calls",
+                  "static_resilience_policies", "entrypoint_contracts"):
+        conn.execute(f"DELETE FROM {table}")
+
+    detail = queries.describe_entrypoint(conn, "checkout", "http", "post", "/orders")
+
+    assert detail["contract"] == {"request": "Order"}
+    assert detail["boundaries"] == [{
+        "source": "CheckoutService.run", "kind": "transaction",
+        "evidence": {"file": "CheckoutService.kt", "start_line": 12, "end_line": 15},
+    }]
+    assert [(item["source"], item["transport_code"]) for item in detail["error_contracts"]] == [
+        ("CheckoutService.run", "409"),
+    ]
+    assert [(item["source"], item["target_service"], item["resolved_target"]["status"])
+            for item in detail["service_calls"]] == [("CheckoutService.run", "inventory", "not_indexed")]
+    assert [(item["source"], item["kind"]) for item in detail["resilience_policies"]] == [
+        ("CheckoutService.run", "timeout"),
+    ]
+
+
 def test_describe_entrypoint_uses_language_neutral_navigation_for_kotlin_and_go(tmp_path):
     go_root = tmp_path / "catalog-go"
     go_root.mkdir()

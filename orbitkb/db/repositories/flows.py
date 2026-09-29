@@ -329,16 +329,6 @@ def _list_static_error_contracts(
     return conn.execute(query, params).fetchall()
 
 
-def list_flow_boundaries(conn: sqlite3.Connection, service_id: int, symbols: set[str]) -> list[sqlite3.Row]:
-    if not symbols:
-        return []
-    placeholders = ", ".join("?" for _ in symbols)
-    return conn.execute(
-        f"SELECT source, kind, file_path, start_line, end_line FROM flow_boundaries WHERE service_id = ? AND source IN ({placeholders}) ORDER BY id",  # nosec B608 - placeholders are generated from set cardinality; values are bound.
-        (service_id, *sorted(symbols)),
-    ).fetchall()
-
-
 def list_static_persistence_facts(conn: sqlite3.Connection, service_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT name, kind, owner, file_path, start_line, end_line FROM static_persistence_facts WHERE service_id = ? ORDER BY name",

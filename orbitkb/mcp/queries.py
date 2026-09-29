@@ -40,8 +40,12 @@ from orbitkb.db.repositories import security_findings as security_findings_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.discovery.hashing import git_working_changed_files_with_status
-from orbitkb.domain.canonical import EntrypointKey
-from orbitkb.domain.navigation import KnowledgeNavigator, TraversalPolicy
+from orbitkb.domain.canonical import EntrypointKey, SymbolKey
+from orbitkb.domain.navigation import (
+    KnowledgeNavigator,
+    TraversalPolicy,
+    TraversalResult,
+)
 from orbitkb.export.mermaid import (
     generate_entrypoint_sequence,
     generate_topology_diagram,
@@ -553,6 +557,28 @@ def list_security_findings(conn: sqlite3.Connection, service: str, repository: s
     }
 
 
+def _canonical_source_rows(traversal: TraversalResult, kind: str) -> list[dict]:
+    """Shape reached symbol facts as source-backed rows for the public response."""
+    rows = []
+    for fact in traversal.facts:
+        if fact.kind != kind:
+            continue
+        if not isinstance(fact.subject, SymbolKey):
+            raise ValueError(f"{kind} fact must belong to a symbol")
+        for source in fact.sources:
+            row = {
+                "source": fact.subject.name, **fact.attributes,
+                "file_path": source.file_path, "start_line": source.start_line,
+                "end_line": source.end_line,
+            }
+            if kind == "flow_boundary":
+                row["kind"] = row.pop("boundary_kind")
+            elif kind == "resilience_policy":
+                row["kind"] = row.pop("policy_kind")
+            rows.append(row)
+    return rows
+
+
 def describe_entrypoint(
     conn: sqlite3.Connection,
     service: str,
@@ -594,9 +620,13 @@ def describe_entrypoint(
             "start_line": source.start_line, "end_line": source.end_line,
         })
     truncated = traversal.truncated
-    flow_symbols = {entrypoint["symbol"]} | {edge["from_symbol"] for edge in edges} | {edge["to_symbol"] for edge in edges}
-    static_service_calls = flows_repo.list_static_service_calls_for_sources(conn, row["id"], flow_symbols)
-    resilience_policies = flows_repo.list_static_resilience_policies_for_sources(conn, row["id"], flow_symbols)
+    static_service_calls = _canonical_source_rows(traversal, "service_call")
+    resilience_policies = _canonical_source_rows(traversal, "resilience_policy")
+    boundaries = _canonical_source_rows(traversal, "flow_boundary")
+    error_contracts = _canonical_source_rows(traversal, "error_contract")
+    entrypoint_fact = next(
+        fact for fact in traversal.facts if fact.kind == "entrypoint" and fact.subject == key
+    )
     target_cache: dict[tuple[object, ...], dict] = {}
     return {
         "service": row["name"], "repository": row["repository_name"],
@@ -629,7 +659,7 @@ def describe_entrypoint(
             {"source": item["source"], "kind": item["kind"], "evidence": {
                 "file": item["file_path"], "start_line": item["start_line"], "end_line": item["end_line"],
             }}
-            for item in flows_repo.list_flow_boundaries(conn, row["id"], flow_symbols)
+            for item in boundaries
         ],
         "error_contracts": [
             {
@@ -641,7 +671,7 @@ def describe_entrypoint(
                     "file": item["file_path"], "start_line": item["start_line"], "end_line": item["end_line"],
                 },
             }
-            for item in flows_repo.list_static_error_contracts_for_sources(conn, row["id"], flow_symbols)
+            for item in error_contracts
         ],
         "service_calls": [
             {
@@ -666,7 +696,7 @@ def describe_entrypoint(
             }
             for item in resilience_policies
         ],
-        "contract": flows_repo.get_entrypoint_contract(conn, entrypoint["id"]),
+        "contract": entrypoint_fact.attributes.get("contract"),
         "smells": find_entrypoint_smells(entrypoint, edges),
         "sequence_mermaid": generate_entrypoint_sequence(
             edges[:SEQUENCE_DIAGRAM_EDGE_LIMIT], entrypoint["symbol"], f"{entrypoint['method']} {entrypoint['name']}",
