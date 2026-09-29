@@ -580,6 +580,24 @@ def _canonical_source_rows(traversal: TraversalResult, kind: str) -> list[dict]:
     return rows
 
 
+def _navigation_boundary_items(traversal: TraversalResult) -> list[dict]:
+    edges = {fact.id: fact for fact in traversal.facts if fact.kind == "flow_edge"}
+    items = []
+    for boundary in traversal.boundaries:
+        if boundary.reason == "known_boundary":
+            continue
+        edge = edges.get(boundary.edge_id)
+        source = edge.sources[0] if edge is not None and edge.sources else None
+        items.append({
+            "source": boundary.source, "target": boundary.target, "kind": boundary.reason,
+            "evidence": (
+                {"file": source.file_path, "start_line": source.start_line, "end_line": source.end_line}
+                if source is not None else None
+            ),
+        })
+    return items
+
+
 def _canonical_entrypoint_traversal(
     conn: sqlite3.Connection, service_id: int, entrypoint: sqlite3.Row, max_edges: int,
 ) -> tuple[EntrypointKey, TraversalResult] | None:
@@ -670,7 +688,7 @@ def describe_entrypoint(
                 "file": item["file_path"], "start_line": item["start_line"], "end_line": item["end_line"],
             }}
             for item in boundaries
-        ],
+        ] + _navigation_boundary_items(traversal),
         "error_contracts": [
             {
                 "source": item["source"], "role": item["role"], "error_kind": item["error_kind"],

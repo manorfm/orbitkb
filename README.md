@@ -504,6 +504,9 @@ source-backed paths, unresolved or known boundaries, and truncation reasons.
 The navigator is used by `describe_entrypoint` and `describe_error_flow`.
 The latter follows caller and target error evidence through their canonical
 snapshots and reports unresolved or truncated navigation in `unknowns`.
+`describe_entrypoint.boundaries` also reports unresolved local symbols, cycles
+and traversal limits alongside known static boundaries, with source locations
+when the bounded edge is included.
 The unhandled endpoint error finding also uses canonical reachability and
 records traversal truncation in its `unknowns`.
 Downstream error and retry findings scope target contracts through the same

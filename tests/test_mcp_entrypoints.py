@@ -598,3 +598,5 @@ def test_describe_entrypoint_bounds_flow_context_and_reports_truncation(tmp_path
 
     assert len(detail["flow"]) == 1
     assert detail["flow_pagination"] == {"max_edges": 1, "truncated": True}
+    assert any(item["kind"] == "edge_limit" and item["target"] == "Repository.save"
+               for item in detail["boundaries"])
