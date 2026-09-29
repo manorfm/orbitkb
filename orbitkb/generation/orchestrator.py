@@ -7,7 +7,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
-from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.depth import DepthProvider, NoopDepthProvider
 from orbitkb.analysis.engine import STATIC_ANALYSIS_INPUT_VERSION, StaticAnalysisEngine
 from orbitkb.ci.scanner import scan_github_actions_commands
@@ -651,10 +650,6 @@ def _index_service_unlocked(
             static_analysis_repo.delete_snapshot(conn, service_id)
         analysis = static_engine.analyze(root, detector.id)
         flows_repo.replace_analysis(conn, service_id, analysis)
-        canonical_snapshots_repo.replace_snapshot(
-            conn, service_id,
-            project_analysis(canonical_snapshots_repo.service_key(conn, service_id), analysis),
-        )
         if cacheable_static_analysis and static_digest is not None and static_engine.input_digest(root, detector.id) == static_digest:
             static_analysis_repo.replace_snapshot(
                 conn, service_id, static_digest, STATIC_ANALYSIS_INPUT_VERSION,

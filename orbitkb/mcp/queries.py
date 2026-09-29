@@ -15,6 +15,7 @@ from orbitkb.analysis.engine import StaticAnalysisEngine
 from orbitkb.analysis.smells import find_entrypoint_smells
 from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import architecture as architecture_repo
+from orbitkb.db.repositories import canonical_snapshots as canonical_snapshots_repo
 from orbitkb.db.repositories import change_closure_summaries as closure_summaries_repo
 from orbitkb.db.repositories import change_plans as change_plans_repo
 from orbitkb.db.repositories import change_surface as change_surface_repo
@@ -39,7 +40,12 @@ from orbitkb.db.repositories import security_findings as security_findings_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.discovery.hashing import git_working_changed_files_with_status
-from orbitkb.export.mermaid import generate_entrypoint_sequence, generate_topology_diagram
+from orbitkb.domain.canonical import EntrypointKey
+from orbitkb.domain.navigation import KnowledgeNavigator, TraversalPolicy
+from orbitkb.export.mermaid import (
+    generate_entrypoint_sequence,
+    generate_topology_diagram,
+)
 from orbitkb.generation import change_surface
 from orbitkb.generation.architecture import diff_architecture_runs
 from orbitkb.generation.backend_base import LLMBackend
@@ -566,9 +572,28 @@ def describe_entrypoint(
     if entrypoint is None:
         return {"error": f"unknown entrypoint: {kind} {method} {name} on {service}"}
     effective_max_edges = min(max_edges, MAX_FLOW_EDGE_LIMIT)
-    bounded_edges = flows_repo.list_reachable_edges(conn, row["id"], entrypoint["symbol"], effective_max_edges + 1)
-    truncated = len(bounded_edges) > effective_max_edges
-    edges = bounded_edges[:effective_max_edges]
+    snapshot = canonical_snapshots_repo.read_snapshot(conn, row["id"])
+    if snapshot is None:
+        return {"error": f"canonical snapshot missing for {service}; reindex the service"}
+    key = EntrypointKey(snapshot.service, entrypoint["kind"], entrypoint["method"],
+                        entrypoint["name"], entrypoint["symbol"])
+    traversal = KnowledgeNavigator(snapshot).reachable(
+        key, TraversalPolicy(max_depth=MAX_FLOW_EDGE_LIMIT, max_nodes=MAX_FLOW_EDGE_LIMIT + 1,
+                             max_edges=effective_max_edges,
+                             relations=frozenset(_FLOW_KINDS | {"uses_config"})),
+    )
+    edges = []
+    for fact in traversal.facts:
+        if fact.kind != "flow_edge":
+            continue
+        source = fact.sources[0]
+        edges.append({
+            "from_symbol": fact.subject.name, "to_symbol": fact.attributes["target"],
+            "kind": fact.attributes["relation"], "confidence": fact.attributes["confidence"],
+            "origin": fact.origin, "file_path": source.file_path,
+            "start_line": source.start_line, "end_line": source.end_line,
+        })
+    truncated = traversal.truncated
     flow_symbols = {entrypoint["symbol"]} | {edge["from_symbol"] for edge in edges} | {edge["to_symbol"] for edge in edges}
     static_service_calls = flows_repo.list_static_service_calls_for_sources(conn, row["id"], flow_symbols)
     resilience_policies = flows_repo.list_static_resilience_policies_for_sources(conn, row["id"], flow_symbols)

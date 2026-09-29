@@ -4,12 +4,27 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.models import AnalysisResult, EntryPoint
+from orbitkb.db.repositories import canonical_snapshots
 from orbitkb.db.repositories._util import now
 
 
 def replace_analysis(conn: sqlite3.Connection, service_id: int, analysis: AnalysisResult) -> None:
     """Atomically replace one service's static analysis after a source scan."""
+    snapshot = project_analysis(canonical_snapshots.service_key(conn, service_id), analysis)
+    conn.execute("SAVEPOINT replace_analysis")
+    try:
+        _replace_analysis_rows(conn, service_id, analysis)
+        canonical_snapshots.replace_snapshot(conn, service_id, snapshot)
+    except BaseException:
+        conn.execute("ROLLBACK TO SAVEPOINT replace_analysis")
+        raise
+    finally:
+        conn.execute("RELEASE SAVEPOINT replace_analysis")
+
+
+def _replace_analysis_rows(conn: sqlite3.Connection, service_id: int, analysis: AnalysisResult) -> None:
     conn.execute("DELETE FROM flow_edges WHERE service_id = ?", (service_id,))
     conn.execute("DELETE FROM flow_boundaries WHERE service_id = ?", (service_id,))
     conn.execute("DELETE FROM static_error_contracts WHERE service_id = ?", (service_id,))

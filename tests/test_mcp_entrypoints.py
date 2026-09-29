@@ -1,3 +1,9 @@
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+from orbitkb.analysis.engine import StaticAnalysisEngine
 from orbitkb.analysis.models import (
     AnalysisResult,
     EntryPoint,
@@ -6,10 +12,11 @@ from orbitkb.analysis.models import (
     FlowBoundary,
     FlowEdge,
     ResiliencePolicy,
+    SecurityRequirement,
     StaticServiceCall,
 )
 from orbitkb.db.connection import open_db
-from orbitkb.db.repositories import flows, repositories, services
+from orbitkb.db.repositories import canonical_snapshots, flows, repositories, services
 from orbitkb.mcp import queries
 
 
@@ -71,6 +78,93 @@ def test_describe_entrypoint_returns_the_reachable_bounded_flow(tmp_path):
         "    participant p2 as DB",
         "    p1->>p2: writes",
     ])
+
+
+def test_describe_entrypoint_navigates_the_persisted_canonical_snapshot(tmp_path):
+    conn = open_db(tmp_path / "canonical-flow.db")
+    service_id = services.ensure_service(conn, "orders", "/repos/orders", "jvm-spring")
+    evidence = Evidence("OrdersController.kt", 8, 12)
+    flows.replace_analysis(conn, service_id, AnalysisResult(
+        entrypoints=[EntryPoint("http", "POST", "/orders", "OrdersController.create", evidence)],
+        edges=[
+            FlowEdge("OrdersController.create", "CreateOrder.execute", "invokes", evidence),
+            FlowEdge("CreateOrder.execute", "Repository.save", "writes", evidence),
+        ],
+    ))
+    assert canonical_snapshots.read_snapshot(conn, service_id) is not None
+    conn.execute("DELETE FROM flow_edges WHERE service_id = ?", (service_id,))
+
+    detail = queries.describe_entrypoint(conn, "orders", "http", "post", "/orders")
+
+    assert [(edge["from"], edge["to"]) for edge in detail["flow"]] == [
+        ("OrdersController.create", "CreateOrder.execute"),
+        ("CreateOrder.execute", "Repository.save"),
+    ]
+    assert detail["flow_pagination"] == {"max_edges": 50, "truncated": False}
+
+
+def test_describe_entrypoint_uses_language_neutral_navigation_for_kotlin_and_go(tmp_path):
+    go_root = tmp_path / "catalog-go"
+    go_root.mkdir()
+    (go_root / "main.go").write_text(
+        'package main\ntype Items struct{}\nfunc (i *Items) List() {}\n'
+        'func main() { router.GET("/items", items.List) }\n'
+    )
+    kotlin_root = Path(__file__).resolve().parents[1] / "verify/language_corpus/menu-kotlin-service"
+    conn = open_db(tmp_path / "language-neutral.db")
+    for name, stack, root in (("catalog-go", "go", go_root), ("menu-kotlin", "jvm-spring", kotlin_root)):
+        service_id = services.ensure_service(conn, name, str(root), stack)
+        analysis = StaticAnalysisEngine().analyze(root, stack)
+        flows.replace_analysis(conn, service_id, analysis)
+        entry = analysis.entrypoints[0]
+
+        detail = queries.describe_entrypoint(conn, name, entry.kind, entry.method, entry.name)
+
+        assert "error" not in detail
+        assert detail["entrypoint"]["symbol"] == entry.symbol
+        assert [(edge["from"], edge["to"]) for edge in detail["flow"]] == [
+            (edge.source, edge.target) for edge in analysis.edges if edge.source == entry.symbol
+        ]
+
+
+def test_invalid_canonical_projection_keeps_previous_static_analysis(tmp_path):
+    conn = open_db(tmp_path / "atomic-projection.db")
+    service_id = services.ensure_service(conn, "orders", "/repos/orders", "jvm-spring")
+    evidence = Evidence("Orders.kt", 1, 2)
+    flows.replace_analysis(conn, service_id, AnalysisResult(
+        entrypoints=[EntryPoint("http", "GET", "/orders", "Orders.list", evidence)],
+    ))
+
+    with pytest.raises(ValueError, match="security requirement subject"):
+        flows.replace_analysis(conn, service_id, AnalysisResult(
+            entrypoints=[EntryPoint("http", "POST", "/orders", "Orders.create", evidence)],
+            security_requirements=[SecurityRequirement("/orders", "POST", "Orders.create", "hasRole",
+                                                       ("ADMIN",), evidence)],
+        ))
+
+    assert flows.get_entrypoint(conn, service_id, "http", "GET", "/orders") is not None
+    assert flows.get_entrypoint(conn, service_id, "http", "POST", "/orders") is None
+    assert len(canonical_snapshots.read_snapshot(conn, service_id).facts) == 1
+
+
+def test_static_write_failure_rolls_back_flow_and_canonical_snapshot(tmp_path):
+    conn = open_db(tmp_path / "atomic-write.db")
+    service_id = services.ensure_service(conn, "orders", "/repos/orders", "jvm-spring")
+    evidence = Evidence("Orders.kt", 1, 2)
+    flows.replace_analysis(conn, service_id, AnalysisResult(
+        entrypoints=[EntryPoint("http", "GET", "/orders", "Orders.list", evidence)],
+    ))
+    conn.execute("""CREATE TRIGGER block_entrypoint BEFORE INSERT ON entrypoints
+                    WHEN NEW.name = '/blocked' BEGIN SELECT RAISE(ABORT, 'blocked'); END""")
+
+    with pytest.raises(sqlite3.IntegrityError, match="blocked"):
+        flows.replace_analysis(conn, service_id, AnalysisResult(
+            entrypoints=[EntryPoint("http", "POST", "/blocked", "Orders.blocked", evidence)],
+        ))
+
+    assert flows.get_entrypoint(conn, service_id, "http", "GET", "/orders") is not None
+    assert flows.get_entrypoint(conn, service_id, "http", "POST", "/blocked") is None
+    assert canonical_snapshots.read_snapshot(conn, service_id).facts[0].subject.name == "/orders"
 
 
 def test_describe_entrypoint_includes_a_deterministic_graphql_contract(tmp_path):

@@ -492,13 +492,16 @@ feature flags, cloud operations and HTTP header names from `AnalysisResult` into
 language-neutral facts with stable IDs and source locations.
 It keeps the known origin and confidence, and marks custom authorization logic
 as unknown rather than interpreting its behavior.
-Indexing stores this snapshot in SQLite when static analysis runs, and reuses it
-when inputs are unchanged. A missing snapshot triggers static reanalysis without
-additional LLM calls. Exports still use their current read paths.
+Indexing stores this snapshot in SQLite together with static flow analysis, and
+reuses it when inputs are unchanged. A missing snapshot triggers static
+reanalysis without additional LLM calls. `describe_entrypoint` reads its
+bounded flow from the canonical snapshot; other exports retain their current
+read paths.
 `KnowledgeNavigator` can traverse a canonical snapshot from one indexed entrypoint
 with explicit depth, node, edge and relation limits. It returns reached facts,
 source-backed paths, unresolved or known boundaries, and truncation reasons.
-This domain-level navigator is not yet wired into the public query and export paths.
+The navigator is used by `describe_entrypoint` and is not yet used by other
+public queries or exports.
 For Spring indexing, class-level `@RequestMapping` declarations are not separate
 endpoint generation units; handler mappings create those units with the class path
 prefix included.
