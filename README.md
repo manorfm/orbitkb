@@ -586,7 +586,12 @@ request payload. An optional or unresolved body still needs payload evidence.
 If source code declares a body while OpenAPI declares none, the request shape is
 ambiguous. An internal renderer can produce schema-valid API details for a direct
 public GET with an explicit OpenAPI summary and description, a typed response,
-and a complete route flow without calls. It is not wired to skip LLM generation yet.
+and a complete route flow without calls. For regenerated routes, the indexer now
+compares this candidate with the LLM result in shadow mode. Route details report
+`render_status` (`ineligible`, `matches`, `differs`, or `generation_failed`) and
+the names of differing fields, without storing the candidate text. This is an
+exact field comparison, not a measure of semantic quality. LLM generation and
+its persisted result remain unchanged, so call counts do not fall yet.
 Use `orbitkb index <path> --sufficiency-details` or
 `orbitkb update <service> --sufficiency-details` to print one JSON line per
 regenerated route with each dimension's status, reason and evidence IDs. An

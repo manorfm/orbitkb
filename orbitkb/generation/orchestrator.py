@@ -36,9 +36,13 @@ from orbitkb.discovery.hashing import file_hash, git_head_commit
 from orbitkb.discovery.registry import detector_by_id
 from orbitkb.discovery.scan_helpers import SKIP_DIRS, collect_config_excerpts
 from orbitkb.discovery.walker import ServiceCandidate, discover_services
-from orbitkb.domain.sufficiency import SufficiencyResult
+from orbitkb.domain.sufficiency import (
+    DeterministicSufficiencyEvaluator,
+    SufficiencyResult,
+)
 from orbitkb.generation.architecture import recompute_architecture_view
 from orbitkb.generation.backend_base import LLMBackend, LLMUsage
+from orbitkb.generation.deterministic_endpoint import render_simple_endpoint
 from orbitkb.generation.embeddings import EmbeddingBackend
 from orbitkb.generation.evidence import AggregateEvidenceSource, EvidenceSource
 from orbitkb.generation.knowledge import (
@@ -58,7 +62,7 @@ from orbitkb.generation.knowledge import (
 from orbitkb.generation.legacy_knowledge import LegacyKnowledgeAdapter
 from orbitkb.generation.llm_harness import generate_with_retry, load_prompt, load_schema
 from orbitkb.generation.policy import GenerationPolicy
-from orbitkb.generation.route_evidence import route_outbound_hints, route_sufficiency
+from orbitkb.generation.route_evidence import route_capsule, route_outbound_hints
 from orbitkb.generation.unit import IndexUnit
 from orbitkb.iac.scanner import scan_repository_facts
 from orbitkb.security.findings import find_security_findings
@@ -93,6 +97,8 @@ class RouteSufficiency:
     method: str
     path: str
     assessment: SufficiencyResult | None
+    render_status: str = "ineligible"
+    differing_fields: tuple[str, ...] = ()
 
     @property
     def status(self) -> str:
@@ -372,7 +378,9 @@ class EndpointGenerator:
                 ctx.progress.unit_finished(ctx.name, label, "skipped")
                 continue
             ctx.progress.unit_started(ctx.name, label)
-            sufficiency = route_sufficiency(snapshot, endpoint.method, endpoint.path) if snapshot else None
+            capsule = route_capsule(snapshot, endpoint.method, endpoint.path) if snapshot else None
+            sufficiency = DeterministicSufficiencyEvaluator().evaluate(capsule) if capsule else None
+            static_doc = render_simple_endpoint(capsule, sufficiency) if capsule and sufficiency else None
             detail = RouteSufficiency(endpoint.method, endpoint.path, sufficiency)
             ctx.sufficiency_details.append(detail)
             shadow_status = detail.status
@@ -395,12 +403,23 @@ class EndpointGenerator:
                 on_duration_ms=unit.record_duration,
             )
             if not generation:
+                if static_doc is not None:
+                    ctx.sufficiency_details[-1] = replace(detail, render_status="generation_failed")
                 unit.status = "failed"
                 outcome.add(unit)
                 outcome.failed_files |= dep_files
                 ctx.progress.unit_finished(ctx.name, label, "failed")
                 continue
             result = generation.structured
+            if static_doc is not None:
+                differing_fields = tuple(sorted(
+                    key for key, value in static_doc.items() if result.get(key) != value
+                ))
+                ctx.sufficiency_details[-1] = replace(
+                    detail,
+                    render_status="differs" if differing_fields else "matches",
+                    differing_fields=differing_fields,
+                )
             evidence = source.pointers
             ctx.knowledge_writer.save_endpoint(
                 ctx.service_id,

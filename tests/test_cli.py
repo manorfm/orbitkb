@@ -95,6 +95,7 @@ def test_index_command_can_show_route_sufficiency(tmp_path: Path, capsys):
     assert cli._cmd_index(args) == 0
     output = capsys.readouterr().out
     assert "sufficiency=" in output
+    assert '"render_status": "ineligible"' in output
     assert '"dimension": "business_behavior"' in output
     assert '"reason": "canonical static facts do not establish a business description"' in output
 

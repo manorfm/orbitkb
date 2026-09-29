@@ -137,6 +137,8 @@ def _print_sufficiency_details(result) -> None:
             "method": detail.method,
             "path": detail.path,
             "status": detail.status,
+            "render_status": detail.render_status,
+            "differing_fields": detail.differing_fields,
             "dimensions": [
                 {
                     "dimension": item.dimension,

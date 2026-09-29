@@ -11,11 +11,13 @@ from orbitkb.discovery.base import (
 )
 from orbitkb.discovery.registry import detector_by_id
 from orbitkb.domain.canonical import ServiceKey
+from orbitkb.generation.backend_base import GenerationOutcome
 from orbitkb.generation.mock_backend import MockBackend, kind_for_schema
 from orbitkb.generation.orchestrator import _render_api_detail_prompt, index_service
 from orbitkb.generation.route_evidence import route_outbound_hints
 
 CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/menu-kotlin-service"
+STATUS_CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/status-kotlin-service"
 
 
 class RecordingBackend(MockBackend):
@@ -26,6 +28,23 @@ class RecordingBackend(MockBackend):
         if kind_for_schema(schema) == "api_detail":
             self.endpoint_prompts.append(prompt)
         return super().generate(prompt, schema, cwd)
+
+
+class MatchingBackend(RecordingBackend):
+    def generate(self, prompt, schema, cwd):
+        if kind_for_schema(schema) != "api_detail":
+            return super().generate(prompt, schema, cwd)
+        self.endpoint_prompts.append(prompt)
+        return GenerationOutcome(structured={
+            "summary": "Get service status",
+            "description": "Returns the current service status.",
+            "response_shape": [{"field": "value", "type_desc": "String"}],
+            "request_shape": [],
+            "calls": [],
+            "validations": [{
+                "kind": "authorization", "description": "Public access is permitted.",
+            }],
+        })
 
 
 def test_endpoint_prompt_uses_route_proven_feign_evidence_without_another_model_call(tmp_path):
@@ -52,6 +71,35 @@ def test_endpoint_prompt_uses_route_proven_feign_evidence_without_another_model_
     assert "GET /restaurants/{id}" in prompt
     assert "MenuGateway.kt" in prompt
     assert "(none found)" not in prompt.split("Outbound-call hints", 1)[1].split("Return:", 1)[0]
+    assert all(item.render_status == "ineligible" for item in result.sufficiency_details)
+
+
+def test_simple_route_shadow_compares_fields_without_skipping_model_call(tmp_path):
+    backend = RecordingBackend()
+    conn = open_db(tmp_path / "index.db")
+
+    result = index_service(conn, "status", STATUS_CORPUS, detector_by_id("jvm-spring"), backend)
+
+    assert result.status == "ok"
+    assert len(backend.endpoint_prompts) == 1
+    assert result.llm_invocations >= 1
+    assert result.sufficiency_shadow == {"enough": 1}
+    detail = result.sufficiency_details[0]
+    assert detail.render_status == "differs"
+    assert detail.differing_fields == ("description", "response_shape", "summary", "validations")
+    assert detail.status == "enough"
+
+
+def test_simple_route_shadow_reports_matching_fields(tmp_path):
+    backend = MatchingBackend()
+    conn = open_db(tmp_path / "index.db")
+
+    result = index_service(conn, "status", STATUS_CORPUS, detector_by_id("jvm-spring"), backend)
+
+    assert result.status == "ok"
+    assert len(backend.endpoint_prompts) == 1
+    assert result.sufficiency_details[0].render_status == "matches"
+    assert result.sufficiency_details[0].differing_fields == ()
 
 
 def test_limited_route_evidence_reports_omitted_calls_instead_of_claiming_none():
