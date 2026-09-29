@@ -57,6 +57,27 @@ def test_unit_usage_is_scoped_to_one_run(tmp_path: Path):
     assert second_usage[0]["backend_duration_ms"] == 0.0
 
 
+def test_per_unit_keys_are_stable_within_a_database_and_distinct_across_databases(tmp_path: Path):
+    keys = []
+    for filename in ("first.db", "second.db"):
+        conn = open_db(tmp_path / filename)
+        service_id = services_repo.ensure_service(conn, "menus-service", "/tmp/menus", "python")
+        first = repository.start_index_run(conn, service_id, "mock")
+        second = repository.start_index_run(conn, service_id, "mock")
+        for run_id in (first, second):
+            repository.record_run_unit(
+                conn, run_id, service_id, "endpoint", ("GET", "/menus"),
+                "success", 1, None, None, None, 10.0,
+            )
+        first_key = repository.list_run_units(conn, first)[0]["unit_key"]
+        second_key = repository.list_run_units(conn, second)[0]["unit_key"]
+        assert first_key == second_key
+        keys.append(first_key)
+
+    assert keys[0] != keys[1]
+    assert all("/menus" not in key for key in keys)
+
+
 def test_usage_totals_sums_across_runs_for_one_service(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")

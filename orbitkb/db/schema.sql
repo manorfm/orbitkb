@@ -829,6 +829,21 @@ CREATE TABLE IF NOT EXISTS index_run_unit_usage (
     PRIMARY KEY (run_id, unit_kind)
 );
 
+-- Per-unit measurements. unit_key is a database-local HMAC; no route, file,
+-- prompt, symbol or source text is stored in this table.
+CREATE TABLE IF NOT EXISTS index_run_units (
+    run_id              INTEGER NOT NULL REFERENCES index_runs(id) ON DELETE CASCADE,
+    unit_kind           TEXT NOT NULL CHECK (unit_kind IN ('endpoint', 'component', 'persistence', 'messaging', 'overview')),
+    unit_key            TEXT NOT NULL,
+    status              TEXT NOT NULL CHECK (status IN ('skipped', 'success', 'failed')),
+    llm_invocations     INTEGER NOT NULL CHECK (llm_invocations >= 0),
+    input_tokens        INTEGER,
+    output_tokens       INTEGER,
+    cost_usd            REAL,
+    backend_duration_ms REAL NOT NULL CHECK (backend_duration_ms >= 0),
+    PRIMARY KEY (run_id, unit_kind, unit_key)
+);
+
 -- Deterministic, whole-graph structural findings and bounded flow hypotheses (cycles,
 -- fan-in/out imbalance, shared database, duplicate external integration, BFF-policy
 -- and non-atomic-publish candidates) recomputed after every index/update from

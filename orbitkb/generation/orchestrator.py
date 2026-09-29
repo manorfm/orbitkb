@@ -267,23 +267,45 @@ def _render_messaging_prompt(name: str, stack: str, hints: ServiceHints, config_
 # ---------------------------------------------------------------------------
 
 @dataclass
-class UnitOutcome:
-    """What one UnitGenerator.run() call did: how many LLM calls it spent, whether
-    any of its sub-units failed, and which files those failures touched (so their
-    hash is deliberately NOT persisted afterward — see index_service's final loop —
-    and the unit is retried next run instead of being silently skipped forever)."""
+class UnitMeasurement:
+    """One planned generation unit and the backend usage observed for it."""
 
-    llm_calls: int = 0
-    had_failure: bool = False
-    failed_files: set[str] = field(default_factory=set)
+    kind: str
+    identity: tuple[str, ...]
+    status: str = "skipped"
+    llm_invocations: int = 0
     usage: LLMUsage = field(default_factory=LLMUsage)
     backend_duration_ms: float = 0.0
+
+    def record_attempt(self, ctx: IndexContext) -> None:
+        ctx.record_llm_invocation()
+        self.llm_invocations += 1
 
     def record_usage(self, usage: LLMUsage) -> None:
         self.usage = self.usage + usage
 
     def record_duration(self, duration_ms: float) -> None:
         self.backend_duration_ms += duration_ms
+
+
+@dataclass
+class UnitOutcome:
+    """Generator totals plus files to retry after a failed unit."""
+
+    llm_calls: int = 0
+    had_failure: bool = False
+    failed_files: set[str] = field(default_factory=set)
+    usage: LLMUsage = field(default_factory=LLMUsage)
+    backend_duration_ms: float = 0.0
+    units: list[UnitMeasurement] = field(default_factory=list)
+
+    def add(self, unit: UnitMeasurement) -> None:
+        self.units.append(unit)
+        if unit.status == "success":
+            self.llm_calls += 1
+        self.had_failure = self.had_failure or unit.status == "failed"
+        self.usage = self.usage + unit.usage
+        self.backend_duration_ms += unit.backend_duration_ms
 
 
 @dataclass
@@ -333,12 +355,14 @@ class EndpointGenerator:
         keep_api_keys: set[tuple[str, str]] = set()
         for endpoint in ctx.hints.endpoints:
             key = (endpoint.method, endpoint.path)
+            unit = UnitMeasurement(self.kind, key)
             keep_api_keys.add(key)
             existing_api = apis_repo.get_api_by_key(ctx.conn, ctx.service_id, *key)
             dep_files = endpoint.dependency_files()
             needs_regen = ctx.force or existing_api is None or bool(dep_files & ctx.changed)
             label = f"{endpoint.method} {endpoint.path}"
             if not needs_regen:
+                outcome.add(unit)
                 ctx.progress.unit_finished(ctx.name, label, "skipped")
                 continue
             ctx.progress.unit_started(ctx.name, label)
@@ -346,12 +370,13 @@ class EndpointGenerator:
             generation = generate_with_retry(
                 ctx.backend, prompt, load_schema("api_detail"), ctx.root, ctx.failures_root,
                 f"{ctx.name}-{endpoint.method}-{endpoint.path}",
-                on_attempt=ctx.record_llm_invocation,
-                on_usage=outcome.record_usage,
-                on_duration_ms=outcome.record_duration,
+                on_attempt=lambda unit=unit: unit.record_attempt(ctx),
+                on_usage=unit.record_usage,
+                on_duration_ms=unit.record_duration,
             )
             if not generation:
-                outcome.had_failure = True
+                unit.status = "failed"
+                outcome.add(unit)
                 outcome.failed_files |= dep_files
                 ctx.progress.unit_finished(ctx.name, label, "failed")
                 continue
@@ -364,7 +389,8 @@ class EndpointGenerator:
             )
             apis_repo.replace_api_validations(ctx.conn, api_id, result["validations"])
             service_calls_repo.replace_calls_for_api(ctx.conn, ctx.service_id, api_id, result["calls"], evidence)
-            outcome.llm_calls += 1
+            unit.status = "success"
+            outcome.add(unit)
             ctx.any_endpoint_regenerated = True
             ctx.progress.unit_finished(ctx.name, label, "ok")
 
@@ -386,6 +412,7 @@ class ComponentGenerator:
         keep_component_keys: set[tuple[str, str]] = set()
         for component_name, group in ctx.component_groups.items():
             component_file = group[0].excerpt.file_path
+            unit = UnitMeasurement(self.kind, (component_name, component_file))
             keep_component_keys.add((component_name, component_file))
             group_dep_files: set[str] = set()
             for endpoint in group:
@@ -393,6 +420,7 @@ class ComponentGenerator:
             needs_regen = ctx.force or ctx.is_new or bool(group_dep_files & ctx.changed)
             label = f"component {component_name}"
             if not needs_regen:
+                outcome.add(unit)
                 ctx.progress.unit_finished(ctx.name, label, "skipped")
                 continue
             ctx.progress.unit_started(ctx.name, label)
@@ -409,12 +437,13 @@ class ComponentGenerator:
             generation = generate_with_retry(
                 ctx.backend, prompt, load_schema("component"), ctx.root, ctx.failures_root,
                 f"{ctx.name}-component-{component_name}",
-                on_attempt=ctx.record_llm_invocation,
-                on_usage=outcome.record_usage,
-                on_duration_ms=outcome.record_duration,
+                on_attempt=lambda unit=unit: unit.record_attempt(ctx),
+                on_usage=unit.record_usage,
+                on_duration_ms=unit.record_duration,
             )
             if not generation:
-                outcome.had_failure = True
+                unit.status = "failed"
+                outcome.add(unit)
                 outcome.failed_files |= group_dep_files
                 ctx.progress.unit_finished(ctx.name, label, "failed")
                 continue
@@ -423,7 +452,8 @@ class ComponentGenerator:
             components_repo.upsert_component(
                 ctx.conn, ctx.service_id, component_name, component_file, result["summary"], evidence
             )
-            outcome.llm_calls += 1
+            unit.status = "success"
+            outcome.add(unit)
             ctx.any_component_regenerated = True
             ctx.progress.unit_finished(ctx.name, label, "ok")
 
@@ -441,7 +471,9 @@ class PersistenceGenerator:
             persistence_repo.replace_persistence_entities(ctx.conn, ctx.service_id, [], [])
             return outcome
 
+        unit = UnitMeasurement(self.kind, ())
         if not (ctx.force or ctx.is_new or (ctx.changed & persistence_files) or (ctx.removed & persistence_files)):
+            outcome.add(unit)
             ctx.progress.unit_finished(ctx.name, "persistence", "skipped")
             return outcome
 
@@ -452,9 +484,9 @@ class PersistenceGenerator:
         prompt = _render_persistence_prompt(ctx.name, ctx.detector.id, ctx.hints, persistence_config_excerpts)
         generation = generate_with_retry(
             ctx.backend, prompt, load_schema("persistence"), ctx.root, ctx.failures_root, f"{ctx.name}-persistence",
-            on_attempt=ctx.record_llm_invocation,
-            on_usage=outcome.record_usage,
-            on_duration_ms=outcome.record_duration,
+            on_attempt=lambda: unit.record_attempt(ctx),
+            on_usage=unit.record_usage,
+            on_duration_ms=unit.record_duration,
         )
         if generation:
             result = generation.structured
@@ -464,10 +496,12 @@ class PersistenceGenerator:
             ]
             evidence = _evidence_from_excerpts([p.excerpt for p in ctx.hints.persistence] + persistence_config_excerpts)
             persistence_repo.replace_persistence_entities(ctx.conn, ctx.service_id, entities, evidence)
-            outcome.llm_calls += 1
+            unit.status = "success"
+            outcome.add(unit)
             ctx.progress.unit_finished(ctx.name, "persistence", "ok")
         else:
-            outcome.had_failure = True
+            unit.status = "failed"
+            outcome.add(unit)
             outcome.failed_files |= persistence_files
             ctx.progress.unit_finished(ctx.name, "persistence", "failed")
         return outcome
@@ -483,7 +517,9 @@ class MessagingGenerator:
             messages_repo.replace_messages(ctx.conn, ctx.service_id, [], [])
             return outcome
 
+        unit = UnitMeasurement(self.kind, ())
         if not (ctx.force or ctx.is_new or (ctx.changed & messaging_files) or (ctx.removed & messaging_files)):
+            outcome.add(unit)
             ctx.progress.unit_finished(ctx.name, "messaging", "skipped")
             return outcome
 
@@ -492,9 +528,9 @@ class MessagingGenerator:
         prompt = _render_messaging_prompt(ctx.name, ctx.detector.id, ctx.hints, config_excerpts)
         generation = generate_with_retry(
             ctx.backend, prompt, load_schema("messaging"), ctx.root, ctx.failures_root, f"{ctx.name}-messaging",
-            on_attempt=ctx.record_llm_invocation,
-            on_usage=outcome.record_usage,
-            on_duration_ms=outcome.record_duration,
+            on_attempt=lambda: unit.record_attempt(ctx),
+            on_usage=unit.record_usage,
+            on_duration_ms=unit.record_duration,
         )
         if generation:
             result = generation.structured
@@ -510,10 +546,12 @@ class MessagingGenerator:
             ]
             evidence = _evidence_from_excerpts([m.excerpt for m in ctx.hints.messaging] + config_excerpts)
             messages_repo.replace_messages(ctx.conn, ctx.service_id, messages, evidence)
-            outcome.llm_calls += 1
+            unit.status = "success"
+            outcome.add(unit)
             ctx.progress.unit_finished(ctx.name, "messaging", "ok")
         else:
-            outcome.had_failure = True
+            unit.status = "failed"
+            outcome.add(unit)
             outcome.failed_files |= messaging_files
             ctx.progress.unit_finished(ctx.name, "messaging", "failed")
         return outcome
@@ -527,6 +565,7 @@ class OverviewGenerator:
 
     def run(self, ctx: IndexContext) -> UnitOutcome:
         outcome = UnitOutcome()
+        unit = UnitMeasurement(self.kind, ())
         entry_files = {ctx.hints.entry_excerpt.file_path} if ctx.hints.entry_excerpt else set()
         needs_overview = (
             ctx.force or ctx.is_new or bool(ctx.changed & entry_files)
@@ -534,6 +573,7 @@ class OverviewGenerator:
             or ctx.any_endpoint_regenerated or ctx.any_component_regenerated
         )
         if not needs_overview:
+            outcome.add(unit)
             ctx.progress.unit_finished(ctx.name, "overview", "skipped")
             return outcome
 
@@ -542,18 +582,20 @@ class OverviewGenerator:
         prompt = _render_service_overview_prompt(ctx.name, ctx.detector.id, ctx.root, ctx.hints, components)
         generation = generate_with_retry(
             ctx.backend, prompt, load_schema("service_overview"), ctx.root, ctx.failures_root, f"{ctx.name}-overview",
-            on_attempt=ctx.record_llm_invocation,
-            on_usage=outcome.record_usage,
-            on_duration_ms=outcome.record_duration,
+            on_attempt=lambda: unit.record_attempt(ctx),
+            on_usage=unit.record_usage,
+            on_duration_ms=unit.record_duration,
         )
         if generation:
             result = generation.structured
             services_repo.update_service_overview(ctx.conn, ctx.service_id, result["short_desc"], result["long_desc"])
-            outcome.llm_calls += 1
+            unit.status = "success"
+            outcome.add(unit)
             self._update_embedding(ctx, result["short_desc"], result["long_desc"])
             ctx.progress.unit_finished(ctx.name, "overview", "ok")
         else:
-            outcome.had_failure = True
+            unit.status = "failed"
+            outcome.add(unit)
             outcome.failed_files |= entry_files
             ctx.progress.unit_finished(ctx.name, "overview", "failed")
         return outcome
@@ -660,6 +702,12 @@ def _index_service_unlocked(
     for generator in UNIT_GENERATORS:
         invocations_before = ctx.llm_invocations
         outcome = generator.run(ctx)
+        for unit in outcome.units:
+            index_runs_repo.record_run_unit(
+                conn, run_id, service_id, unit.kind, unit.identity, unit.status,
+                unit.llm_invocations, unit.usage.input_tokens, unit.usage.output_tokens,
+                unit.usage.cost_usd, unit.backend_duration_ms,
+            )
         index_runs_repo.record_unit_usage(
             conn, run_id, generator.kind, outcome.llm_calls,
             ctx.llm_invocations - invocations_before, outcome.had_failure,

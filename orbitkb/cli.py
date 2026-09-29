@@ -313,6 +313,9 @@ def _cmd_setup_remove(args: argparse.Namespace) -> int:
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
+    if args.units and not args.service:
+        print("error: --units requires a service name", file=sys.stderr)
+        return 1
     conn = open_db(args.db)
     if args.service:
         row = services_repo.get_service_by_name(conn, args.service)
@@ -338,6 +341,14 @@ def _cmd_status(args: argparse.Namespace) -> int:
                     f"tokens=(in={unit['input_tokens']},out={unit['output_tokens']}) "
                     f"cost_usd={unit['cost_usd']} backend_duration_ms={unit['backend_duration_ms']}"
                 )
+            if args.units:
+                for unit in index_runs_repo.list_run_units(conn, run["id"]):
+                    print(
+                        f"      unit {unit['unit_kind']} key={unit['unit_key']} "
+                        f"status={unit['status']} attempts={unit['llm_invocations']} "
+                        f"tokens=(in={unit['input_tokens']},out={unit['output_tokens']}) "
+                        f"cost_usd={unit['cost_usd']} backend_duration_ms={unit['backend_duration_ms']}"
+                    )
         totals = index_runs_repo.usage_totals(conn, row["id"])
         print(
             f"cumulative usage: input_tokens={totals['input_tokens']} output_tokens={totals['output_tokens']} "
@@ -723,6 +734,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_status.add_argument("service", nargs="?", default=None, help="Show one service's indexing history instead of the whole DB's")
+    p_status.add_argument("--units", action="store_true", help="Show opaque per-unit indexing measurements for one service")
     p_status.add_argument("--db", type=Path, default=DEFAULT_DB_PATH, help=f"SQLite database path (default: {DEFAULT_DB_PATH})")
     p_status.set_defaults(func=_cmd_status)
 

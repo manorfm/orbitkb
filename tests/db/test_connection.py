@@ -6,7 +6,7 @@ from orbitkb.db.connection import open_db
 def test_schema_initializes(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     row = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
-    assert row["value"] == "44"
+    assert row["value"] == "45"
 
 
 def test_schema_adds_invocation_count_without_rewriting_older_runs(tmp_path: Path):
@@ -23,7 +23,7 @@ def test_schema_adds_invocation_count_without_rewriting_older_runs(tmp_path: Pat
     run = upgraded.execute("SELECT llm_calls, llm_invocations FROM index_runs").fetchone()
     assert run["llm_calls"] == 3
     assert run["llm_invocations"] is None
-    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "44"
+    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "45"
 
 
 def test_schema_adds_private_unit_usage_without_backfilling_old_runs(tmp_path: Path):
@@ -61,7 +61,24 @@ def test_schema_adds_duration_to_existing_unit_usage_without_inventing_history(t
 
     row = upgraded.execute("SELECT backend_duration_ms FROM index_run_unit_usage").fetchone()
     assert row["backend_duration_ms"] is None
-    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "44"
+    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "45"
+
+
+def test_schema_adds_per_unit_telemetry_without_backfilling_old_runs(tmp_path: Path):
+    path = tmp_path / "legacy-per-unit.db"
+    conn = open_db(path)
+    conn.execute("INSERT INTO index_runs (id, started_at) VALUES (1, 'before-v3')")
+    conn.execute("DROP TABLE index_run_units")
+    conn.execute("UPDATE schema_meta SET value = '44' WHERE key = 'schema_version'")
+    conn.commit()
+    conn.close()
+
+    upgraded = open_db(path)
+
+    columns = {row["name"] for row in upgraded.execute("PRAGMA table_info(index_run_units)")}
+    assert {"unit_kind", "unit_key", "status", "llm_invocations", "cost_usd"} <= columns
+    assert not {"path", "prompt", "source", "endpoint"} & columns
+    assert upgraded.execute("SELECT count(*) FROM index_run_units").fetchone()[0] == 0
 
 
 def test_schema_adds_message_version_to_an_existing_static_contract_table(tmp_path: Path):
@@ -76,7 +93,7 @@ def test_schema_adds_message_version_to_an_existing_static_contract_table(tmp_pa
 
     columns = {row["name"] for row in upgraded.execute("PRAGMA table_info(static_message_contracts)")}
     assert "message_version" in columns
-    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "44"
+    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "45"
 
 
 def test_schema_adds_env_from_optional_and_container_role_to_existing_configuration_tables(tmp_path: Path):
@@ -107,7 +124,7 @@ def test_schema_adds_env_from_optional_and_container_role_to_existing_configurat
     assert "container_role" in source_import_columns
     assert "container_role" in source_import_unknown_columns
     assert {"workload_kind", "workload_name", "container_name"} <= source_import_unknown_columns
-    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "44"
+    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "45"
 
 
 def test_schema_adds_selected_decisions_to_an_existing_change_plan(tmp_path: Path):
@@ -122,7 +139,7 @@ def test_schema_adds_selected_decisions_to_an_existing_change_plan(tmp_path: Pat
 
     columns = {row["name"] for row in upgraded.execute("PRAGMA table_info(change_plan_runs)")}
     assert "selected_decisions_json" in columns
-    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "44"
+    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "45"
 
 
 def test_schema_adds_change_units_to_an_existing_change_plan(tmp_path: Path):
@@ -137,7 +154,7 @@ def test_schema_adds_change_units_to_an_existing_change_plan(tmp_path: Path):
 
     columns = {row["name"] for row in upgraded.execute("PRAGMA table_info(change_plan_runs)")}
     assert "change_units_json" in columns
-    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "44"
+    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "45"
 
 
 def test_schema_adds_token_measurement_to_an_existing_change_plan(tmp_path: Path):
@@ -152,7 +169,7 @@ def test_schema_adds_token_measurement_to_an_existing_change_plan(tmp_path: Path
 
     columns = {row["name"] for row in upgraded.execute("PRAGMA table_info(change_plan_runs)")}
     assert "token_measurement" in columns
-    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "44"
+    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "45"
 
 
 def test_schema_adds_token_measurement_to_existing_context_telemetry(tmp_path: Path):
@@ -167,7 +184,7 @@ def test_schema_adds_token_measurement_to_existing_context_telemetry(tmp_path: P
 
     columns = {row["name"] for row in upgraded.execute("PRAGMA table_info(context_budget_runs)")}
     assert "token_measurement" in columns
-    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "44"
+    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "45"
 
 
 def test_schema_adds_static_analysis_snapshots_to_an_existing_database(tmp_path: Path):
@@ -183,7 +200,7 @@ def test_schema_adds_static_analysis_snapshots_to_an_existing_database(tmp_path:
     assert upgraded.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'static_analysis_snapshots'"
     ).fetchone() is not None
-    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "44"
+    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"] == "45"
 
 
 def test_schema_upgrades_legacy_entrypoint_constraint_without_losing_contracts(tmp_path: Path):

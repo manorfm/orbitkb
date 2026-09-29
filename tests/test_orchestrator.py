@@ -490,6 +490,62 @@ def test_invalid_responses_keep_reported_usage_in_unit_metrics(tmp_path: Path):
     assert overview["input_tokens"] == 20
     assert overview["cost_usd"] == pytest.approx(0.04)
     assert run["cost_usd"] == pytest.approx(0.04)
+    overview_unit = next(
+        unit for unit in index_runs_repo.list_run_units(conn, run["id"]) if unit["unit_kind"] == "overview"
+    )
+    assert overview_unit["status"] == "failed"
+    assert overview_unit["llm_invocations"] == 2
+    assert overview_unit["cost_usd"] == pytest.approx(0.04)
+
+
+def test_per_unit_usage_tracks_success_and_incremental_skips_with_stable_opaque_keys(tmp_path: Path):
+    path = tmp_path / "units.db"
+    conn = open_db(path)
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    first = index_service(conn, orders.name, orders.path, orders.detector, FakeOrchestratorBackend())
+    first_run = index_runs_repo.recent_index_runs(conn, first.service_id, limit=1)[0]
+    first_units = index_runs_repo.list_run_units(conn, first_run["id"])
+    conn.close()
+
+    conn = open_db(path)
+    second = index_service(conn, orders.name, orders.path, orders.detector, FakeOrchestratorBackend())
+    second_run = index_runs_repo.recent_index_runs(conn, second.service_id, limit=1)[0]
+    second_units = index_runs_repo.list_run_units(conn, second_run["id"])
+
+    assert sum(unit["llm_invocations"] for unit in first_units) == first.llm_invocations
+    assert sum(unit["llm_invocations"] for unit in second_units) == 0
+    assert all(unit["status"] == "skipped" for unit in second_units)
+    assert {(unit["unit_kind"], unit["unit_key"]) for unit in first_units} == {
+        (unit["unit_kind"], unit["unit_key"]) for unit in second_units
+    }
+    assert len([unit for unit in first_units if unit["unit_kind"] == "endpoint"]) == 4
+    assert all(len(unit["unit_key"]) == 64 for unit in first_units)
+    assert not {"path", "prompt", "source", "endpoint"} & set(first_units[0].keys())
+    assert "/orders" not in str([dict(unit) for unit in first_units])
+    for aggregate in index_runs_repo.list_unit_usage(conn, first_run["id"]):
+        same_kind = [unit for unit in first_units if unit["unit_kind"] == aggregate["unit_kind"]]
+        assert sum(unit["llm_invocations"] for unit in same_kind) == aggregate["llm_invocations"]
+        assert sum(unit["backend_duration_ms"] for unit in same_kind) == pytest.approx(
+            aggregate["backend_duration_ms"]
+        )
+
+
+def test_failed_unit_keeps_retry_count_and_unknown_cost(tmp_path: Path):
+    conn = open_db(tmp_path / "failed-units.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    result = index_service(
+        conn, orders.name, orders.path, orders.detector, FakeOrchestratorBackend(fail_kind="service_overview"),
+        failures_root=tmp_path / "failures",
+    )
+    run = index_runs_repo.recent_index_runs(conn, result.service_id, limit=1)[0]
+    units = index_runs_repo.list_run_units(conn, run["id"])
+    overview = next(unit for unit in units if unit["unit_kind"] == "overview")
+
+    assert result.status == "partial"
+    assert overview["status"] == "failed"
+    assert overview["llm_invocations"] == 2
+    assert overview["cost_usd"] is None
+    assert sum(unit["llm_invocations"] for unit in units) == result.llm_invocations
 
 
 def test_unit_metrics_include_backend_duration_for_retries_and_skips(tmp_path: Path, monkeypatch):

@@ -2,7 +2,11 @@
 service, used by `orbitkb status` to show indexing history and token/cost usage."""
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import os
+import secrets
 import sqlite3
 
 from ._util import now
@@ -108,6 +112,39 @@ def record_unit_usage(
 def list_unit_usage(conn: sqlite3.Connection, run_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM index_run_unit_usage WHERE run_id = ? ORDER BY unit_kind", (run_id,)
+    ).fetchall()
+
+
+def _opaque_unit_key(conn: sqlite3.Connection, service_id: int, kind: str, identity: tuple[str, ...]) -> str:
+    row = conn.execute("SELECT value FROM schema_meta WHERE key = 'unit_telemetry_salt'").fetchone()
+    if row is None:
+        conn.execute(
+            "INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('unit_telemetry_salt', ?)",
+            (secrets.token_hex(32),),
+        )
+        row = conn.execute("SELECT value FROM schema_meta WHERE key = 'unit_telemetry_salt'").fetchone()
+    message = json.dumps([service_id, kind, *identity], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return hmac.new(bytes.fromhex(row["value"]), message, hashlib.sha256).hexdigest()
+
+
+def record_run_unit(
+    conn: sqlite3.Connection, run_id: int, service_id: int, kind: str, identity: tuple[str, ...],
+    status: str, llm_invocations: int, input_tokens: int | None, output_tokens: int | None,
+    cost_usd: float | None, backend_duration_ms: float,
+) -> None:
+    conn.execute(
+        """INSERT INTO index_run_units
+           (run_id, unit_kind, unit_key, status, llm_invocations, input_tokens,
+            output_tokens, cost_usd, backend_duration_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (run_id, kind, _opaque_unit_key(conn, service_id, kind, identity), status,
+         llm_invocations, input_tokens, output_tokens, cost_usd, backend_duration_ms),
+    )
+
+
+def list_run_units(conn: sqlite3.Connection, run_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM index_run_units WHERE run_id = ? ORDER BY unit_kind, unit_key", (run_id,)
     ).fetchall()
 
 

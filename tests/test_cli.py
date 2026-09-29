@@ -5,6 +5,7 @@ import argparse
 import faulthandler
 import gc
 import logging
+import re
 from pathlib import Path
 
 import pytest
@@ -248,6 +249,20 @@ def test_status_command_for_one_service(tmp_path: Path, capsys):
     assert "endpoint: generated=" in out
     assert "overview: generated=" in out
     assert "backend_duration_ms=" in out
+
+
+def test_status_units_shows_opaque_per_unit_results_on_request(tmp_path: Path, capsys):
+    db_path = tmp_path / "units.db"
+    cli._cmd_index(_parse(["index", str(SAMPLE_ROOT), "--db", str(db_path)]))
+    capsys.readouterr()
+
+    exit_code = cli._cmd_status(_parse(["status", "orders-service", "--units", "--db", str(db_path)]))
+
+    assert exit_code == 0
+    unit_lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("      unit ")]
+    assert unit_lines
+    assert any(re.search(r"unit endpoint key=[0-9a-f]{64} status=success attempts=1", line) for line in unit_lines)
+    assert all("/orders" not in line and "prompt" not in line for line in unit_lines)
 
 
 def test_status_command_global(tmp_path: Path, capsys):

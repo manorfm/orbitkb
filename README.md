@@ -500,6 +500,11 @@ discovery, prompt rendering, validation and database work. Older per-kind rows
 show `None` for duration because it was not measured. These aggregates do not
 store endpoint names, paths, prompts or source code; older runs have no per-kind
 breakdown.
+Use `orbitkb status <service> --units` to inspect each unit's `skipped`,
+`success` or `failed` state, backend attempts, reported usage and duration.
+Unit keys are database-local HMAC values, stable across runs in that database;
+the telemetry table contains no route, file, symbol, prompt or source text.
+Runs recorded before per-unit telemetry have no unit rows.
 
 Architecture rules have fact-mutation tests for cycles and fan-out (both at
 service level and their intra-service component analog), shared storage,
