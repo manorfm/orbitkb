@@ -47,6 +47,7 @@ class Symbol:
     imports: tuple[tuple[str, str], ...] = ()
     qualifiers: tuple[str, ...] = ()
     primary: bool = False
+    parameters: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

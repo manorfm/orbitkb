@@ -531,6 +531,9 @@ snapshots and reports unresolved or truncated navigation in `unknowns`.
 For Kotlin/Spring, explicitly imported extension calls on typed parameters
 resolve to local declarations when the receiver has a unique matching symbol;
 ambiguous declarations remain unresolved.
+Kotlin and Java calls on explicitly typed method parameters also resolve to a
+unique local method as possible paths; local variables without a proven type
+remain unresolved.
 When a source location has exactly one call edge and one proven outbound service
 call, navigation reports that edge as an external boundary. A different source
 or competing edge remains unresolved.

@@ -3824,6 +3824,50 @@ def test_typed_symbol_index_resolves_an_injected_leaf_method_without_outgoing_ca
     assert any(edge.target == "CreateOrderUseCase.execute" for edge in result.edges)
 
 
+def test_jvm_resolves_calls_on_explicitly_typed_method_parameters(tmp_path: Path):
+    (tmp_path / "KotlinFlow.kt").write_text('''class Bill { fun isOpen() = true }
+class Order { fun isOpen() = false }
+class KotlinFlow {
+  fun check(bill: Bill) = bill.isOpen()
+  fun unknown(bill: MissingType) = bill.isOpen()
+}
+''', encoding="utf-8")
+    (tmp_path / "JavaFlow.java").write_text('''class JavaItem { boolean hasChange() { return true; } }
+class JavaFlow {
+  boolean check(JavaItem item) { return item.hasChange(); }
+  boolean unknown(MissingType item) { return item.hasChange(); }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert {(edge.source, edge.target) for edge in result.edges} >= {
+        ("KotlinFlow.check", "Bill.isOpen"),
+        ("KotlinFlow.unknown", "bill.isOpen"),
+        ("JavaFlow.check", "JavaItem.hasChange"),
+        ("JavaFlow.unknown", "item.hasChange"),
+    }
+    assert all(edge.confidence == "medium" for edge in result.edges if edge.target in {
+        "Bill.isOpen", "JavaItem.hasChange",
+    })
+
+
+def test_typed_parameter_does_not_choose_one_overloaded_caller(tmp_path: Path):
+    (tmp_path / "Flow.kt").write_text('''class Bill { fun isOpen() = true }
+class Order { fun isOpen() = false }
+class Flow {
+  fun check(value: Bill) = value.isOpen()
+  fun check(value: Order) = value.isOpen()
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [edge.target for edge in result.edges if edge.source == "Flow.check"] == [
+        "value.isOpen", "value.isOpen",
+    ]
+
+
 def test_java_interface_injection_resolves_a_unique_implementation_method(tmp_path: Path):
     (tmp_path / "OrdersController.java").write_text(
         '''class OrdersController {

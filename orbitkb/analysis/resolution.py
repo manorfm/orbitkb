@@ -75,6 +75,15 @@ class BoundedFlowResolver:
             return BoundedFlowResolver._link(edge, imported_target, overloaded)
         receiver, separator, method = edge.target.rpartition(".")
         receiver = receiver.removeprefix("this.")
+        if separator and source_symbol is not None and edge.source not in overloaded:
+            parameter_type = dict(source_symbol.parameters).get(receiver)
+            if parameter_type:
+                simple_type = parameter_type.split("<", 1)[0].rsplit(".", 1)[-1]
+                parameter_candidate = f"{simple_type}.{method}"
+                if parameter_candidate in implementations:
+                    # A simple JVM type name can still refer to an imported class
+                    # outside this index, so this link is a possible local path.
+                    return replace(edge, target=parameter_candidate, confidence="medium")
         owner = edge.source.split(".", 1)[0]
         injected_type = injections.get(f"{owner}.{receiver}") if separator else None
         injected_candidate = f"{injected_type}.{method}" if injected_type else None

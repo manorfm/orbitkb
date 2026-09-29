@@ -381,7 +381,10 @@ class _KotlinSpringAnalyzer:
                 evidence = Evidence(path.relative_to(root).as_posix(), function_match.start_line, function_match.end_line)
                 imports = _kotlin_extension_imports(text, function_match)
                 result.symbols.append(Symbol(symbol, class_name, function_match.name, evidence,
-                                             implements, imports, qualifiers, primary))
+                                             implements, imports, qualifiers, primary,
+                                             tuple(engine._declared_parameter_types(
+                                                 function_match.text[:function_match.body_offset], kotlin=True,
+                                             ).items())))
                 edges = _jvm_edges_for_text(symbol, function_match, path, root)
                 classified_edges, cloud_facts = _classify_spring_edges(
                     edges, persistence_receivers, redis_publishers, cloud_declarations,
@@ -480,7 +483,12 @@ class _JavaSpringAnalyzer:
             for function_match in functions:
                 symbol = f"{class_name}.{function_match.name}"
                 evidence = Evidence(path.relative_to(root).as_posix(), function_match.start_line, function_match.end_line)
-                result.symbols.append(Symbol(symbol, class_name, function_match.name, evidence, implements, (), qualifiers, primary))
+                result.symbols.append(Symbol(
+                    symbol, class_name, function_match.name, evidence, implements, (), qualifiers, primary,
+                    tuple(engine._declared_parameter_types(
+                        function_match.text[:function_match.body_offset], kotlin=False,
+                    ).items()),
+                ))
                 edges = _jvm_edges_for_text(symbol, function_match, path, root)
                 classified_edges, cloud_facts = _classify_spring_edges(
                     edges, persistence_receivers, redis_publishers, cloud_declarations,
