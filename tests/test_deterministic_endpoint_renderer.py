@@ -15,8 +15,10 @@ from orbitkb.domain.sufficiency import (
 )
 from orbitkb.generation.deterministic_endpoint import render_simple_endpoint
 from orbitkb.generation.llm_harness import load_schema
+from orbitkb.generation.route_evidence import route_capsule
 
 CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/status-kotlin-service"
+JAVA_CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/status-java-service"
 
 
 def test_simple_route_renders_schema_valid_source_backed_documentation():
@@ -34,6 +36,56 @@ def test_simple_route_renders_schema_valid_source_backed_documentation():
         "validations": [{"kind": "authorization", "description": "Public access is permitted."}],
     }
     jsonschema.validate(document, load_schema("api_detail"))
+
+
+def test_java_route_uses_the_same_evidence_based_renderer():
+    snapshot = project_analysis(
+        ServiceKey("status-java"), StaticAnalysisEngine().analyze(JAVA_CORPUS, "jvm-spring"),
+    )
+    capsule = route_capsule(snapshot, "GET", "/health")
+    assert capsule is not None
+    assessment = DeterministicSufficiencyEvaluator().evaluate(capsule)
+
+    assert render_simple_endpoint(capsule, assessment) == {
+        "summary": "Read health status",
+        "description": "Returns the service health status.",
+        "request_shape": [],
+        "response_shape": [{"field": "value", "type_desc": "String"}],
+        "calls": [],
+        "validations": [{"kind": "authorization", "description": "Public access is permitted."}],
+    }
+
+
+def test_java_route_with_restricted_filter_rule_is_not_rendered(tmp_path: Path):
+    copytree(JAVA_CORPUS, tmp_path, dirs_exist_ok=True)
+    security = tmp_path / "SecurityConfig.java"
+    security.write_text(security.read_text().replace(
+        '.requestMatchers(HttpMethod.GET, "/health").permitAll()',
+        '.requestMatchers(HttpMethod.GET, "/health").authenticated()',
+    ), encoding="utf-8")
+    snapshot = project_analysis(
+        ServiceKey("status-java"), StaticAnalysisEngine().analyze(tmp_path, "jvm-spring"),
+    )
+    capsule = route_capsule(snapshot, "GET", "/health")
+    assert capsule is not None
+
+    assert render_simple_endpoint(capsule, DeterministicSufficiencyEvaluator().evaluate(capsule)) is None
+
+
+def test_java_method_permit_all_without_public_http_rule_is_not_rendered(tmp_path: Path):
+    copytree(JAVA_CORPUS, tmp_path, dirs_exist_ok=True)
+    (tmp_path / "SecurityConfig.java").unlink()
+    controller = tmp_path / "HealthController.java"
+    controller.write_text(controller.read_text().replace(
+        '@GetMapping("/health")', '@GetMapping("/health")\n    @PreAuthorize("permitAll()")',
+    ), encoding="utf-8")
+    snapshot = project_analysis(
+        ServiceKey("status-java"), StaticAnalysisEngine().analyze(tmp_path, "jvm-spring"),
+    )
+    capsule = route_capsule(snapshot, "GET", "/health")
+    assert capsule is not None
+
+    assert render_simple_endpoint(capsule, DeterministicSufficiencyEvaluator().evaluate(capsule)) is None
 
 
 def test_simple_route_without_declared_summary_is_not_rendered(tmp_path: Path):

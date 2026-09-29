@@ -181,3 +181,39 @@ def test_filter_chain_ignores_files_that_never_mention_security_filter_chain(tmp
     path.write_text("class OrdersController { fun authorize(x: String) {} }", encoding="utf-8")
 
     assert spring_filter_chain_security_requirements([path], tmp_path) == []
+
+
+def test_java_filter_chain_extracts_ordered_literal_route_rules(tmp_path: Path):
+    path = tmp_path / "SecurityConfig.java"
+    path.write_text('''
+class SecurityConfig {
+    SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http.authorizeHttpRequests(auth -> auth
+            .requestMatchers(HttpMethod.GET, "/health").permitAll()
+            .anyRequest().authenticated());
+        return http.build();
+    }
+}
+''', encoding="utf-8")
+
+    requirements = spring_filter_chain_security_requirements([path], tmp_path)
+
+    assert [(r.route_pattern, r.method, r.requirement) for r in requirements] == [
+        ("/health", "GET", "permitAll"),
+        ("**", None, "authenticated"),
+    ]
+
+
+def test_java_filter_chain_ignores_dynamic_matcher_pattern(tmp_path: Path):
+    path = tmp_path / "SecurityConfig.java"
+    path.write_text('''
+class SecurityConfig {
+    SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http.authorizeHttpRequests(auth -> auth
+            .requestMatchers(HttpMethod.GET, route()).permitAll());
+        return http.build();
+    }
+}
+''', encoding="utf-8")
+
+    assert spring_filter_chain_security_requirements([path], tmp_path) == []

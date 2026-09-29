@@ -5,7 +5,8 @@ source text -- never from actually evaluating Spring's runtime authorization log
 Two independent sources feed the same `SecurityRequirement` fact:
 - Method-level `@PreAuthorize`/`@Secured` annotations (this module, called from
   jvm_spring_analyzer.py's per-function loop, since it's naturally per-symbol).
-- A `SecurityFilterChain` bean's `authorizeHttpRequests { authorize(...) }` DSL
+- A `SecurityFilterChain` bean's Kotlin `authorizeHttpRequests { authorize(...) }`
+  DSL or Java `authorizeHttpRequests(...requestMatchers(...).permitAll())` chain
   (this module's `spring_filter_chain_security_requirements`, called from
   engine.py's `enrich()` since it's a whole-service, cross-file concern -- the
   requirement referenced can be defined in a different file than the route it
@@ -23,7 +24,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from orbitkb.analysis.jvm_scanner import find_classes, find_functions, find_matching_paren, split_top_level
+from orbitkb.analysis.jvm_scanner import (
+    find_classes,
+    find_functions,
+    find_matching_paren,
+    split_top_level,
+)
 from orbitkb.analysis.models import Evidence, SecurityRequirement
 
 _PRE_AUTHORIZE = re.compile(r'@PreAuthorize\s*\(\s*"(?P<expr>[^"]*)"\s*\)')
@@ -85,6 +91,9 @@ def method_security_requirement(symbol: str, modifiers: str, evidence: Evidence)
 # path duplicated: reusing `_spel_requirement`'s regex here would silently fail
 # on every real DSL call, since none of its arguments are single-quoted.
 _AUTHORIZE_CALL = re.compile(r"(?<![.\w])authorize\s*\(")
+_JAVA_AUTHORIZE_CALL = re.compile(r"\bauthorizeHttpRequests\s*\(")
+_JAVA_MATCHER_CALL = re.compile(r"\.\s*(requestMatchers|anyRequest)\s*\(")
+_JAVA_TERMINAL_CALL = re.compile(r"\s*\.\s*([A-Za-z_]\w*)\s*\(")
 _DSL_ROLE_CALL = re.compile(
     r'^(?P<fn>hasRole|hasAnyRole|hasAuthority|hasAnyAuthority)\s*\(\s*'
     r'(?P<args>"[^"]*"(?:\s*,\s*"[^"]*")*)\s*\)$',
@@ -180,9 +189,59 @@ def _parse_authorize_args(args: list[str]) -> tuple[str | None, str, str] | None
     return None
 
 
+def _java_filter_chain_requirements(
+    body: str, path: Path, root: Path, start_line: int,
+) -> list[SecurityRequirement]:
+    """Read literal Java request matchers and their immediately chained rule."""
+    requirements: list[SecurityRequirement] = []
+    for authorize in _JAVA_AUTHORIZE_CALL.finditer(body):
+        authorize_end = find_matching_paren(body, authorize.end() - 1)
+        if authorize_end == -1:
+            continue
+        segment = body[authorize.end():authorize_end]
+        for matcher in _JAVA_MATCHER_CALL.finditer(segment):
+            matcher_end = find_matching_paren(segment, matcher.end() - 1)
+            if matcher_end == -1:
+                continue
+            args = [item.strip() for item in split_top_level(segment[matcher.end():matcher_end], ",")]
+            if matcher.group(1) == "anyRequest" and not any(args):
+                method, pattern = None, "**"
+            elif matcher.group(1) == "requestMatchers" and len(args) == 2:
+                method_match = _HTTP_METHOD_ARG.fullmatch(args[0])
+                method = method_match.group("method") if method_match else None
+                pattern = _authorize_pattern(args[1]) if method_match else None
+            elif matcher.group(1) == "requestMatchers" and len(args) == 1:
+                method, pattern = None, _authorize_pattern(args[0])
+            else:
+                continue
+            if pattern is None:
+                continue
+            terminal = _JAVA_TERMINAL_CALL.match(segment, matcher_end + 1)
+            if terminal is None:
+                continue
+            terminal_end = find_matching_paren(segment, terminal.end() - 1)
+            if terminal_end == -1:
+                continue
+            name = terminal.group(1)
+            terminal_args = segment[terminal.end():terminal_end].strip()
+            if name in _DSL_BARE_KEYWORDS and not terminal_args:
+                requirement, roles = name, ()
+            elif name in {"hasRole", "hasAuthority"} and _STRING_LITERAL_ARG.fullmatch(terminal_args):
+                requirement, roles = name, (terminal_args[1:-1],)
+            else:
+                requirement, roles = f"custom:{name}", ()
+            offset = authorize.end() + matcher.start()
+            line = start_line + body.count("\n", 0, offset)
+            requirements.append(SecurityRequirement(
+                pattern, method, None, requirement, roles,
+                Evidence(path.relative_to(root).as_posix(), line, line),
+            ))
+    return requirements
+
+
 def spring_filter_chain_security_requirements(files: list[Path], root: Path) -> list[SecurityRequirement]:
-    """Every `authorize(...)` rule in a `SecurityFilterChain` bean's
-    `authorizeHttpRequests` DSL block, across the service's own files -- the bean
+    """Literal Kotlin or Java route rules in a `SecurityFilterChain` method,
+    across the service's own files -- the bean
     can live in any file, not necessarily one already known to hold an endpoint.
     """
     policy_roles = _index_zero_arg_policy_functions(files)
@@ -199,6 +258,12 @@ def spring_filter_chain_security_requirements(files: list[Path], root: Path) -> 
                 if "SecurityFilterChain" not in signature:
                     continue
                 body = function_match.text[function_match.body_offset :]
+                if path.suffix == ".java":
+                    requirements.extend(_java_filter_chain_requirements(
+                        body, path, root,
+                        function_match.start_line + signature.count("\n"),
+                    ))
+                    continue
                 for call_match in _AUTHORIZE_CALL.finditer(body):
                     open_paren = call_match.end() - 1
                     close_paren = find_matching_paren(body, open_paren)

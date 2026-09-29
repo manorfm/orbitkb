@@ -595,8 +595,11 @@ its persisted result remain unchanged, so call counts do not fall yet.
 Run `PYTHONPATH=. .venv/bin/python scripts/report_shadow_eligibility.py` to
 measure eligibility on the repository-owned synthetic corpus with the free mock
 backend. The report contains counts by stack, renderer status and differing
-field name. In the current corpus, 1 of 20 regenerated routes is eligible;
-the 46 reported `llm_calls` are mock generation slots, not paid requests.
+field name. In the current corpus, 2 of 21 regenerated routes are eligible:
+one Kotlin route and one Java route, both with a confirmed public HTTP filter
+rule. A restricted Java filter rule and a standalone method-level
+`@PreAuthorize("permitAll()")` remain ineligible. The 49 reported `llm_calls`
+are mock generation slots, not paid requests.
 `quality_evaluated: false` is intentional: a difference from canned mock text
 does not establish a quality regression or approve zero-call generation.
 Use `orbitkb index <path> --sufficiency-details` or

@@ -289,6 +289,14 @@ def find_functions(text: str, search_start: int, search_end: int, kotlin: bool) 
                 cursor += 1
         while cursor < len(text) and text[cursor] in " \t\r\n":
             cursor += 1
+        if not kotlin:
+            throws_match = re.match(
+                r"throws\s+[\w.$]+(?:\s*,\s*[\w.$]+)*\b", text[cursor:],
+            )
+            if throws_match:
+                cursor += throws_match.end()
+                while cursor < len(text) and text[cursor] in " \t\r\n":
+                    cursor += 1
         if cursor < len(text) and text[cursor] == "{":
             end = find_matching_brace(text, cursor)
             func_text = text[match.start() : end + 1]

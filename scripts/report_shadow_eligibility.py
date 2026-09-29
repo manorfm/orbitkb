@@ -26,6 +26,7 @@ DISCOVERED_SOURCES = (
 DIRECT_SOURCES = (
     ("flow-menu", PROJECT_ROOT / "verify/flow_corpus/menu-kotlin-service"),
     ("status", PROJECT_ROOT / "verify/flow_corpus/status-kotlin-service"),
+    ("status-java", PROJECT_ROOT / "verify/flow_corpus/status-java-service"),
 )
 
 

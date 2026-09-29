@@ -6,7 +6,13 @@ for a heuristic that can never crash: brace-counting instead of a real parser.
 """
 from __future__ import annotations
 
-from orbitkb.analysis.jvm_scanner import find_calls, find_classes, find_functions, find_matching_brace, split_top_level
+from orbitkb.analysis.jvm_scanner import (
+    find_calls,
+    find_classes,
+    find_functions,
+    find_matching_brace,
+    split_top_level,
+)
 
 
 def test_find_matching_brace_returns_the_paired_closing_brace():
@@ -188,6 +194,16 @@ def test_find_functions_locates_java_methods_and_skips_the_constructor():
     assert [f.name for f in functions] == ["get"]
     assert "@GetMapping" in functions[0].modifiers
     assert "return id;" in functions[0].text
+
+
+def test_find_functions_keeps_java_body_after_throws_clause():
+    source = "class Config { SecurityFilterChain filter(HttpSecurity http) throws Exception { return http.build(); } }"
+
+    functions = find_functions(source, 0, len(source), kotlin=False)
+
+    assert len(functions) == 1
+    assert functions[0].name == "filter"
+    assert "return http.build();" in functions[0].text[functions[0].body_offset:]
 
 
 def test_split_top_level_respects_nested_generics_and_parens():

@@ -1,0 +1,8 @@
+openapi: 3.0.3
+paths:
+  /health:
+    get:
+      summary: Read health status
+      description: Returns the service health status.
+      responses:
+        "200": {}

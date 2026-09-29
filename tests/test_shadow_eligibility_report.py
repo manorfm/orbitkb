@@ -37,13 +37,13 @@ def test_summary_counts_eligible_routes_without_treating_mock_diffs_as_quality()
     }
 
 
-def test_repo_corpus_report_includes_direct_kotlin_fixture(tmp_path: Path):
+def test_repo_corpus_report_includes_direct_jvm_fixtures(tmp_path: Path):
     report = collect_report(tmp_path)
 
-    assert report["services"] == 9
-    assert report["regenerated_routes"] == 20
-    assert report["eligible_routes"] == 1
+    assert report["services"] == 10
+    assert report["regenerated_routes"] == 21
+    assert report["eligible_routes"] == 2
     assert report["render_statuses"]["ineligible"] == 19
-    assert report["render_statuses"]["differs"] == 1
-    assert report["by_stack"]["jvm-spring"]["eligible_routes"] == 1
+    assert report["render_statuses"]["differs"] == 2
+    assert report["by_stack"]["jvm-spring"]["eligible_routes"] == 2
     assert report["quality_evaluated"] is False
