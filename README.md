@@ -501,8 +501,10 @@ their current read paths.
 `KnowledgeNavigator` can traverse a canonical snapshot from one indexed entrypoint
 with explicit depth, node, edge and relation limits. It returns reached facts,
 source-backed paths, unresolved or known boundaries, and truncation reasons.
-The navigator is used by `describe_entrypoint` and is not yet used by other
-public queries or exports.
+The navigator is used by `describe_entrypoint` and `describe_error_flow`.
+The latter follows caller and target error evidence through their canonical
+snapshots and reports unresolved or truncated navigation in `unknowns`.
+Other public queries and exports retain their current read paths.
 For Spring indexing, class-level `@RequestMapping` declarations are not separate
 endpoint generation units; handler mappings create those units with the class path
 prefix included.

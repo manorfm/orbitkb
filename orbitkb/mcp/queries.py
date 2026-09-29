@@ -9,6 +9,7 @@ import logging
 import re
 import sqlite3
 from collections import deque
+from collections.abc import Mapping
 from pathlib import Path
 
 from orbitkb.analysis.engine import StaticAnalysisEngine
@@ -579,6 +580,21 @@ def _canonical_source_rows(traversal: TraversalResult, kind: str) -> list[dict]:
     return rows
 
 
+def _canonical_entrypoint_traversal(
+    conn: sqlite3.Connection, service_id: int, entrypoint: sqlite3.Row, max_edges: int,
+) -> tuple[EntrypointKey, TraversalResult] | None:
+    snapshot = canonical_snapshots_repo.read_snapshot(conn, service_id)
+    if snapshot is None:
+        return None
+    key = EntrypointKey(snapshot.service, entrypoint["kind"], entrypoint["method"],
+                        entrypoint["name"], entrypoint["symbol"])
+    traversal = KnowledgeNavigator(snapshot).reachable(
+        key, TraversalPolicy(max_depth=MAX_FLOW_EDGE_LIMIT, max_nodes=MAX_FLOW_EDGE_LIMIT + 1,
+                             max_edges=max_edges, relations=frozenset(_FLOW_KINDS | {"uses_config"})),
+    )
+    return key, traversal
+
+
 def describe_entrypoint(
     conn: sqlite3.Connection,
     service: str,
@@ -598,16 +614,10 @@ def describe_entrypoint(
     if entrypoint is None:
         return {"error": f"unknown entrypoint: {kind} {method} {name} on {service}"}
     effective_max_edges = min(max_edges, MAX_FLOW_EDGE_LIMIT)
-    snapshot = canonical_snapshots_repo.read_snapshot(conn, row["id"])
-    if snapshot is None:
+    navigation = _canonical_entrypoint_traversal(conn, row["id"], entrypoint, effective_max_edges)
+    if navigation is None:
         return {"error": f"canonical snapshot missing for {service}; reindex the service"}
-    key = EntrypointKey(snapshot.service, entrypoint["kind"], entrypoint["method"],
-                        entrypoint["name"], entrypoint["symbol"])
-    traversal = KnowledgeNavigator(snapshot).reachable(
-        key, TraversalPolicy(max_depth=MAX_FLOW_EDGE_LIMIT, max_nodes=MAX_FLOW_EDGE_LIMIT + 1,
-                             max_edges=effective_max_edges,
-                             relations=frozenset(_FLOW_KINDS | {"uses_config"})),
-    )
+    key, traversal = navigation
     edges = []
     for fact in traversal.facts:
         if fact.kind != "flow_edge":
@@ -721,12 +731,12 @@ def describe_error_flow(
     entrypoint = flows_repo.get_entrypoint(conn, row["id"], kind, method, name)
     if entrypoint is None:
         return {"error": f"unknown entrypoint: {kind} {method} {name} on {service}"}
-    caller_edges = flows_repo.list_reachable_edges(conn, row["id"], entrypoint["symbol"], MAX_FLOW_EDGE_LIMIT)
-    caller_symbols = {entrypoint["symbol"]} | {
-        symbol for edge in caller_edges for symbol in (edge["from_symbol"], edge["to_symbol"])
-    }
-    caller_contracts = flows_repo.list_static_error_contracts_for_sources(conn, row["id"], caller_symbols)
-    calls = flows_repo.list_static_service_calls_for_sources(conn, row["id"], caller_symbols)
+    caller_navigation = _canonical_entrypoint_traversal(conn, row["id"], entrypoint, MAX_FLOW_EDGE_LIMIT)
+    if caller_navigation is None:
+        return {"error": f"canonical snapshot missing for {service}; reindex the service"}
+    caller_traversal = caller_navigation[1]
+    caller_contracts = _canonical_source_rows(caller_traversal, "error_contract")
+    calls = _canonical_source_rows(caller_traversal, "service_call")
     mappings = [
         contract
         for contract in caller_contracts
@@ -735,7 +745,7 @@ def describe_error_flow(
         and contract["transport_code"] is not None
     ]
     flows: list[dict] = []
-    unknowns: list[str] = []
+    unknowns = _error_flow_navigation_unknowns(service, caller_traversal)
     target_cache: dict[tuple[object, ...], dict] = {}
     for call in calls:
         if call["protocol"] != "http":
@@ -757,15 +767,17 @@ def describe_error_flow(
         )
         if target_entrypoint is None:
             continue
-        target_edges = flows_repo.list_reachable_edges(
-            conn, target["id"], target_entrypoint["symbol"], MAX_FLOW_EDGE_LIMIT,
+        target_navigation = _canonical_entrypoint_traversal(
+            conn, target["id"], target_entrypoint, MAX_FLOW_EDGE_LIMIT,
         )
-        target_symbols = {target_entrypoint["symbol"]} | {
-            symbol for edge in target_edges for symbol in (edge["from_symbol"], edge["to_symbol"])
-        }
+        if target_navigation is None:
+            unknowns.append(f"{target['name']} canonical snapshot is missing; reindex the service.")
+            continue
+        target_traversal = target_navigation[1]
+        unknowns.extend(_error_flow_navigation_unknowns(target["name"], target_traversal))
         origins = [
             contract
-            for contract in flows_repo.list_static_error_contracts_for_sources(conn, target["id"], target_symbols)
+            for contract in _canonical_source_rows(target_traversal, "error_contract")
             if contract["protocol"] == "http" and contract["transport_code"] is not None
         ]
         if not origins:
@@ -794,7 +806,19 @@ def describe_error_flow(
     }
 
 
-def _same_error_identity(origin: sqlite3.Row, mapping: sqlite3.Row) -> bool:
+def _error_flow_navigation_unknowns(service: str, traversal: TraversalResult) -> list[str]:
+    unknowns = []
+    if traversal.truncated:
+        unknowns.append(f"{service} flow was truncated before all error evidence could be checked.")
+    for boundary in traversal.boundaries:
+        if boundary.reason == "unresolved":
+            unknowns.append(f"{service} flow target {boundary.target or '<unknown>'} is unresolved.")
+        elif boundary.reason == "known_boundary" and boundary.target != "transaction":
+            unknowns.append(f"{service} flow at {boundary.source} has a {boundary.target} boundary.")
+    return unknowns
+
+
+def _same_error_identity(origin: Mapping, mapping: Mapping) -> bool:
     """Join errors only through a declared type or public code, never broad kind."""
     if origin["internal_type"] and mapping["internal_type"]:
         return origin["internal_type"] == mapping["internal_type"]
@@ -802,8 +826,8 @@ def _same_error_identity(origin: sqlite3.Row, mapping: sqlite3.Row) -> bool:
 
 
 def _error_flow(
-    caller: sqlite3.Row, call: sqlite3.Row, target: sqlite3.Row,
-    origin: sqlite3.Row, mapping: sqlite3.Row,
+    caller: sqlite3.Row, call: Mapping, target: sqlite3.Row,
+    origin: Mapping, mapping: Mapping,
 ) -> dict:
     origin_evidence = _error_evidence(origin)
     mapping_evidence = _error_evidence(mapping)
@@ -830,13 +854,13 @@ def _error_flow(
     }
 
 
-def _error_evidence(contract: sqlite3.Row) -> dict:
+def _error_evidence(contract: Mapping) -> dict:
     return {
         "file": contract["file_path"], "start_line": contract["start_line"], "end_line": contract["end_line"],
     }
 
 
-def _call_evidence(call: sqlite3.Row) -> dict:
+def _call_evidence(call: Mapping) -> dict:
     return {"file": call["file_path"], "start_line": call["start_line"], "end_line": call["end_line"]}
 
 

@@ -301,6 +301,7 @@ def test_describe_error_flow_returns_a_proven_downstream_409_mapping(tmp_path):
         AnalysisResult(
             entrypoints=[EntryPoint("http", "POST", "/orders", "CheckoutController.create", checkout_evidence)],
             edges=[FlowEdge("CheckoutController.create", "CheckoutService.checkout", "invokes", checkout_evidence)],
+            boundaries=[FlowBoundary("CheckoutService.checkout", "transaction", checkout_evidence)],
             static_service_calls=[StaticServiceCall(
                 source="CheckoutService.checkout", target_service="inventory", protocol="http",
                 target_method="POST", target_path="/reservations", evidence=checkout_evidence,
@@ -326,6 +327,8 @@ def test_describe_error_flow_returns_a_proven_downstream_409_mapping(tmp_path):
             )],
         ),
     )
+    for table in ("flow_edges", "static_error_contracts", "static_service_calls"):
+        conn.execute(f"DELETE FROM {table}")
 
     result = queries.describe_error_flow(conn, "checkout", "http", "post", "/orders")
 
@@ -399,6 +402,40 @@ def test_describe_error_flow_keeps_a_proven_409_to_500_translation_visible(tmp_p
         "protocol": "http", "status": "500", "public_code": "INTERNAL_ERROR",
     }
     assert result["unknowns"] == []
+
+
+def test_describe_error_flow_exposes_unresolved_flow_boundaries(tmp_path):
+    conn = open_db(tmp_path / "unknown-error-flow.db")
+    service_id = services.ensure_service(conn, "checkout", "/repos/checkout", "jvm-spring")
+    evidence = Evidence("Checkout.kt", 4, 5)
+    flows.replace_analysis(conn, service_id, AnalysisResult(
+        entrypoints=[EntryPoint("http", "POST", "/orders", "Checkout.create", evidence)],
+        edges=[FlowEdge("Checkout.create", "DynamicClient.call", "invokes", evidence)],
+        boundaries=[FlowBoundary("Checkout.create", "async", evidence)],
+    ))
+
+    result = queries.describe_error_flow(conn, "checkout", "http", "post", "/orders")
+
+    assert result["error_flows"] == []
+    assert any("DynamicClient.call" in item and "unresolved" in item for item in result["unknowns"])
+    assert any("async" in item for item in result["unknowns"])
+
+
+def test_describe_error_flow_reports_incomplete_bounded_navigation(tmp_path):
+    conn = open_db(tmp_path / "bounded-error-flow.db")
+    service_id = services.ensure_service(conn, "checkout", "/repos/checkout", "jvm-spring")
+    evidence = Evidence("Checkout.kt", 4, 5)
+    symbols = ["Checkout.create", *(f"Node{i}.run" for i in range(201))]
+    flows.replace_analysis(conn, service_id, AnalysisResult(
+        entrypoints=[EntryPoint("http", "POST", "/orders", symbols[0], evidence)],
+        edges=[FlowEdge(source, target, "invokes", evidence)
+               for source, target in zip(symbols, symbols[1:])],
+    ))
+
+    result = queries.describe_error_flow(conn, "checkout", "http", "post", "/orders")
+
+    assert result["error_flows"] == []
+    assert any("truncated" in item for item in result["unknowns"])
 
 
 def test_describe_entrypoint_includes_only_reachable_static_service_calls(tmp_path):
