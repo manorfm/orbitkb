@@ -110,6 +110,10 @@ def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
     assert any(target.endswith(".Jwt.getUserId") for target in extension_edges)
     assert any(target.endswith(".ItemIn.toDTO") for target in extension_edges)
     assert not any(boundary.target in {"jwt.getUserId", "itemIn.toDTO"} for boundary in reached.boundaries)
+    assert {(boundary.reason, boundary.target) for boundary in reached.boundaries} >= {
+        ("external_call", "menuClient.getItem"),
+        ("external_call", "menuClient.getIngredient"),
+    }
 
     sufficiency = route_sufficiency(snapshot, "POST", ROUTE)
     assert sufficiency is not None

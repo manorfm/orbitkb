@@ -9,6 +9,7 @@ from orbitkb.domain.canonical import (
     CanonicalFact,
     CanonicalSnapshot,
     EntrypointKey,
+    SourceReference,
     SymbolKey,
 )
 
@@ -63,6 +64,25 @@ class KnowledgeNavigator:
         for fact in snapshot.facts:
             if isinstance(fact.subject, SymbolKey) and fact.subject.service == snapshot.service:
                 self._by_symbol.setdefault(fact.subject.name, []).append(fact)
+        self._external_edges: set[str] = set()
+        for attached in self._by_symbol.values():
+            edges_by_source: dict[SourceReference, list[CanonicalFact]] = {}
+            calls_by_source: dict[SourceReference, list[CanonicalFact]] = {}
+            for fact in attached:
+                if fact.kind == "flow_edge":
+                    destination = edges_by_source
+                elif fact.kind == "service_call":
+                    destination = calls_by_source
+                else:
+                    continue
+                for source in fact.sources:
+                    destination.setdefault(source, []).append(fact)
+            for fact in attached:
+                if fact.kind == "flow_edge" and fact.sources and all(
+                    len(edges_by_source[source]) == 1 and len(calls_by_source.get(source, ())) == 1
+                    for source in fact.sources
+                ):
+                    self._external_edges.add(fact.id)
 
     def reachable(self, entrypoint: EntrypointKey, policy: TraversalPolicy) -> TraversalResult:
         if entrypoint.service != self.snapshot.service:
@@ -105,7 +125,8 @@ class KnowledgeNavigator:
                 facts.setdefault(edge.id, edge)
                 paths.setdefault(edge.id, path)
                 if not target or target not in self._by_symbol:
-                    boundaries.append(TraversalBoundary(symbol, target, "unresolved", edge.id))
+                    reason = "external_call" if edge.id in self._external_edges else "unresolved"
+                    boundaries.append(TraversalBoundary(symbol, target, reason, edge.id))
                 elif target in path:
                     boundaries.append(TraversalBoundary(symbol, target, "cycle", edge.id))
                 elif target in visited:

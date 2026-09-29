@@ -523,6 +523,9 @@ snapshots and reports unresolved or truncated navigation in `unknowns`.
 For Kotlin/Spring, explicitly imported extension calls on typed parameters
 resolve to local declarations when the receiver has a unique matching symbol;
 ambiguous declarations remain unresolved.
+When a source location has exactly one call edge and one proven outbound service
+call, navigation reports that edge as an external boundary. A different source
+or competing edge remains unresolved.
 An internal evidence composer can select route facts by profile for later prompt
 reduction. It preserves each fact's source, route path, status and content digest,
 and carries navigation boundaries and truncation forward without calling a model.

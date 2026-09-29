@@ -42,5 +42,5 @@ def test_kotlin_spring_route_reaches_feign_client_through_use_case_and_gateway(t
     assert detail["service_calls"][0]["path"] == "/restaurants/{id}"
     feign_boundary = next(boundary for boundary in detail["boundaries"]
                           if boundary["target"] == "restaurantClient.getRestaurant")
-    assert (feign_boundary["kind"], feign_boundary["source"]) == ("unresolved", "MenuGateway.fetch")
+    assert (feign_boundary["kind"], feign_boundary["source"]) == ("external_call", "MenuGateway.fetch")
     assert feign_boundary["evidence"]["file"].endswith("MenuGateway.kt")

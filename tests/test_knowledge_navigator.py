@@ -97,6 +97,49 @@ def test_known_boundary_is_reported_without_fabricating_a_destination():
     assert result.path_to("dynamic-client")[-1] == "MenuGateway.fetch"
 
 
+def test_unique_source_matched_service_call_is_an_external_boundary():
+    gateway = SymbolKey(SERVICE, "MenuGateway.fetch")
+    snapshot = CanonicalSnapshot(SERVICE, (
+        fact(ENTRY.fact_id, "entrypoint", ENTRY),
+        fact("to-gateway", "flow_edge", SymbolKey(SERVICE, ENTRY.symbol),
+             {"relation": "invokes", "target": gateway.name}, "Controller.kt"),
+        fact("remote-edge", "flow_edge", gateway,
+             {"relation": "invokes", "target": "client.fetch"}, "Client.kt"),
+        fact("remote-call", "service_call", gateway,
+             {"target_service": "catalog", "protocol": "http", "target_path": "/items"}, "Client.kt"),
+    ))
+
+    result = KnowledgeNavigator(snapshot).reachable(ENTRY, TraversalPolicy())
+
+    assert ("external_call", "client.fetch") in {(item.reason, item.target) for item in result.boundaries}
+    assert result.path_to("remote-call") == (ENTRY.symbol, gateway.name)
+
+
+def test_external_boundary_requires_unique_edge_and_same_source():
+    gateway = SymbolKey(SERVICE, "MenuGateway.fetch")
+    base = (
+        fact(ENTRY.fact_id, "entrypoint", ENTRY),
+        fact("to-gateway", "flow_edge", SymbolKey(SERVICE, ENTRY.symbol),
+             {"relation": "invokes", "target": gateway.name}, "Controller.kt"),
+        fact("remote-edge", "flow_edge", gateway,
+             {"relation": "invokes", "target": "client.fetch"}, "Client.kt"),
+    )
+    different_source = CanonicalSnapshot(SERVICE, (*base,
+        fact("remote-call", "service_call", gateway,
+             {"target_service": "catalog", "protocol": "http"}, "Other.kt"),
+    ))
+    competing_edge = CanonicalSnapshot(SERVICE, (*base,
+        fact("other-edge", "flow_edge", gateway,
+             {"relation": "invokes", "target": "client.other"}, "Client.kt"),
+        fact("remote-call", "service_call", gateway,
+             {"target_service": "catalog", "protocol": "http"}, "Client.kt"),
+    ))
+
+    for snapshot in (different_source, competing_edge):
+        result = KnowledgeNavigator(snapshot).reachable(ENTRY, TraversalPolicy())
+        assert ("unresolved", "client.fetch") in {(item.reason, item.target) for item in result.boundaries}
+
+
 def test_validation_relation_reaches_its_evidence():
     validator = SymbolKey(SERVICE, "MenuValidator.validate")
     controller = SymbolKey(SERVICE, ENTRY.symbol)
