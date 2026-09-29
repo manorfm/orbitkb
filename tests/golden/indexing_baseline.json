@@ -1,0 +1,191 @@
+{
+  "exports": {
+    "inventory-service/apis/get-stock-sku.md": "720e4cbc3b49899c034e80f5b918b6e69d26ca6149c3c080057d8d3ebcefbb99",
+    "inventory-service/apis/post-internal-stock-sku-adjust.md": "da399b35f22cf179d60fdd05368bfc1b2c540b702a14a7d400475c34c0897046",
+    "inventory-service/apis/post-stock-sku-reserve.md": "6562be5c47fe4e9b9e9439c73b87e241827b2732c7b89ce3ab2cc4d23018a351",
+    "inventory-service/index.md": "db3c5cf2f69c5ba8c362d3be77980bba1042ca4d4405c20f8c8b91b256c31d47",
+    "orders-service/apis/get-health.md": "9d891d682fe99344f7acfb5cee68b578d2f1cd4b8d74f987b91c514aa051d29e",
+    "orders-service/apis/get-orders-order-id.md": "f0640b7debd6b063b9d36ebb1c4e83d0932e999f75717214594dfaf013422671",
+    "orders-service/apis/post-orders-order-id-cancel.md": "b55d2b931100c9b0adab4c623dda4d51caa69c943d637c334d8dc3113b5f4f6d",
+    "orders-service/apis/post-orders.md": "6ee00a7ce11678ba033e55f5fbd566e825712be015283644ffb5313aaab93115",
+    "orders-service/index.md": "df9b20cbfaba76a973a4cabc3b1d3058371b90f959a5b0d8c94506ab7ed1d415",
+    "payments-service/apis/get-payments-id.md": "8511588caf812b1befcba613f1ccd1263e91e6b0b9f618f8be1786dcbc97fd74",
+    "payments-service/apis/post-charge.md": "27055073f3457af04faa97a53022a45f93e7f59ac703aa44a6d6d7c1f05d87e1",
+    "payments-service/apis/post-payments-id-refund.md": "ab939579774c7c85689deeeaaec5f9536918bde9eb1a6b127ab14c44b12c72eb",
+    "payments-service/index.md": "cef40365a90fd40ca9d63273a09fedf3a5954b89f4283e8c21a4f4b8b4e2fc53",
+    "topology.mmd": "7c7f4c6da9aa7964aea446d030884e9e9f79f502619df3f91865b97549cbe80b"
+  },
+  "integration_fixture": {
+    "exports": {
+      "checkout-service/apis/post-checkout.md": "51898b12e3bd76647f10ecc39cc98cafc110e226a4d44d1e871c7c8fff52f29a",
+      "checkout-service/index.md": "8ad9762227188f0591fc1a9e715b2894b4b60f58809922abc840e60760643f73",
+      "notification-service/index.md": "7511d431e0844bcb0ec1c7d5a3b26de2609b935b69031c94ab332726d85815b7",
+      "order-service/apis/post-orders.md": "f22c99faadd7d8281c53a6e5eebff1f90e69e1d3eff6a039483f55b797610fdd",
+      "order-service/index.md": "b1001c075ea2e1a4ca5550d14b7ebcec4bb9f69249e2408ef2fe7ade90269d43",
+      "payments-service/apis/post-charge.md": "2f90a46ce8e406d579f72060258821e4f44c7faa8ef4e4aa4a24baa0a1c2abad",
+      "payments-service/index.md": "3c9434c3faa192bc6baaf550fed10e7b89d502f8e76783b3387afd659a26f03f",
+      "topology.mmd": "72a7e3363625085b2a24e20d3d5b7ff18008ea60309b2c519f5af4cb307b120a"
+    },
+    "topology": "graph TD\n  svc_checkout_service[\"checkout-service\"]\n  svc_notification_service[\"notification-service\"]\n  svc_order_service[\"order-service\"]\n  svc_payments_service[\"payments-service\"]\n  svc_checkout_service -->|http| svc_payments_service\n  svc_order_service -->|http| svc_payments_service\n  ext_stripe_api((\"Stripe API\"))\n  svc_payments_service -.->|saas| ext_stripe_api\n  svc_payments_service ==>|payment_authorized| svc_notification_service"
+  },
+  "quality_by_stack": {
+    "jvm-spring": {
+      "cost_usd": null,
+      "false_positives": null,
+      "omissions": null
+    },
+    "node-ts": {
+      "cost_usd": null,
+      "false_positives": null,
+      "omissions": null
+    },
+    "python": {
+      "cost_usd": null,
+      "false_positives": null,
+      "omissions": null
+    }
+  },
+  "runs": [
+    {
+      "llm_calls": 8,
+      "llm_invocations": 8,
+      "service": "inventory-service",
+      "status": "ok"
+    },
+    {
+      "llm_calls": 9,
+      "llm_invocations": 9,
+      "service": "orders-service",
+      "status": "ok"
+    },
+    {
+      "llm_calls": 7,
+      "llm_invocations": 7,
+      "service": "payments-service",
+      "status": "ok"
+    }
+  ],
+  "schema_version": 1,
+  "services": [
+    {
+      "api_count": 3,
+      "apis": [
+        {
+          "method": "POST",
+          "path": "/internal/stock/{sku}/adjust",
+          "summary": "Mock summary."
+        },
+        {
+          "method": "GET",
+          "path": "/stock/{sku}",
+          "summary": "Mock summary."
+        },
+        {
+          "method": "POST",
+          "path": "/stock/{sku}/reserve",
+          "summary": "Mock summary."
+        }
+      ],
+      "calls": [],
+      "components": [
+        {
+          "name": "QuickStockPatchController",
+          "summary": "Mock component summary."
+        },
+        {
+          "name": "StockController",
+          "summary": "Mock component summary."
+        }
+      ],
+      "long_desc": "Mock long description.",
+      "mermaid": "graph TD\n  svc_inventory_service[\"inventory-service\"]",
+      "messages": [],
+      "name": "inventory-service",
+      "persists": [],
+      "short_desc": "Mock short description.",
+      "stack": "jvm-spring"
+    },
+    {
+      "api_count": 4,
+      "apis": [
+        {
+          "method": "GET",
+          "path": "/health",
+          "summary": "Mock summary."
+        },
+        {
+          "method": "POST",
+          "path": "/orders",
+          "summary": "Mock summary."
+        },
+        {
+          "method": "GET",
+          "path": "/orders/{order_id}",
+          "summary": "Mock summary."
+        },
+        {
+          "method": "POST",
+          "path": "/orders/{order_id}/cancel",
+          "summary": "Mock summary."
+        }
+      ],
+      "calls": [],
+      "components": [
+        {
+          "name": "OrdersController",
+          "summary": "Mock component summary."
+        },
+        {
+          "name": "main",
+          "summary": "Mock component summary."
+        }
+      ],
+      "long_desc": "Mock long description.",
+      "mermaid": "graph TD\n  svc_orders_service[\"orders-service\"]",
+      "messages": [],
+      "name": "orders-service",
+      "persists": [],
+      "short_desc": "Mock short description.",
+      "stack": "python"
+    },
+    {
+      "api_count": 3,
+      "apis": [
+        {
+          "method": "POST",
+          "path": "/charge",
+          "summary": "Mock summary."
+        },
+        {
+          "method": "GET",
+          "path": "/payments/:id",
+          "summary": "Mock summary."
+        },
+        {
+          "method": "POST",
+          "path": "/payments/:id/refund",
+          "summary": "Mock summary."
+        }
+      ],
+      "calls": [],
+      "components": [
+        {
+          "name": "payments.routes",
+          "summary": "Mock component summary."
+        }
+      ],
+      "long_desc": "Mock long description.",
+      "mermaid": "graph TD\n  svc_payments_service[\"payments-service\"]",
+      "messages": [],
+      "name": "payments-service",
+      "persists": [],
+      "short_desc": "Mock short description.",
+      "stack": "node-ts"
+    }
+  ],
+  "stacks": [
+    "jvm-spring",
+    "node-ts",
+    "python"
+  ]
+}
