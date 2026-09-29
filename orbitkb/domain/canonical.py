@@ -20,6 +20,12 @@ class ServiceKey:
             raise ValueError("repository key cannot be empty")
 
 
+def fact_id(service: ServiceKey, kind: str, *identity: str) -> str:
+    fields = [service.repository, service.value, kind, *identity]
+    encoded = json.dumps(fields, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return kind + ":" + hashlib.sha256(encoded).hexdigest()
+
+
 @dataclass(frozen=True)
 class EntrypointKey:
     service: ServiceKey
@@ -30,10 +36,13 @@ class EntrypointKey:
 
     @property
     def fact_id(self) -> str:
-        identity = [self.service.repository, self.service.value, "entrypoint", self.transport,
-                    self.method, self.name, self.symbol]
-        encoded = json.dumps(identity, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        return "entrypoint:" + hashlib.sha256(encoded).hexdigest()
+        return fact_id(self.service, "entrypoint", self.transport, self.method, self.name, self.symbol)
+
+
+@dataclass(frozen=True)
+class SymbolKey:
+    service: ServiceKey
+    name: str
 
 
 @dataclass(frozen=True)
@@ -54,7 +63,7 @@ class FactStatus(str, Enum):
 class CanonicalFact:
     id: str
     kind: str
-    subject: EntrypointKey
+    subject: EntrypointKey | SymbolKey
     attributes: dict
     status: FactStatus
     origin: str
