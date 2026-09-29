@@ -2011,6 +2011,22 @@ def test_java_spring_http_contract_keeps_declared_payload_validation_and_auth(tm
     }
 
 
+def test_java_spring_contract_retains_primitive_request_and_response_fields():
+    root = Path(__file__).resolve().parents[1] / "verify/sample_project/inventory-service"
+
+    result = StaticAnalysisEngine().analyze(root, "jvm-spring")
+    contract = result.contracts["StockController.reserveStock"]
+
+    assert contract["request"]["fields"] == [
+        {"name": "qty", "type": "int", "required": False, "validations": []},
+    ]
+    assert contract["returns"]["fields"] == [
+        {"name": "sku", "type": "String", "required": False, "validations": []},
+        {"name": "available", "type": "boolean", "required": False, "validations": []},
+        {"name": "quantity", "type": "int", "required": False, "validations": []},
+    ]
+
+
 def test_rest_contract_extracts_literal_spring_and_go_parameter_bindings(tmp_path: Path):
     (tmp_path / "OrdersController.java").write_text(
         '''class OrdersController {

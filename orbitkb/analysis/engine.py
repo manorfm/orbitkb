@@ -44,7 +44,9 @@ from orbitkb.analysis.jvm_grpc_analyzer import (
     kotlin_grpc_handlers,
 )
 from orbitkb.analysis.jvm_scanner import find_matching_brace
-from orbitkb.analysis.jvm_security_analyzer import spring_filter_chain_security_requirements
+from orbitkb.analysis.jvm_security_analyzer import (
+    spring_filter_chain_security_requirements,
+)
 from orbitkb.analysis.models import (
     AnalysisResult,
     CloudFact,
@@ -4444,10 +4446,15 @@ def _line_evidence(path: Path, root: Path, source: str, offset: int) -> Evidence
 
 def _java_dto_shapes(source: str) -> dict[str, list[dict]]:
     shapes = {}
+    field_pattern = (
+        r"((?:\s*@\w+(?:\([^)]*\))?\s*)*)"
+        r"([A-Z]\w*(?:<[^>]+>)?|boolean|byte|short|int|long|float|double|char)"
+        r"\s+(\w+)\s*;"
+    )
     for name, body in re.findall(r"\bclass\s+(\w+)[^{]*\{(.*?)\}", source, re.DOTALL):
         fields = []
         for field_annotations, type_name, field_name in re.findall(
-            r"((?:\s*@\w+(?:\([^)]*\))?\s*)*)([A-Z]\w*(?:<[^>]+>)?)\s+(\w+)\s*;", body,
+            field_pattern, body,
         ):
             validations = re.findall(r"@(NotNull|NotBlank|NotEmpty|Positive|Negative|Size|Pattern)\b", field_annotations)
             fields.append({"name": field_name, "type": type_name, "required": bool(validations), "validations": validations})
