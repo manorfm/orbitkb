@@ -2,9 +2,18 @@ from pathlib import Path
 
 from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.engine import StaticAnalysisEngine
-from orbitkb.domain.canonical import EntrypointKey, ServiceKey
-from orbitkb.domain.evidence import EvidenceComposer, EvidenceProfile, EvidenceSet
-from orbitkb.domain.navigation import KnowledgeNavigator, TraversalPolicy
+from orbitkb.domain.canonical import EntrypointKey, FactStatus, ServiceKey
+from orbitkb.domain.evidence import (
+    EvidenceComposer,
+    EvidenceFact,
+    EvidenceProfile,
+    EvidenceSet,
+)
+from orbitkb.domain.navigation import (
+    KnowledgeNavigator,
+    TraversalBoundary,
+    TraversalPolicy,
+)
 from orbitkb.domain.reduction import EvidenceBudget, EvidenceReducer
 from orbitkb.domain.sufficiency import (
     DeterministicSufficiencyEvaluator,
@@ -58,3 +67,41 @@ def test_unsupported_transport_stays_explicit_even_with_no_retained_facts():
 
     assert result.overall == SufficiencyStatus.UNSUPPORTED
     assert result.status("contract") == SufficiencyStatus.UNSUPPORTED
+
+
+def test_authorization_ignores_only_unrelated_budget_omissions():
+    route = EntrypointKey(ServiceKey("orders"), "http", "GET", "/orders", "Orders.list")
+    facts = (
+        EvidenceFact("entry", "entrypoint", {"contract": {"returns": {"fields": [{"name": "id"}]}}},
+                     FactStatus.CONFIRMED, "static", None, (), (route.symbol,), "entry"),
+        EvidenceFact("security", "security_requirement", {"requirement": "authenticated"},
+                     FactStatus.CONFIRMED, "static", None, (), (route.symbol,), "security"),
+        EvidenceFact("flow", "flow_edge", {"detail": "x" * 10_000},
+                     FactStatus.CONFIRMED, "static", None, (), (route.symbol,), "flow"),
+    )
+    evidence = EvidenceSet(route, facts, (), False)
+    capsule = EvidenceReducer().reduce((evidence,), EvidenceBudget(2_000))
+
+    assert capsule.truncated
+    assert capsule.report.omitted_fact_ids == ("flow",)
+    assert capsule.report.omitted_fact_kinds == ("flow_edge",)
+    assert not capsule.navigation_truncated
+    assert DeterministicSufficiencyEvaluator().evaluate(capsule).status("authorization") == SufficiencyStatus.ENOUGH
+
+    unresolved = EvidenceSet(route, facts, (TraversalBoundary(route.symbol, "unknown.call", "unresolved", "flow"),), False)
+    with_unresolved = EvidenceReducer().reduce((unresolved,), EvidenceBudget(2_000))
+    assert DeterministicSufficiencyEvaluator().evaluate(with_unresolved).status("authorization") == SufficiencyStatus.AMBIGUOUS
+
+    limited = EvidenceSet(route, facts, (), True)
+    with_limit = EvidenceReducer().reduce((limited,), EvidenceBudget(2_000))
+    assert DeterministicSufficiencyEvaluator().evaluate(with_limit).status("authorization") == SufficiencyStatus.AMBIGUOUS
+
+    omitted_security = EvidenceFact("security-extra", "security_requirement", {"detail": "x" * 10_000},
+                                    FactStatus.CONFIRMED, "static", None, (), (route.symbol,), "security-extra")
+    with_omitted_security = EvidenceReducer().reduce(
+        (EvidenceSet(route, (*facts, omitted_security), (), False),), EvidenceBudget(2_000),
+    )
+    assert "security_requirement" in with_omitted_security.report.omitted_fact_kinds
+    assert DeterministicSufficiencyEvaluator().evaluate(with_omitted_security).status(
+        "authorization",
+    ) == SufficiencyStatus.AMBIGUOUS

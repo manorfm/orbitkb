@@ -35,6 +35,7 @@ class ReductionReport:
     omitted_fact_ids: tuple[str, ...]
     estimated_input_chars: int
     estimated_chars: int
+    omitted_fact_kinds: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ class ContextCapsule:
     boundaries: tuple[TraversalBoundary, ...]
     report: ReductionReport
     truncated: bool
+    navigation_truncated: bool
 
 
 def _estimated_size(fact: EvidenceFact, uses: Sequence[EvidenceUse]) -> int:
@@ -91,6 +93,7 @@ class EvidenceReducer:
         retained: list[EvidenceFact] = []
         retained_uses: list[EvidenceUse] = []
         omitted: list[str] = []
+        omitted_kinds: list[str] = []
         selected_chars = 0
         priority = {"entrypoint": 0, "service_call": 1, "security_requirement": 2}
         for digest, fact in sorted(facts_by_digest.items(), key=lambda item: priority.get(item[1].kind, 3)):
@@ -98,13 +101,15 @@ class EvidenceReducer:
             size = _estimated_size(fact, uses)
             if selected_chars + size > budget.max_chars:
                 omitted.append(fact.id)
+                omitted_kinds.append(fact.kind)
                 continue
             retained.append(fact)
             retained_uses.extend(uses)
             selected_chars += size
 
         report = ReductionReport(input_facts, len(facts_by_digest), len(retained),
-                                 tuple(omitted), input_chars, selected_chars)
+                                 tuple(omitted), input_chars, selected_chars, tuple(omitted_kinds))
         entrypoints = tuple(dict.fromkeys(item.entrypoint for item in evidence))
+        navigation_truncated = any(item.truncated for item in evidence)
         return ContextCapsule(entrypoints, tuple(retained), tuple(retained_uses), tuple(boundaries.values()), report,
-                              any(item.truncated for item in evidence) or bool(omitted))
+                              navigation_truncated or bool(omitted), navigation_truncated)

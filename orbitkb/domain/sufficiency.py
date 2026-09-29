@@ -69,6 +69,11 @@ class DeterministicSufficiencyEvaluator:
                      if isinstance(fact.value.get("contract"), dict)]
         calls = by_kind["service_call"]
         security = by_kind["security_requirement"]
+        authorization_limited = (
+            capsule.navigation_truncated
+            or "security_requirement" in capsule.report.omitted_fact_kinds
+            or any(boundary.reason == "unresolved" for boundary in capsule.boundaries)
+        )
         responses = [contract.get("returns") for contract in contracts]
         response_shapes = [response for response in responses
                            if isinstance(response, dict) and response.get("fields")]
@@ -117,7 +122,7 @@ class DeterministicSufficiencyEvaluator:
                 "authorization",
                 (SufficiencyStatus.ENOUGH if security and all(
                     fact.status == FactStatus.CONFIRMED for fact in security
-                ) and not capsule.truncated else SufficiencyStatus.AMBIGUOUS),
+                ) and not authorization_limited else SufficiencyStatus.AMBIGUOUS),
                 tuple(fact.id for fact in security),
                 "absence or uncertainty of an authorization fact does not prove public access",
             ),
