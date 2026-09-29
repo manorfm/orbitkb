@@ -3,7 +3,8 @@
 import sqlite3
 
 from orbitkb.db.repositories import apis as apis_repo
-from orbitkb.generation.knowledge import RouteKey
+from orbitkb.db.repositories import components as components_repo
+from orbitkb.generation.knowledge import ComponentSummary, RouteKey
 
 
 class LegacyKnowledgeAdapter:
@@ -15,3 +16,9 @@ class LegacyKnowledgeAdapter:
             (row["method"], row["path"]): row["summary"]
             for row in apis_repo.list_apis(self._conn, service_id)
         }
+
+    def component_summaries(self, service_id: int) -> list[ComponentSummary]:
+        return [
+            ComponentSummary(row["name"], row["file_path"], row["summary"])
+            for row in components_repo.list_components(self._conn, service_id)
+        ]

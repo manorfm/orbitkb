@@ -1,4 +1,9 @@
-from orbitkb.generation.knowledge import KnowledgeReader, compose_endpoint_summaries
+from orbitkb.generation.knowledge import (
+    ComponentSummary,
+    KnowledgeReader,
+    compose_component_summaries,
+    compose_endpoint_summaries,
+)
 
 
 class FakeKnowledgeReader:
@@ -20,3 +25,16 @@ def test_component_summary_can_be_composed_from_a_reader_without_sqlite():
 
 def test_component_summary_preserves_empty_fallback():
     assert compose_endpoint_summaries([("GET", "/missing")], {}) == "(no endpoint summaries available yet)"
+
+
+def test_overview_composition_uses_typed_component_summaries_without_sqlite():
+    components = [
+        ComponentSummary("Controller", "src/controller.py", "Handles requests"),
+        ComponentSummary("Worker", "src/worker.py", "Processes jobs"),
+    ]
+
+    assert compose_component_summaries(components) == (
+        "- Controller (src/controller.py): Handles requests\n"
+        "- Worker (src/worker.py): Processes jobs"
+    )
+    assert compose_component_summaries([]).startswith("(no classes/controllers detected")

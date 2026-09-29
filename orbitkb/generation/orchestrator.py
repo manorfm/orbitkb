@@ -42,7 +42,12 @@ from orbitkb.discovery.walker import ServiceCandidate, discover_services
 from orbitkb.generation.architecture import recompute_architecture_view
 from orbitkb.generation.backend_base import LLMBackend, LLMUsage
 from orbitkb.generation.embeddings import EmbeddingBackend
-from orbitkb.generation.knowledge import KnowledgeReader, compose_endpoint_summaries
+from orbitkb.generation.knowledge import (
+    ComponentSummary,
+    KnowledgeReader,
+    compose_component_summaries,
+    compose_endpoint_summaries,
+)
 from orbitkb.generation.legacy_knowledge import LegacyKnowledgeAdapter
 from orbitkb.generation.llm_harness import generate_with_retry, load_prompt, load_schema
 from orbitkb.iac.scanner import scan_repository_facts
@@ -149,7 +154,7 @@ def _folder_tree(root: Path, max_depth: int = 2, max_lines: int = 200) -> str:
 
 
 def _render_service_overview_prompt(
-    name: str, stack: str, root: Path, hints: ServiceHints, components: list[sqlite3.Row]
+    name: str, stack: str, root: Path, hints: ServiceHints, components: list[ComponentSummary]
 ) -> str:
     """Composed LAST in a service's generation run, from the components' own already-
     written summaries — never a fresh read of the entrypoint alone — so the overview
@@ -157,10 +162,7 @@ def _render_service_overview_prompt(
     before any of them were analyzed."""
     entry_file = hints.entry_excerpt.file_path if hints.entry_excerpt else "(none found)"
     entry_excerpt = redact_sensitive_values(hints.entry_excerpt.text) if hints.entry_excerpt else "(no entrypoint file detected)"
-    component_summaries = "\n".join(f"- {c['name']} ({c['file_path']}): {c['summary']}" for c in components) or (
-        "(no classes/controllers detected — this service's routing is likely function-based, "
-        "or it exposes no HTTP endpoints at all)"
-    )
+    component_summaries = compose_component_summaries(components)
     return load_prompt("service_overview").substitute(
         service_name=name,
         stack=stack,
@@ -573,7 +575,7 @@ class OverviewGenerator:
             return outcome
 
         ctx.progress.unit_started(ctx.name, "overview")
-        components = components_repo.list_components(ctx.conn, ctx.service_id)
+        components = ctx.knowledge_reader.component_summaries(ctx.service_id)
         prompt = _render_service_overview_prompt(ctx.name, ctx.detector.id, ctx.root, ctx.hints, components)
         generation = generate_with_retry(
             ctx.backend, prompt, load_schema("service_overview"), ctx.root, ctx.failures_root, f"{ctx.name}-overview",

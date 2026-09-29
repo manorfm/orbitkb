@@ -163,6 +163,9 @@ def test_index_service_uses_injected_knowledge_reader_for_component_prompts(tmp_
             self.service_ids.append(service_id)
             return {("GET", "/orders/{order_id}"): "Summary from the reader"}
 
+        def component_summaries(self, service_id: int):
+            return []
+
     conn = open_db(tmp_path / "injected-reader.db")
     orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
     backend = RecordingOrchestratorBackend()
@@ -182,6 +185,30 @@ def test_overview_prompt_is_composed_from_the_components_summary(tmp_path: Path)
 
     overview_prompts = backend.prompts_by_kind["service_overview"]
     assert any("Fake component summary." in p for p in overview_prompts)
+
+
+def test_index_service_uses_injected_component_summaries_for_overview(tmp_path: Path):
+    from orbitkb.generation.knowledge import ComponentSummary
+
+    class StubReader:
+        def api_summaries(self, service_id: int) -> dict[tuple[str, str], str]:
+            return {}
+
+        def component_summaries(self, service_id: int) -> list[ComponentSummary]:
+            assert service_id > 0
+            return [ComponentSummary("Review", "src/review.py", "Summary from the reader")]
+
+    conn = open_db(tmp_path / "overview-reader.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    backend = RecordingOrchestratorBackend()
+
+    result = index_service(conn, orders.name, orders.path, orders.detector, backend, knowledge_reader=StubReader())
+
+    assert result.status == "ok"
+    assert any(
+        "- Review (src/review.py): Summary from the reader" in prompt
+        for prompt in backend.prompts_by_kind["service_overview"]
+    )
 
 
 def test_index_path_indexes_all_three_sample_services(tmp_path: Path):
