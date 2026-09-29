@@ -54,6 +54,7 @@ from orbitkb.generation.knowledge import (
 )
 from orbitkb.generation.legacy_knowledge import LegacyKnowledgeAdapter
 from orbitkb.generation.llm_harness import generate_with_retry, load_prompt, load_schema
+from orbitkb.generation.policy import GenerationPolicy
 from orbitkb.iac.scanner import scan_repository_facts
 from orbitkb.security.findings import find_security_findings
 from orbitkb.security.redaction import redact_sensitive_values
@@ -339,6 +340,7 @@ class IndexContext:
     progress: ProgressReporter
     knowledge_reader: KnowledgeReader
     knowledge_writer: KnowledgeWriter
+    generation_policy: GenerationPolicy
     embedding_backend: EmbeddingBackend | None = None
     any_endpoint_regenerated: bool = False
     any_component_regenerated: bool = False
@@ -477,7 +479,7 @@ class PersistenceGenerator:
             return outcome
 
         unit = UnitMeasurement(self.kind, ())
-        if not (ctx.force or ctx.is_new or (ctx.changed & persistence_files) or (ctx.removed & persistence_files)):
+        if not ctx.generation_policy.should_regenerate_aggregate(persistence_files):
             outcome.add(unit)
             ctx.progress.unit_finished(ctx.name, "persistence", "skipped")
             return outcome
@@ -523,7 +525,7 @@ class MessagingGenerator:
             return outcome
 
         unit = UnitMeasurement(self.kind, ())
-        if not (ctx.force or ctx.is_new or (ctx.changed & messaging_files) or (ctx.removed & messaging_files)):
+        if not ctx.generation_policy.should_regenerate_aggregate(messaging_files):
             outcome.add(unit)
             ctx.progress.unit_finished(ctx.name, "messaging", "skipped")
             return outcome
@@ -695,6 +697,7 @@ def _index_service_unlocked(
         changed=changed, removed=removed, force=force, failures_root=failures_root, progress=progress,
         knowledge_reader=knowledge_reader if knowledge_reader is not None else knowledge_adapter,
         knowledge_writer=knowledge_writer if knowledge_writer is not None else knowledge_adapter,
+        generation_policy=GenerationPolicy(force, is_new, changed, removed),
         embedding_backend=embedding_backend,
     )
 

@@ -463,6 +463,27 @@ def test_index_service_writes_and_clears_messaging_through_injected_writer(tmp_p
     assert messages_repo.list_messages(conn, first.service_id) == []
 
 
+def test_persistence_and_messaging_share_aggregate_generation_policy(tmp_path: Path, monkeypatch):
+    from orbitkb.generation.policy import GenerationPolicy
+
+    observed = []
+    original = GenerationPolicy.should_regenerate_aggregate
+
+    def recording_policy(self, source_files):
+        observed.append(frozenset(source_files))
+        return original(self, source_files)
+
+    monkeypatch.setattr(GenerationPolicy, "should_regenerate_aggregate", recording_policy)
+    conn = open_db(tmp_path / "policy.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+
+    result = index_service(conn, orders.name, orders.path, orders.detector, FakeOrchestratorBackend())
+
+    assert result.status == "ok"
+    assert len(observed) == 2
+    assert all(observed)
+
+
 def test_index_path_indexes_all_three_sample_services(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     backend = FakeOrchestratorBackend()
