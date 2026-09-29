@@ -418,7 +418,7 @@ make readiness-audit
 ```
 
 The frozen indexing baseline checks public MCP query fields and Markdown/Mermaid
-exports using the repository's synthetic Python, Node/TS and Java/Spring fixture.
+exports using synthetic Python, Node/JavaScript, Java/Spring, Kotlin/Spring and Go fixtures.
 It also checks a seeded HTTP, vendor and messaging graph. It uses the mock backend
 and makes no paid LLM calls:
 
@@ -428,8 +428,7 @@ python -m scripts.check_indexing_baseline
 
 The snapshot in `tests/golden/indexing_baseline.json` contains public fixture
 facts and export hashes, with no prompts, source excerpts or machine paths.
-Real-provider cost, false positives and omissions are recorded as unknown;
-Kotlin and Go are not yet represented in this indexing baseline.
+Real-provider cost, false positives and omissions are recorded as unknown.
 
 `make integration-containers` starts ephemeral RabbitMQ, Postgres, MongoDB and
 LocalStack containers, runs native operations against each (a real SQS

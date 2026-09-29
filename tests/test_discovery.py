@@ -86,6 +86,28 @@ def test_kotlin_endpoint_resolves_a_statically_imported_extension_function_into_
     assert "fun Restaurant.out()" in endpoint.extra_excerpts[0].text
 
 
+def test_spring_bare_method_mapping_uses_class_prefix(tmp_path: Path):
+    (tmp_path / "MenuController.kt").write_text(
+        '@RestController\n@RequestMapping("/menus")\nclass MenuController {\n'
+        '    @PostMapping\n    fun create() = Unit\n}\n', encoding="utf-8"
+    )
+
+    hints = JvmSpringDetector().collect_hints(tmp_path)
+
+    assert [(endpoint.method, endpoint.path) for endpoint in hints.endpoints] == [("POST", "/menus")]
+
+
+def test_spring_bare_class_request_mapping_is_not_an_endpoint(tmp_path: Path):
+    (tmp_path / "MenuController.kt").write_text(
+        '@RestController\n@RequestMapping\nclass MenuController {\n'
+        '    @GetMapping("/health")\n    fun health() = "ok"\n}\n', encoding="utf-8"
+    )
+
+    hints = JvmSpringDetector().collect_hints(tmp_path)
+
+    assert [(endpoint.method, endpoint.path) for endpoint in hints.endpoints] == [("GET", "/health")]
+
+
 def test_spring_class_request_mapping_is_not_an_endpoint(tmp_path: Path):
     (tmp_path / "MenuController.kt").write_text(
         '@RestController\n'

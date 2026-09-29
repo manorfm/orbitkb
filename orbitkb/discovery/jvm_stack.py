@@ -40,8 +40,8 @@ _ENGINE_DRIVER_KEYWORDS = {
 EXTENSIONS = (".java", ".kt")
 
 _MAPPING_RE = re.compile(
-    r"@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping|RequestMapping)"
-    r"\s*\(\s*(?:value\s*=\s*)?['\"]?([^'\")]*)['\"]?\s*\)?"
+    r"@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping|RequestMapping)\b"
+    r"(?:\s*\(\s*(?:value\s*=\s*)?['\"]?([^'\")]*)['\"]?\s*\)?)?"
 )
 _REST_CONTROLLER_RE = re.compile(r"@RestController")
 
@@ -83,12 +83,14 @@ _TYPE_AFTER_MAPPING_RE = re.compile(
 def _mapped_type(match: re.Match[str]) -> str | None:
     source = match.string
     opening = source.find("(", match.start(), match.end())
-    if opening < 0:
-        return None
-    closing = find_matching_paren(source, opening)
-    if closing < 0:
-        return None
-    declaration = _TYPE_AFTER_MAPPING_RE.match(source, closing + 1)
+    if opening >= 0:
+        closing = find_matching_paren(source, opening)
+        if closing < 0:
+            return None
+        declaration_start = closing + 1
+    else:
+        declaration_start = match.end()
+    declaration = _TYPE_AFTER_MAPPING_RE.match(source, declaration_start)
     return declaration.group("name") if declaration else None
 
 
@@ -119,7 +121,7 @@ def endpoint_matches(scan_root: Path) -> list[tuple[str, str, Path, int]]:
         if match.group(1) != "RequestMapping":
             continue
         type_name = _mapped_type(match)
-        if type_name and match.group(2).startswith("/"):
+        if type_name and (match.group(2) or "").startswith("/"):
             prefixes[(path, type_name)] = match.group(2)
 
     endpoints: list[tuple[str, str, Path, int]] = []

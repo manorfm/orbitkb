@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
 from benchmark.fixtures import build_pix_fixture
@@ -38,10 +39,13 @@ def _integration_fixture(workspace: Path) -> dict:
         conn.close()
 
 
-def collect_baseline(source: Path, workspace: Path) -> dict:
-    """Index a synthetic fixture once with no paid provider and capture stable outputs."""
-    if not source.is_dir():
-        raise ValueError(f"baseline source is not a directory: {source}")
+def collect_baseline(sources: Sequence[Path], workspace: Path) -> dict:
+    """Index synthetic fixtures with no paid provider and capture stable outputs."""
+    if not sources:
+        raise ValueError("baseline needs at least one source")
+    for source in sources:
+        if not source.is_dir():
+            raise ValueError(f"baseline source is not a directory: {source}")
     workspace.mkdir(parents=True, exist_ok=True)
     db_path = workspace / "baseline.db"
     if db_path.exists():
@@ -49,7 +53,9 @@ def collect_baseline(source: Path, workspace: Path) -> dict:
 
     conn = open_db(db_path)
     try:
-        results = index_path(conn, source, MockBackend())
+        results = []
+        for source in sources:
+            results.extend(index_path(conn, source, MockBackend()))
         services = []
         for row in services_repo.list_services(conn):
             name = row["name"]

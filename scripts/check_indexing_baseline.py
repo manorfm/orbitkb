@@ -10,6 +10,7 @@ from benchmark.indexing_baseline import collect_baseline, compare_baseline
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BASELINE = PROJECT_ROOT / "tests" / "golden" / "indexing_baseline.json"
 SAMPLE_SOURCE = PROJECT_ROOT / "verify" / "sample_project"
+LANGUAGE_SOURCE = PROJECT_ROOT / "verify" / "language_corpus"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -18,7 +19,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     with tempfile.TemporaryDirectory(prefix="orbitkb-baseline-") as directory:
-        actual = collect_baseline(SAMPLE_SOURCE, Path(directory))
+        actual = collect_baseline((SAMPLE_SOURCE, LANGUAGE_SOURCE), Path(directory))
     changes = compare_baseline(actual, args.baseline)
     if changes:
         for change in changes:

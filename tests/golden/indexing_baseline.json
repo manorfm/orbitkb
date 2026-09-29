@@ -1,9 +1,15 @@
 {
   "exports": {
+    "catalog-go-service/apis/get-catalog.md": "84741ccb1e5ed3a94b5b634ec54464c0f856e2445a2543a88091bf5ddbe93a74",
+    "catalog-go-service/apis/get-health.md": "9d891d682fe99344f7acfb5cee68b578d2f1cd4b8d74f987b91c514aa051d29e",
+    "catalog-go-service/index.md": "c6f207a04086664d84ba6f456f8dd2fd6482d633c4d9afdd7bd9e2040261f936",
     "inventory-service/apis/get-stock-sku.md": "720e4cbc3b49899c034e80f5b918b6e69d26ca6149c3c080057d8d3ebcefbb99",
     "inventory-service/apis/post-internal-stock-sku-adjust.md": "da399b35f22cf179d60fdd05368bfc1b2c540b702a14a7d400475c34c0897046",
     "inventory-service/apis/post-stock-sku-reserve.md": "6562be5c47fe4e9b9e9439c73b87e241827b2732c7b89ce3ab2cc4d23018a351",
     "inventory-service/index.md": "db3c5cf2f69c5ba8c362d3be77980bba1042ca4d4405c20f8c8b91b256c31d47",
+    "menu-kotlin-service/apis/get-menus-id.md": "bcaa45744ced1d0953d9aad21f4bf6f62a685cb6f859438fbab7a6ce98e069ef",
+    "menu-kotlin-service/apis/post-menus.md": "dc5dbdf6b56189fa081f4ac210a1c7de2197db2ae915a93caa3439207c0077ae",
+    "menu-kotlin-service/index.md": "b71e7c5e5f61301fc5da24ba530d213458494c8800cd42746ab85c008d3acc1d",
     "orders-service/apis/get-health.md": "9d891d682fe99344f7acfb5cee68b578d2f1cd4b8d74f987b91c514aa051d29e",
     "orders-service/apis/get-orders-order-id.md": "f0640b7debd6b063b9d36ebb1c4e83d0932e999f75717214594dfaf013422671",
     "orders-service/apis/post-orders-order-id-cancel.md": "b55d2b931100c9b0adab4c623dda4d51caa69c943d637c334d8dc3113b5f4f6d",
@@ -13,7 +19,7 @@
     "payments-service/apis/post-charge.md": "27055073f3457af04faa97a53022a45f93e7f59ac703aa44a6d6d7c1f05d87e1",
     "payments-service/apis/post-payments-id-refund.md": "ab939579774c7c85689deeeaaec5f9536918bde9eb1a6b127ab14c44b12c72eb",
     "payments-service/index.md": "cef40365a90fd40ca9d63273a09fedf3a5954b89f4283e8c21a4f4b8b4e2fc53",
-    "topology.mmd": "7c7f4c6da9aa7964aea446d030884e9e9f79f502619df3f91865b97549cbe80b"
+    "topology.mmd": "a11537f1c8eb3b35cb123e55d724b5b62e7452d79a0bb75a7015ed3ffb25c6ce"
   },
   "integration_fixture": {
     "exports": {
@@ -29,6 +35,11 @@
     "topology": "graph TD\n  svc_checkout_service[\"checkout-service\"]\n  svc_notification_service[\"notification-service\"]\n  svc_order_service[\"order-service\"]\n  svc_payments_service[\"payments-service\"]\n  svc_checkout_service -->|http| svc_payments_service\n  svc_order_service -->|http| svc_payments_service\n  ext_stripe_api((\"Stripe API\"))\n  svc_payments_service -.->|saas| ext_stripe_api\n  svc_payments_service ==>|payment_authorized| svc_notification_service"
   },
   "quality_by_stack": {
+    "go": {
+      "cost_usd": null,
+      "false_positives": null,
+      "omissions": null
+    },
     "jvm-spring": {
       "cost_usd": null,
       "false_positives": null,
@@ -47,9 +58,21 @@
   },
   "runs": [
     {
+      "llm_calls": 4,
+      "llm_invocations": 4,
+      "service": "catalog-go-service",
+      "status": "ok"
+    },
+    {
       "llm_calls": 8,
       "llm_invocations": 8,
       "service": "inventory-service",
+      "status": "ok"
+    },
+    {
+      "llm_calls": 4,
+      "llm_invocations": 4,
+      "service": "menu-kotlin-service",
       "status": "ok"
     },
     {
@@ -67,6 +90,35 @@
   ],
   "schema_version": 1,
   "services": [
+    {
+      "api_count": 2,
+      "apis": [
+        {
+          "method": "GET",
+          "path": "/catalog",
+          "summary": "Mock summary."
+        },
+        {
+          "method": "GET",
+          "path": "/health",
+          "summary": "Mock summary."
+        }
+      ],
+      "calls": [],
+      "components": [
+        {
+          "name": "main",
+          "summary": "Mock component summary."
+        }
+      ],
+      "long_desc": "Mock long description.",
+      "mermaid": "graph TD\n  svc_catalog_go_service[\"catalog-go-service\"]",
+      "messages": [],
+      "name": "catalog-go-service",
+      "persists": [],
+      "short_desc": "Mock short description.",
+      "stack": "go"
+    },
     {
       "api_count": 3,
       "apis": [
@@ -101,6 +153,35 @@
       "mermaid": "graph TD\n  svc_inventory_service[\"inventory-service\"]",
       "messages": [],
       "name": "inventory-service",
+      "persists": [],
+      "short_desc": "Mock short description.",
+      "stack": "jvm-spring"
+    },
+    {
+      "api_count": 2,
+      "apis": [
+        {
+          "method": "POST",
+          "path": "/menus",
+          "summary": "Mock summary."
+        },
+        {
+          "method": "GET",
+          "path": "/menus/{id}",
+          "summary": "Mock summary."
+        }
+      ],
+      "calls": [],
+      "components": [
+        {
+          "name": "MenuController",
+          "summary": "Mock component summary."
+        }
+      ],
+      "long_desc": "Mock long description.",
+      "mermaid": "graph TD\n  svc_menu_kotlin_service[\"menu-kotlin-service\"]",
+      "messages": [],
+      "name": "menu-kotlin-service",
       "persists": [],
       "short_desc": "Mock short description.",
       "stack": "jvm-spring"
@@ -184,6 +265,7 @@
     }
   ],
   "stacks": [
+    "go",
     "jvm-spring",
     "node-ts",
     "python"
