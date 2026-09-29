@@ -189,8 +189,36 @@ def _preceding_annotations_and_modifiers(text: str, keyword_start: int) -> str:
             lines.append(line.strip())
             cursor = prev_start
             continue
+        if line.strip() == ")":
+            annotation = _multiline_annotation_before(text, cursor)
+            if annotation is not None:
+                start, declaration = annotation
+                lines.append(declaration)
+                cursor = start
+                continue
         break
     return "\n".join(reversed(lines))
+
+
+def _multiline_annotation_before(text: str, cursor: int) -> tuple[int, str] | None:
+    """Read a parenthesized annotation ending on the line before ``cursor``."""
+    lines: list[str] = []
+    depth = 0
+    while cursor > 0:
+        end = cursor - 1
+        start = text.rfind("\n", 0, end) + 1
+        line = text[start:end].strip()
+        if not line:
+            return None
+        lines.append(line)
+        depth += line.count(")") - line.count("(")
+        if depth < 0:
+            return None
+        if depth == 0:
+            declaration = "\n".join(reversed(lines))
+            return (start, declaration) if re.match(r"^@[\w.]+\s*\(", declaration) else None
+        cursor = start
+    return None
 
 
 def _find_declaration_end_without_body(text: str, start: int) -> int:
