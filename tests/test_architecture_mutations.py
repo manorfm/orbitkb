@@ -222,6 +222,69 @@ def test_unhandled_endpoint_error_disappears_when_a_local_mapping_is_indexed(tmp
     assert find_unhandled_endpoint_errors(conn) == []
 
 
+def test_unhandled_endpoint_error_uses_canonical_snapshot_without_legacy_flow_rows(tmp_path: Path):
+    conn = open_db(tmp_path / "canonical-unhandled-error.db")
+    service = services_repo.ensure_service(conn, "orders", "/tmp/orders", "jvm-spring")
+    entrypoint = EntryPoint("http", "POST", "/orders", "OrdersController.create", STATIC_EVIDENCE)
+    edge = FlowEdge("OrdersController.create", "OrderService.create", "invokes", STATIC_EVIDENCE)
+    raised = ErrorContract(
+        source="OrderService.create", role="raises", error_kind="validation",
+        internal_type="InvalidOrderException", protocol="internal", transport_code=None,
+        public_code=None, exposes_internal_detail=False, retryability="not_retryable", evidence=STATIC_EVIDENCE,
+    )
+    unrelated = ErrorContract(
+        source="ReconciliationJob.run", role="raises", error_kind="conflict",
+        internal_type="UnrelatedConflict", protocol="internal", transport_code=None,
+        public_code=None, exposes_internal_detail=False, retryability="not_retryable", evidence=STATIC_EVIDENCE,
+    )
+    flows_repo.replace_analysis(conn, service, AnalysisResult(
+        entrypoints=[entrypoint], edges=[edge], error_contracts=[raised, unrelated],
+    ))
+    conn.execute("DELETE FROM flow_edges")
+    conn.execute("DELETE FROM static_error_contracts")
+
+    findings = find_unhandled_endpoint_errors(conn)
+
+    assert [item["kind"] for item in findings] == ["possible_unhandled_endpoint_error"]
+    assert findings[0]["detail"]["origin"]["symbol"] == "OrderService.create"
+
+    mapped = ErrorContract(
+        source="ApiExceptionHandler.invalidOrder", role="maps", error_kind="validation",
+        internal_type="InvalidOrderException", protocol="http", transport_code="400",
+        public_code="INVALID_ORDER", exposes_internal_detail=False, retryability="not_retryable",
+        evidence=STATIC_EVIDENCE,
+    )
+    flows_repo.replace_analysis(conn, service, AnalysisResult(
+        entrypoints=[entrypoint], edges=[edge], error_contracts=[raised, unrelated, mapped],
+    ))
+    conn.execute("DELETE FROM flow_edges")
+    conn.execute("DELETE FROM static_error_contracts")
+
+    assert find_unhandled_endpoint_errors(conn) == []
+
+
+def test_unhandled_endpoint_error_marks_truncated_navigation(tmp_path: Path):
+    conn = open_db(tmp_path / "bounded-unhandled-error.db")
+    service = services_repo.ensure_service(conn, "orders", "/tmp/orders", "jvm-spring")
+    symbols = ["OrdersController.create", *(f"Node{i}.run" for i in range(201))]
+    flows_repo.replace_analysis(conn, service, AnalysisResult(
+        entrypoints=[EntryPoint("http", "POST", "/orders", symbols[0], STATIC_EVIDENCE)],
+        edges=[FlowEdge(source, target, "invokes", STATIC_EVIDENCE)
+               for source, target in zip(symbols, symbols[1:])],
+        error_contracts=[ErrorContract(
+            source=symbols[0], role="raises", error_kind="validation",
+            internal_type="InvalidOrderException", protocol="internal", transport_code=None,
+            public_code=None, exposes_internal_detail=False, retryability="not_retryable",
+            evidence=STATIC_EVIDENCE,
+        )],
+    ))
+
+    findings = find_unhandled_endpoint_errors(conn)
+
+    assert len(findings) == 1
+    assert any("truncated" in item for item in findings[0]["detail"]["unknowns"])
+
+
 def test_internal_error_exposure_disappears_when_mapping_stops_exposing_detail(tmp_path: Path):
     conn = open_db(tmp_path / "internal-error-exposure.db")
     service = services_repo.ensure_service(conn, "orders", "/tmp/orders", "node-ts")

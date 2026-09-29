@@ -97,6 +97,21 @@ def test_known_boundary_is_reported_without_fabricating_a_destination():
     assert result.path_to("dynamic-client")[-1] == "MenuGateway.fetch"
 
 
+def test_validation_relation_reaches_its_evidence():
+    validator = SymbolKey(SERVICE, "MenuValidator.validate")
+    controller = SymbolKey(SERVICE, ENTRY.symbol)
+    snapshot = CanonicalSnapshot(SERVICE, (
+        fact(ENTRY.fact_id, "entrypoint", ENTRY),
+        fact("validation-edge", "flow_edge", controller,
+             {"relation": "validates", "target": validator.name}),
+        fact("validation-error", "error_contract", validator, {"error_kind": "validation"}),
+    ))
+
+    result = KnowledgeNavigator(snapshot).reachable(ENTRY, TraversalPolicy())
+
+    assert "validation-error" in {item.id for item in result.facts}
+
+
 @pytest.mark.parametrize("values", [{"max_depth": -1}, {"max_nodes": 0}, {"max_edges": 0}])
 def test_policy_rejects_invalid_bounds(values):
     with pytest.raises(ValueError):

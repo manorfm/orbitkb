@@ -590,7 +590,7 @@ def _canonical_entrypoint_traversal(
                         entrypoint["name"], entrypoint["symbol"])
     traversal = KnowledgeNavigator(snapshot).reachable(
         key, TraversalPolicy(max_depth=MAX_FLOW_EDGE_LIMIT, max_nodes=MAX_FLOW_EDGE_LIMIT + 1,
-                             max_edges=max_edges, relations=frozenset(_FLOW_KINDS | {"uses_config"})),
+                             max_edges=max_edges),
     )
     return key, traversal
 

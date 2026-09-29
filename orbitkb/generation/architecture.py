@@ -13,7 +13,10 @@ import sqlite3
 from collections import defaultdict
 
 from orbitkb.db.repositories import architecture as architecture_repo
+from orbitkb.db.repositories import canonical_snapshots as canonical_snapshots_repo
 from orbitkb.db.repositories import flows as flows_repo
+from orbitkb.domain.canonical import CanonicalFact, EntrypointKey, SymbolKey
+from orbitkb.domain.navigation import KnowledgeNavigator, TraversalPolicy
 from orbitkb.generation.runtime_configuration import ordered_kubernetes_workloads
 
 # Starting heuristic, not a trained threshold: flag a service once its fan-in or
@@ -1170,42 +1173,53 @@ def find_unhandled_endpoint_errors(conn: sqlite3.Connection) -> list[dict]:
            FROM entrypoints WHERE kind = 'http'
            ORDER BY service_id, method, name, symbol""",
     ).fetchall()
+    navigators: dict[int, KnowledgeNavigator | None] = {}
     mapped_by_service: dict[int, set[str]] = {}
     findings: list[dict] = []
     for entrypoint in entrypoints:
         service_id = entrypoint["service_id"]
-        mapped_types = mapped_by_service.get(service_id)
-        if mapped_types is None:
-            mapped_rows = conn.execute(
-                """SELECT DISTINCT internal_type FROM static_error_contracts
-                   WHERE service_id = ? AND role = 'maps' AND protocol = 'http'
-                     AND internal_type IS NOT NULL""",
-                (service_id,),
-            ).fetchall()
-            mapped_types = {row["internal_type"] for row in mapped_rows}
-            mapped_by_service[service_id] = mapped_types
-        edges = flows_repo.list_reachable_edges(conn, service_id, entrypoint["symbol"], max_edges=200)
-        sources = {entrypoint["symbol"]}
-        for edge in edges:
-            sources.add(edge["from_symbol"])
-            sources.add(edge["to_symbol"])
-        raised_by_type: dict[str, sqlite3.Row] = {}
-        for contract in flows_repo.list_static_error_contracts_for_sources(conn, service_id, sources):
-            error_type = contract["internal_type"]
+        if service_id not in navigators:
+            if not canonical_snapshots_repo.has_snapshot(conn, service_id):
+                navigators[service_id] = None
+                continue
+            snapshot = canonical_snapshots_repo.read_snapshot(conn, service_id)
+            if snapshot is None:
+                navigators[service_id] = None
+                continue
+            navigators[service_id] = KnowledgeNavigator(snapshot)
+            mapped_by_service[service_id] = {
+                fact.attributes["internal_type"] for fact in snapshot.facts
+                if fact.kind == "error_contract" and fact.attributes.get("role") == "maps"
+                and fact.attributes.get("protocol") == "http"
+                and isinstance(fact.attributes.get("internal_type"), str)
+            }
+        navigator = navigators[service_id]
+        if navigator is None:
+            continue
+        key = EntrypointKey(navigator.snapshot.service, "http", entrypoint["method"],
+                            entrypoint["name"], entrypoint["symbol"])
+        traversal = navigator.reachable(key, TraversalPolicy(max_depth=200, max_nodes=201, max_edges=200))
+        raised_by_type: dict[str, CanonicalFact] = {}
+        for contract in traversal.facts:
+            if contract.kind != "error_contract" or not isinstance(contract.subject, SymbolKey):
+                continue
+            error_type = contract.attributes.get("internal_type")
             if (
-                contract["role"] == "raises"
+                contract.attributes.get("role") == "raises"
                 and isinstance(error_type, str)
-                and contract["error_kind"] in CLIENT_ERROR_KINDS
-                and error_type not in mapped_types
+                and contract.attributes.get("error_kind") in CLIENT_ERROR_KINDS
+                and error_type not in mapped_by_service[service_id]
+                and contract.sources
             ):
                 raised_by_type.setdefault(error_type, contract)
         for error_type, contract in raised_by_type.items():
+            source = contract.sources[0]
             findings.append({
                 "kind": "possible_unhandled_endpoint_error", "severity": "warning",
                 "services": [names[service_id]],
                 "reason": (
                     f"{names[service_id]} {entrypoint['method']} {entrypoint['name']} can reach "
-                    f"{contract['source']}, which raises {contract['error_kind']} error '{error_type}'; "
+                    f"{contract.subject.name}, which raises {contract.attributes['error_kind']} error '{error_type}'; "
                     "no local HTTP mapping for that type is indexed."
                 ),
                 "detail": {
@@ -1214,8 +1228,8 @@ def find_unhandled_endpoint_errors(conn: sqlite3.Connection) -> list[dict]:
                         "symbol": entrypoint["symbol"],
                     },
                     "origin": {
-                        "symbol": contract["source"], "error_type": error_type,
-                        "kind": contract["error_kind"],
+                        "symbol": contract.subject.name, "error_type": error_type,
+                        "kind": contract.attributes["error_kind"],
                     },
                     "confidence": 0.75,
                     "evidence": [
@@ -1223,10 +1237,12 @@ def find_unhandled_endpoint_errors(conn: sqlite3.Connection) -> list[dict]:
                             "file": entrypoint["file_path"], "start_line": entrypoint["start_line"],
                             "end_line": entrypoint["end_line"],
                         },
-                        _edge_evidence(contract),
+                        {"file": source.file_path, "start_line": source.start_line, "end_line": source.end_line},
                     ],
                     "unknowns": [
                         "A framework-global handler, gateway or proxy may map this error outside indexed source.",
+                        *(["The endpoint flow was truncated before all error evidence could be checked."]
+                          if traversal.truncated else []),
                     ],
                     "remediation": [
                         "Add or verify a safe HTTP mapping for the expected error type, including its public status and code.",

@@ -18,7 +18,7 @@ class TraversalPolicy:
     max_depth: int = 8
     max_nodes: int = 100
     max_edges: int = 200
-    relations: frozenset[str] = frozenset({"invokes", "injects", "reads", "writes", "publishes", "consumes",
+    relations: frozenset[str] = frozenset({"invokes", "injects", "validates", "reads", "writes", "publishes", "consumes",
                                            "uses_config"})
 
     def __post_init__(self) -> None:
