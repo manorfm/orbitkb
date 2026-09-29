@@ -111,6 +111,14 @@ def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
     assert ("persistence_call", "billRepository.findByIdAndTableIdAndTableRestaurantId") in {
         (boundary.reason, boundary.target) for boundary in reached.boundaries
     }
+    assert ("persistence_call", "mongoTemplate.execute") in {
+        (boundary.reason, boundary.target) for boundary in reached.boundaries
+    }
+    assert any(edge.source == "BillOrderService.addItem" and edge.target == "BillOrderDAO.add"
+               and edge.confidence == "medium" for edge in analysis.edges)
+    assert ("unresolved", "collection.updateOne") in {
+        (boundary.reason, boundary.target) for boundary in reached.boundaries
+    }
     assert not any(
         boundary.reason == "unresolved"
         and boundary.target == "billRepository.findByIdAndTableIdAndTableRestaurantId"

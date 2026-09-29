@@ -129,7 +129,7 @@ class KnowledgeNavigator:
                     if edge.id in self._external_edges:
                         reason = "external_call"
                     elif (edge.attributes.get("boundary_kind") == "persistence"
-                          and edge.attributes.get("relation") in {"reads", "writes"}
+                          and edge.attributes.get("relation") in {"reads", "writes", "invokes"}
                           and edge.status is FactStatus.CONFIRMED):
                         reason = "persistence_call"
                     else:

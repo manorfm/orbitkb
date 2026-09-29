@@ -227,19 +227,20 @@ def _classify_spring_edges(
     cloud_facts: list[CloudFact] = []
     for edge in edges:
         cloud_kind, cloud_fact = cloud_edge_kind_and_fact(edge.target, edge.evidence, cloud_declarations)
-        kind = (
-            engine._spring_repository_call_kind(edge.target, receivers.repositories)
-            or engine._spring_jdbc_template_call_kind(edge.target, receivers.jdbc_templates)
+        repository_kind = engine._spring_repository_call_kind(edge.target, receivers.repositories)
+        template_kind = (
+            engine._spring_jdbc_template_call_kind(edge.target, receivers.jdbc_templates)
             or engine._spring_mongo_template_call_kind(edge.target, receivers.mongo_templates)
             or engine._entity_manager_call_kind(edge.target, receivers.entity_managers)
-            or cloud_kind
         )
+        kind = repository_kind or template_kind or cloud_kind
         # Generic name matching is disabled for JVM persistence: `repository.save`
         # is an operation only with a local repository dependency.
         if kind is None and edge.kind in {"reads", "writes"}:
             kind = "invokes"
         classified.append(FlowEdge(
             edge.source, edge.target, kind or edge.kind, edge.evidence, edge.confidence, edge.origin,
+            boundary_kind="persistence" if template_kind else edge.boundary_kind,
         ))
         if cloud_fact is not None:
             cloud_facts.append(cloud_fact)

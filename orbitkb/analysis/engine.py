@@ -78,7 +78,7 @@ from orbitkb.analysis.resolution import BoundedFlowResolver
 from orbitkb.discovery.scan_helpers import SKIP_DIRS
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "35"
+STATIC_ANALYSIS_INPUT_VERSION = "36"
 
 # Shared with jvm_spring_analyzer.py's Kotlin/Java analyzers, and with
 # _feign_endpoints below (a Feign client's mapping annotation implies the same
@@ -372,6 +372,8 @@ def _spring_mongo_template_call_kind(target: str, receivers: frozenset[str]) -> 
         return "reads"
     if method in _SPRING_MONGO_WRITE_METHODS:
         return "writes"
+    if method == "execute":
+        return "invokes"  # the callback determines read/write, not this call
     return None
 
 

@@ -1974,6 +1974,23 @@ def test_spring_analyzers_classify_only_explicit_mongo_template_dependencies(tmp
     }
 
 
+def test_mongo_execute_marks_only_an_injected_template_as_persistence(tmp_path: Path):
+    (tmp_path / "Orders.kt").write_text('''class Orders(private val mongo: MongoTemplate) {
+  fun save() = mongo.execute(Order::class.java) { collection -> collection.updateOne() }
+}
+class Unproven {
+  fun save(mongo: Client) = mongo.execute()
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Orders.save" and edge.target == "mongo.execute"
+               and edge.kind == "invokes" and edge.boundary_kind == "persistence" for edge in result.edges)
+    assert any(edge.source == "Unproven.save" and edge.target == "mongo.execute"
+               and edge.boundary_kind is None for edge in result.edges)
+
+
 def test_spring_analyzers_classify_only_explicit_entity_manager_dependencies(tmp_path: Path):
     (tmp_path / "Orders.java").write_text(
         '''class Orders {
