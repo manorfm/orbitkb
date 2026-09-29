@@ -76,9 +76,10 @@ from orbitkb.analysis.models import (
 from orbitkb.analysis.node_imports import parse_node_named_imports
 from orbitkb.analysis.resolution import BoundedFlowResolver
 from orbitkb.discovery.scan_helpers import SKIP_DIRS
+from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "39"
+STATIC_ANALYSIS_INPUT_VERSION = "40"
 
 # Shared with jvm_spring_analyzer.py's Kotlin/Java analyzers, and with
 # _feign_endpoints below (a Feign client's mapping annotation implies the same
@@ -3537,6 +3538,7 @@ class _OpenApiOperation:
     method: str
     path: str
     operation_id: str | None
+    description: str | None
     request_body_required: bool | None
     response_statuses: tuple[str, ...]
     security: str
@@ -3557,6 +3559,7 @@ def _enrich_openapi_contracts(result: AnalysisResult, root: Path) -> None:
         contract["formal_contract"] = {
             "format": "openapi",
             "operation_id": operation.operation_id,
+            "description": operation.description,
             "request_body_required": operation.request_body_required,
             "response_statuses": list(operation.response_statuses),
             "security": operation.security,
@@ -3588,10 +3591,16 @@ def _openapi_operations(root: Path) -> list[_OpenApiOperation]:
                 operation_id = operation.get("operationId")
                 if not isinstance(operation_id, str):
                     operation_id = None
+                description = operation.get("description")
+                if not isinstance(description, str) or not description.strip():
+                    description = None
+                else:
+                    description = redact_sensitive_values(description.strip())
                 operations.append(_OpenApiOperation(
                     method=method.upper(),
                     path=raw_path,
                     operation_id=operation_id,
+                    description=description,
                     request_body_required=_openapi_request_body_required(operation, path_item),
                     response_statuses=_openapi_response_statuses(operation),
                     security=_openapi_security(operation, document),

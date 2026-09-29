@@ -2651,11 +2651,75 @@ paths:
     assert result.contracts["OrdersController.create"]["formal_contract"] == {
         "format": "openapi",
         "operation_id": "createOrder",
+        "description": None,
         "request_body_required": True,
         "response_statuses": ["201", "409"],
         "security": "required",
         "evidence": {"file": "openapi.yaml", "start_line": 7, "end_line": 7},
     }
+
+
+def test_openapi_description_is_attached_only_to_matching_endpoint(tmp_path: Path):
+    (tmp_path / "OrdersController.java").write_text(
+        '''@RestController
+class OrdersController {
+  @GetMapping("/orders")
+  Order list() { return new Order(); }
+  @GetMapping("/orders/{id}")
+  Order get(String id) { return new Order(); }
+}
+''', encoding="utf-8",
+    )
+    (tmp_path / "openapi.yaml").write_text(
+        '''openapi: 3.0.3
+paths:
+  /orders:
+    get:
+      description: Returns orders available to the caller.
+      responses:
+        "200": {}
+  /orders/{id}:
+    get:
+      summary: Finds an order
+      description: "  "
+      responses:
+        "200": {}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert result.contracts["OrdersController.list"]["formal_contract"]["description"] == (
+        "Returns orders available to the caller."
+    )
+    assert result.contracts["OrdersController.get"]["formal_contract"]["description"] is None
+
+
+def test_openapi_description_redacts_sensitive_values_before_projection(tmp_path: Path):
+    (tmp_path / "OrdersController.java").write_text(
+        '''@RestController
+class OrdersController {
+  @GetMapping("/orders")
+  Order list() { return new Order(); }
+}
+''', encoding="utf-8",
+    )
+    (tmp_path / "openapi.yaml").write_text(
+        '''openapi: 3.0.3
+paths:
+  /orders:
+    get:
+      description: "Returns orders. Bearer secret123"
+      responses:
+        "200": {}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert result.contracts["OrdersController.list"]["formal_contract"]["description"] == (
+        "Returns orders. Bearer [REDACTED]"
+    )
 
 
 def test_static_analysis_ignores_openapi_operation_without_an_exact_endpoint_match(tmp_path: Path):

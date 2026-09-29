@@ -75,6 +75,23 @@ def test_entrypoint_projection_uses_existing_contract_when_entrypoint_has_none()
     assert snapshot.facts[0].attributes == {"contract": {"request": "Order"}}
 
 
+def test_entrypoint_projection_combines_route_shape_with_formal_contract_source():
+    entry = EntryPoint("http", "POST", "/orders", "Orders.create", Evidence("Orders.kt", 3, 5),
+                       {"request": {"fields": [{"name": "item"}]}})
+    formal = {"format": "openapi", "description": "Places an order.",
+              "evidence": {"file": "openapi.yaml", "start_line": 8, "end_line": 8}}
+    analysis = AnalysisResult(entrypoints=[entry], contracts={"Orders.create": {"formal_contract": formal}})
+
+    snapshot = project_analysis(ServiceKey("orders"), analysis)
+
+    assert snapshot.facts[0].attributes["contract"] == {
+        "request": {"fields": [{"name": "item"}]}, "formal_contract": formal,
+    }
+    assert [(source.file_path, source.start_line) for source in snapshot.facts[0].sources] == [
+        ("Orders.kt", 3), ("openapi.yaml", 8),
+    ]
+
+
 def test_entrypoint_projection_rejects_conflicting_contracts_for_one_identity():
     first = EntryPoint("http", "GET", "/items", "Items.list", Evidence("routes.go", 2, 3), {"response": "Item"})
     second = EntryPoint("http", "GET", "/items", "Items.list", Evidence("routes.go", 5, 6), {"response": "Other"})

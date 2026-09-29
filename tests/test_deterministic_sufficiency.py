@@ -49,6 +49,50 @@ def test_spring_route_has_proven_call_and_response_but_missing_semantic_document
     )
 
 
+def test_explicit_openapi_description_proves_only_matching_route_business_behavior(tmp_path: Path):
+    (tmp_path / "OrdersController.java").write_text(
+        '''@RestController
+class OrdersController {
+  @GetMapping("/orders")
+  Order list() { return new Order(); }
+  @GetMapping("/orders/{id}")
+  Order get(String id) { return new Order(); }
+}
+''', encoding="utf-8",
+    )
+    (tmp_path / "openapi.yaml").write_text(
+        '''openapi: 3.0.3
+paths:
+  /orders:
+    get:
+      description: Returns orders available to the caller.
+      responses:
+        "200": {}
+  /orders/{id}:
+    get:
+      summary: Finds an order
+      responses:
+        "200": {}
+''', encoding="utf-8",
+    )
+    snapshot = project_analysis(ServiceKey("orders"), StaticAnalysisEngine().analyze(tmp_path, "jvm-spring"))
+    profile = EvidenceProfile(frozenset({"entrypoint"}))
+    composer = EvidenceComposer(KnowledgeNavigator(snapshot))
+    for path, expected in (("/orders", SufficiencyStatus.ENOUGH),
+                           ("/orders/{id}", SufficiencyStatus.MISSING)):
+        route = next(fact.subject for fact in snapshot.facts
+                     if fact.kind == "entrypoint" and fact.subject.name == path)
+        capsule = EvidenceReducer().reduce((composer.compose(route, profile, TraversalPolicy()),),
+                                           EvidenceBudget(20_000))
+        result = DeterministicSufficiencyEvaluator().evaluate(capsule)
+
+        assert result.status("business_behavior") == expected
+        assert result.overall != SufficiencyStatus.ENOUGH
+        if expected == SufficiencyStatus.ENOUGH:
+            assert result.evidence_ids("business_behavior") == (route.fact_id,)
+            assert any(source.file_path == "openapi.yaml" for source in capsule.facts[0].sources)
+
+
 def test_omitted_call_cannot_be_marked_sufficient():
     capsule = _capsule(max_chars=1)
 

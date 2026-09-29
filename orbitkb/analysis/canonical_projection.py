@@ -43,9 +43,20 @@ def project_analysis(service: ServiceKey, analysis: AnalysisResult) -> Canonical
     facts: dict[str, CanonicalFact] = {}
     for entry in analysis.entrypoints:
         key = EntrypointKey(service, entry.kind, entry.method, entry.name, entry.symbol)
-        contract = entry.contract or analysis.contracts.get(entry.symbol)
+        stored_contract = analysis.contracts.get(entry.symbol)
+        contract = ({**stored_contract, **entry.contract} if stored_contract and entry.contract
+                    else entry.contract or stored_contract)
         attributes = {"contract": contract}
         sources = [_source(entry.evidence)]
+        formal = contract.get("formal_contract") if isinstance(contract, dict) else None
+        declaration = formal.get("evidence") if isinstance(formal, dict) else None
+        if isinstance(declaration, dict) and isinstance(declaration.get("file"), str) and (
+            isinstance(declaration.get("start_line"), int) and declaration["start_line"] > 0
+        ):
+            sources.append(SourceReference(
+                declaration["file"], declaration["start_line"],
+                declaration.get("end_line", declaration["start_line"]),
+            ))
         response = contract.get("returns") if isinstance(contract, dict) else None
         for evidence_key in ("derived_from", "receiver_evidence"):
             derivation = response.get(evidence_key) if isinstance(response, dict) else None

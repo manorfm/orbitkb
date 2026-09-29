@@ -9,6 +9,14 @@ from orbitkb.domain.canonical import FactStatus
 from orbitkb.domain.reduction import ContextCapsule
 
 
+def _has_openapi_description(contract: object) -> bool:
+    if not isinstance(contract, dict):
+        return False
+    formal = contract.get("formal_contract")
+    return (isinstance(formal, dict) and formal.get("format") == "openapi"
+            and isinstance(formal.get("description"), str) and bool(formal["description"].strip()))
+
+
 class SufficiencyStatus(str, Enum):
     ENOUGH = "enough"
     MISSING = "missing"
@@ -69,6 +77,11 @@ class DeterministicSufficiencyEvaluator:
                      if isinstance(fact.value.get("contract"), dict)]
         calls = by_kind["service_call"]
         security = by_kind["security_requirement"]
+        described = tuple(
+            fact.id for fact in entrypoints
+            if _has_openapi_description(fact.value.get("contract"))
+        )
+        behavior_enough = bool(described) and len(described) == len(entrypoints)
         authorization_limited = (
             capsule.navigation_truncated
             or "security_requirement" in capsule.report.omitted_fact_kinds
@@ -136,8 +149,11 @@ class DeterministicSufficiencyEvaluator:
                 "unresolved or limited flow must remain explicit",
             ),
             DimensionAssessment(
-                "business_behavior", SufficiencyStatus.MISSING, (),
-                "canonical static facts do not establish a business description",
+                "business_behavior",
+                SufficiencyStatus.ENOUGH if behavior_enough else SufficiencyStatus.MISSING,
+                described,
+                "explicit OpenAPI operation description present" if behavior_enough
+                else "canonical static facts do not establish a business description",
             ),
         ]
         return SufficiencyResult(tuple(dimensions), capsule.report.omitted_fact_ids)
