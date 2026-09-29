@@ -7,12 +7,15 @@ from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.engine import StaticAnalysisEngine
 from orbitkb.analysis.models import (
     AnalysisResult,
+    ConfigurationBinding,
     EntryPoint,
+    ErrorContract,
     Evidence,
     FlowEdge,
+    SecurityRequirement,
     StaticServiceCall,
 )
-from orbitkb.domain.canonical import FactStatus, ServiceKey, SymbolKey
+from orbitkb.domain.canonical import FactStatus, RoutePatternKey, ServiceKey, SymbolKey
 
 
 def test_entrypoint_projection_has_stable_identity_and_preserves_sources():
@@ -128,3 +131,56 @@ def test_relationship_projection_preserves_origin_confidence_and_all_sources():
     assert project_analysis(ServiceKey("menu-manager"), AnalysisResult(edges=[analysis.edges[1]])).facts[0].id == (
         static_edge.id
     )
+
+
+def test_configuration_security_and_error_projection_preserves_meaning_and_sources():
+    analysis = AnalysisResult(
+        configuration_bindings=[
+            ConfigurationBinding("MenuClient", "restaurant.base-url", "property", False, Evidence("Client.kt", 4, 4)),
+            ConfigurationBinding("MenuClient", "restaurant.base-url", "property", False, Evidence("Config.kt", 8, 8)),
+        ],
+        security_requirements=[
+            SecurityRequirement(None, None, "MenuController.list", "hasRole", ("ADMIN",),
+                                Evidence("MenuController.kt", 10, 10)),
+            SecurityRequirement("**", None, None, "custom:MenuPolicy", (), Evidence("Security.kt", 15, 17)),
+        ],
+        error_contracts=[
+            ErrorContract("MenuController.list", "maps", "not_found", "MenuNotFound", "http", "404", "MENU_404",
+                          False, "never", Evidence("Errors.kt", 20, 24)),
+        ],
+    )
+
+    snapshot = project_analysis(ServiceKey("menu-manager"), analysis)
+
+    assert len(snapshot.facts) == 4
+    config, symbol_rule, route_rule, error = snapshot.facts
+    assert (config.kind, config.subject, config.attributes, config.status) == (
+        "configuration", SymbolKey(ServiceKey("menu-manager"), "MenuClient"),
+        {"key": "restaurant.base-url", "binding_kind": "property", "sensitive": False}, FactStatus.CONFIRMED,
+    )
+    assert [source.file_path for source in config.sources] == ["Client.kt", "Config.kt"]
+    assert (symbol_rule.kind, symbol_rule.subject, symbol_rule.attributes) == (
+        "security_requirement", SymbolKey(ServiceKey("menu-manager"), "MenuController.list"),
+        {"requirement": "hasRole", "roles": ("ADMIN",)},
+    )
+    assert (route_rule.subject, route_rule.status, route_rule.attributes) == (
+        RoutePatternKey(ServiceKey("menu-manager"), None, "**"), FactStatus.UNKNOWN,
+        {"requirement": "custom:MenuPolicy", "roles": ()},
+    )
+    assert (error.kind, error.subject, error.status, error.attributes) == (
+        "error_contract", SymbolKey(ServiceKey("menu-manager"), "MenuController.list"), FactStatus.CONFIRMED,
+        {"role": "maps", "error_kind": "not_found", "internal_type": "MenuNotFound", "protocol": "http",
+         "transport_code": "404", "public_code": "MENU_404", "exposes_internal_detail": False,
+         "retryability": "never"},
+    )
+    assert project_analysis(
+        ServiceKey("menu-manager"), AnalysisResult(configuration_bindings=[analysis.configuration_bindings[1]]),
+    ).facts[0].id == config.id
+
+
+def test_security_projection_rejects_rule_without_exactly_one_subject():
+    invalid = SecurityRequirement("/menus", "GET", "MenuController.list", "hasRole", ("ADMIN",),
+                                  Evidence("Security.kt", 1, 1))
+
+    with pytest.raises(ValueError, match="security requirement subject"):
+        project_analysis(ServiceKey("menu-manager"), AnalysisResult(security_requirements=[invalid]))

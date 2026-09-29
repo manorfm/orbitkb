@@ -20,7 +20,7 @@ class ServiceKey:
             raise ValueError("repository key cannot be empty")
 
 
-def fact_id(service: ServiceKey, kind: str, *identity: str) -> str:
+def fact_id(service: ServiceKey, kind: str, *identity: str | bool | None) -> str:
     fields = [service.repository, service.value, kind, *identity]
     encoded = json.dumps(fields, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return kind + ":" + hashlib.sha256(encoded).hexdigest()
@@ -46,6 +46,13 @@ class SymbolKey:
 
 
 @dataclass(frozen=True)
+class RoutePatternKey:
+    service: ServiceKey
+    method: str | None
+    pattern: str
+
+
+@dataclass(frozen=True)
 class SourceReference:
     file_path: str
     start_line: int
@@ -63,7 +70,7 @@ class FactStatus(str, Enum):
 class CanonicalFact:
     id: str
     kind: str
-    subject: EntrypointKey | SymbolKey
+    subject: EntrypointKey | SymbolKey | RoutePatternKey
     attributes: dict
     status: FactStatus
     origin: str
