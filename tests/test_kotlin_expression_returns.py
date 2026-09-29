@@ -59,3 +59,54 @@ def test_conditional_or_nullable_controller_expression_keeps_response_unknown(tm
 
     assert conditional.contracts["Controller.get"]["returns"] is None
     assert nullable.contracts["Controller.get"]["returns"] is None
+
+
+def test_receiver_type_must_match_the_unique_injected_interface_method(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "BillOut.kt").write_text('''
+package example.output
+import example.domain.Bill
+data class BillOut(val id: String)
+fun Bill.resumeOut() = BillOut(id)
+''')
+    domain = tmp_path / "domain"
+    domain.mkdir()
+    (domain / "Bill.kt").write_text("package example.domain\nclass Bill(val id: String)\n")
+    command = tmp_path / "command"
+    command.mkdir()
+    interface = command / "Lookup.kt"
+    interface.write_text('''
+package example.command
+import example.domain.Bill
+interface Lookup {
+    fun load(): Bill
+}
+''')
+    controller = tmp_path / "Controller.kt"
+    controller.write_text('''
+package example.web
+import example.command.Lookup
+import example.output.resumeOut
+import org.springframework.web.bind.annotation.GetMapping
+class Controller(private val lookup: Lookup) {
+    @GetMapping("/orders")
+    fun get() = lookup.load().resumeOut()
+}
+''')
+
+    matched = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+    assert matched.contracts["Controller.get"]["returns"]["confidence"] == "confirmed"
+    assert matched.contracts["Controller.get"]["returns"]["receiver_evidence"]["file"] == "command/Lookup.kt"
+
+    interface.write_text(interface.read_text().replace("fun load(): Bill", "fun load(): String"))
+    mismatched = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+    assert mismatched.contracts["Controller.get"]["returns"]["confidence"] == "inferred"
+
+    interface.write_text(interface.read_text().replace("fun load(): String", "fun load(): Bill?"))
+    nullable = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+    assert nullable.contracts["Controller.get"]["returns"]["confidence"] == "inferred"
+
+    interface.write_text(interface.read_text().replace("fun load(): Bill?", "fun load(): Bill\n    fun load(value: Int): Bill"))
+    overloaded = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+    assert overloaded.contracts["Controller.get"]["returns"]["confidence"] == "inferred"

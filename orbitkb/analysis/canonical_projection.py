@@ -47,13 +47,14 @@ def project_analysis(service: ServiceKey, analysis: AnalysisResult) -> Canonical
         attributes = {"contract": contract}
         sources = [_source(entry.evidence)]
         response = contract.get("returns") if isinstance(contract, dict) else None
-        derivation = response.get("derived_from") if isinstance(response, dict) else None
-        if isinstance(derivation, dict) and isinstance(derivation.get("file"), str) and (
-            isinstance(derivation.get("start_line"), int) and derivation["start_line"] > 0
-        ):
-            sources.append(SourceReference(
-                derivation["file"], derivation["start_line"], derivation["start_line"],
-            ))
+        for evidence_key in ("derived_from", "receiver_evidence"):
+            derivation = response.get(evidence_key) if isinstance(response, dict) else None
+            if isinstance(derivation, dict) and isinstance(derivation.get("file"), str) and (
+                isinstance(derivation.get("start_line"), int) and derivation["start_line"] > 0
+            ):
+                sources.append(SourceReference(
+                    derivation["file"], derivation["start_line"], derivation["start_line"],
+                ))
         _add_fact(facts, CanonicalFact(
             id=key.fact_id, kind="entrypoint", subject=key, attributes=attributes,
             status=FactStatus.CONFIRMED, origin="static", sources=tuple(sources),

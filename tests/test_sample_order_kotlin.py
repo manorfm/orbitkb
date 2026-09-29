@@ -83,13 +83,15 @@ def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
         {"name": "requestedBy", "type": "ULID", "required": True, "validations": []},
     ]
     assert response["derived_from"]["file"].endswith("BillOut.kt")
-    assert response["confidence"] == "inferred"
+    assert response["confidence"] == "confirmed"
+    assert response["receiver_evidence"]["file"].endswith("AddItemCommand.kt")
     snapshot = project_analysis(ServiceKey("sample-order"), analysis)
     route_fact = next(
         fact for fact in snapshot.facts
         if fact.kind == "entrypoint" and fact.subject.name == ROUTE
     )
     assert any(source.file_path.endswith("BillOut.kt") for source in route_fact.sources)
+    assert any(source.file_path.endswith("AddItemCommand.kt") for source in route_fact.sources)
     route = route_fact.subject
     reached = KnowledgeNavigator(snapshot).reachable(route, TraversalPolicy())
 
@@ -104,6 +106,6 @@ def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
     assert sufficiency is not None
     assert sufficiency.overall.value == "missing"
     assert sufficiency.status("request_shape").value == "enough"
-    assert sufficiency.status("response_shape").value == "ambiguous"
+    assert sufficiency.status("response_shape").value == "enough"
     assert sufficiency.status("business_behavior").value == "missing"
     assert sufficiency.status("flow").value == "ambiguous"
