@@ -487,7 +487,8 @@ analysis bypasses or withholds snapshot reuse, preserving correctness over speed
 The canonical projection converts entrypoints, symbol declarations, injections,
 flow boundary markers, flow edges, service calls,
 configuration keys, security requirements, error contracts, message contracts,
-persistence resources and migration declarations from `AnalysisResult` into
+persistence resources, migration declarations, gRPC bindings, resilience policies,
+feature flags, cloud operations and HTTP header names from `AnalysisResult` into
 language-neutral facts with stable IDs and source locations.
 It keeps the known origin and confidence, and marks custom authorization logic
 as unknown rather than interpreting its behavior.

@@ -7,21 +7,28 @@ from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.engine import StaticAnalysisEngine
 from orbitkb.analysis.models import (
     AnalysisResult,
+    ApiHeader,
+    CloudFact,
     ConfigurationBinding,
     EntryPoint,
     ErrorContract,
     Evidence,
+    FeatureFlag,
     FlowBoundary,
     FlowEdge,
+    GrpcClientBinding,
+    GrpcHandler,
     Injection,
     MessageContract,
     MigrationFact,
     PersistenceFact,
+    ResiliencePolicy,
     SecurityRequirement,
     StaticServiceCall,
     Symbol,
 )
 from orbitkb.domain.canonical import (
+    CloudResourceKey,
     FactStatus,
     MessageChannelKey,
     PersistenceResourceKey,
@@ -288,3 +295,58 @@ def test_flow_structure_projection_keeps_declarations_and_unresolved_boundaries_
     )
     assert len(boundary.sources) == 2
     assert not any(fact.kind == "flow_edge" for fact in snapshot.facts)
+
+
+def test_remaining_static_facts_preserve_identity_and_unresolved_targets():
+    analysis = AnalysisResult(
+        grpc_handlers=[
+            GrpcHandler("menu.v1.Menu", "Get", "MenuHandler.Get", Evidence("menu.go", 3, 5)),
+        ],
+        grpc_client_bindings=[
+            GrpcClientBinding("MenuClient", "stub", "restaurant.v1.Restaurant", Evidence("client.go", 4, 4)),
+        ],
+        resilience_policies=[
+            ResiliencePolicy("MenuClient.Get", "timeout", "grpc_deadline", 500, "ms", Evidence("client.go", 8, 8)),
+        ],
+        feature_flags=[
+            FeatureFlag("MenuController.list", "menu.new-flow", "launchdarkly", Evidence("flags.kt", 7, 7)),
+        ],
+        cloud_facts=[
+            CloudFact("aws", "queue", "sqs", "SendMessage", "publish", "aws-sdk", None,
+                      Evidence("publisher.ts", 10, 10)),
+            CloudFact("aws", "queue", "sqs", "SendMessage", "publish", "aws-sdk", None,
+                      Evidence("publisher.ts", 12, 12)),
+        ],
+        api_headers=[
+            ApiHeader("GET", "/menus", "request", "X-Trace", Evidence("Menu.kt", 11, 11)),
+            ApiHeader("GET", "/menus", "response", "X-Trace", Evidence("Menu.kt", 19, 19)),
+        ],
+    )
+
+    snapshot = project_analysis(ServiceKey("menu-manager"), analysis)
+
+    assert len(snapshot.facts) == 7
+    handler, client, resilience, flag, cloud, request_header, response_header = snapshot.facts
+    assert (handler.kind, handler.subject, handler.attributes) == (
+        "grpc_handler", SymbolKey(ServiceKey("menu-manager"), "MenuHandler.Get"),
+        {"grpc_service": "menu.v1.Menu", "rpc": "Get"},
+    )
+    assert (client.kind, client.attributes) == (
+        "grpc_client_binding", {"member": "stub", "grpc_service": "restaurant.v1.Restaurant"},
+    )
+    assert (resilience.kind, resilience.attributes) == (
+        "resilience_policy", {"policy_kind": "timeout", "mechanism": "grpc_deadline", "value": 500, "unit": "ms"},
+    )
+    assert (flag.kind, flag.attributes) == ("feature_flag", {"key": "menu.new-flow", "provider": "launchdarkly"})
+    assert (cloud.kind, cloud.subject, cloud.status, cloud.attributes) == (
+        "cloud_operation", CloudResourceKey(ServiceKey("menu-manager"), "aws", "queue", None),
+        FactStatus.CONFIRMED,
+        {"service_name": "sqs", "operation": "SendMessage", "operation_kind": "publish", "sdk": "aws-sdk"},
+    )
+    assert len(cloud.sources) == 2
+    assert (request_header.kind, request_header.subject, request_header.attributes) == (
+        "api_header", RoutePatternKey(ServiceKey("menu-manager"), "GET", "/menus"),
+        {"direction": "request", "name": "X-Trace"},
+    )
+    assert response_header.id != request_header.id
+    assert not any("value" in fact.attributes for fact in (request_header, response_header))

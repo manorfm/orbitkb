@@ -20,7 +20,7 @@ class ServiceKey:
             raise ValueError("repository key cannot be empty")
 
 
-def fact_id(service: ServiceKey, kind: str, *identity: str | bool | None) -> str:
+def fact_id(service: ServiceKey, kind: str, *identity: str | int | bool | None) -> str:
     fields = [service.repository, service.value, kind, *identity]
     encoded = json.dumps(fields, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return kind + ":" + hashlib.sha256(encoded).hexdigest()
@@ -66,6 +66,14 @@ class PersistenceResourceKey:
 
 
 @dataclass(frozen=True)
+class CloudResourceKey:
+    service: ServiceKey
+    provider: str
+    resource_type: str
+    target_name: str | None
+
+
+@dataclass(frozen=True)
 class SourceReference:
     file_path: str
     start_line: int
@@ -83,7 +91,7 @@ class FactStatus(str, Enum):
 class CanonicalFact:
     id: str
     kind: str
-    subject: EntrypointKey | SymbolKey | RoutePatternKey | MessageChannelKey | PersistenceResourceKey
+    subject: EntrypointKey | SymbolKey | RoutePatternKey | MessageChannelKey | PersistenceResourceKey | CloudResourceKey
     attributes: dict
     status: FactStatus
     origin: str

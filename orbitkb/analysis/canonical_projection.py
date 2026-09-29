@@ -7,6 +7,7 @@ from orbitkb.analysis.models import AnalysisResult, Evidence
 from orbitkb.domain.canonical import (
     CanonicalFact,
     CanonicalSnapshot,
+    CloudResourceKey,
     EntrypointKey,
     FactStatus,
     MessageChannelKey,
@@ -155,5 +156,52 @@ def project_analysis(service: ServiceKey, analysis: AnalysisResult) -> Canonical
             attributes={"operation": migration.operation, "column_name": migration.column_name,
                         "destructive": migration.destructive},
             status=FactStatus.CONFIRMED, origin="static", sources=(_source(migration.evidence),),
+        ))
+    for handler in analysis.grpc_handlers:
+        _add_fact(facts, CanonicalFact(
+            id=fact_id(service, "grpc_handler", handler.service, handler.rpc, handler.symbol),
+            kind="grpc_handler", subject=SymbolKey(service, handler.symbol),
+            attributes={"grpc_service": handler.service, "rpc": handler.rpc},
+            status=FactStatus.CONFIRMED, origin="static", sources=(_source(handler.evidence),),
+        ))
+    for binding in analysis.grpc_client_bindings:
+        _add_fact(facts, CanonicalFact(
+            id=fact_id(service, "grpc_client_binding", binding.owner, binding.member, binding.service),
+            kind="grpc_client_binding", subject=SymbolKey(service, binding.owner),
+            attributes={"member": binding.member, "grpc_service": binding.service},
+            status=FactStatus.CONFIRMED, origin="static", sources=(_source(binding.evidence),),
+        ))
+    for policy in analysis.resilience_policies:
+        _add_fact(facts, CanonicalFact(
+            id=fact_id(service, "resilience_policy", policy.source, policy.kind, policy.mechanism,
+                       policy.value, policy.unit),
+            kind="resilience_policy", subject=SymbolKey(service, policy.source),
+            attributes={"policy_kind": policy.kind, "mechanism": policy.mechanism,
+                        "value": policy.value, "unit": policy.unit},
+            status=FactStatus.CONFIRMED, origin="static", sources=(_source(policy.evidence),),
+        ))
+    for flag in analysis.feature_flags:
+        _add_fact(facts, CanonicalFact(
+            id=fact_id(service, "feature_flag", flag.source, flag.key, flag.provider),
+            kind="feature_flag", subject=SymbolKey(service, flag.source),
+            attributes={"key": flag.key, "provider": flag.provider},
+            status=FactStatus.CONFIRMED, origin="static", sources=(_source(flag.evidence),),
+        ))
+    for cloud in analysis.cloud_facts:
+        _add_fact(facts, CanonicalFact(
+            id=fact_id(service, "cloud_operation", cloud.provider, cloud.resource_type, cloud.service_name,
+                       cloud.operation, cloud.operation_kind, cloud.sdk, cloud.target_name),
+            kind="cloud_operation",
+            subject=CloudResourceKey(service, cloud.provider, cloud.resource_type, cloud.target_name),
+            attributes={"service_name": cloud.service_name, "operation": cloud.operation,
+                        "operation_kind": cloud.operation_kind, "sdk": cloud.sdk},
+            status=FactStatus.CONFIRMED, origin="static", sources=(_source(cloud.evidence),),
+        ))
+    for header in analysis.api_headers:
+        _add_fact(facts, CanonicalFact(
+            id=fact_id(service, "api_header", header.method, header.path, header.direction, header.name),
+            kind="api_header", subject=RoutePatternKey(service, header.method, header.path),
+            attributes={"direction": header.direction, "name": header.name},
+            status=FactStatus.CONFIRMED, origin="static", sources=(_source(header.evidence),),
         ))
     return CanonicalSnapshot(service, tuple(facts.values()))
