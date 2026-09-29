@@ -592,6 +592,13 @@ compares this candidate with the LLM result in shadow mode. Route details report
 the names of differing fields, without storing the candidate text. This is an
 exact field comparison, not a measure of semantic quality. LLM generation and
 its persisted result remain unchanged, so call counts do not fall yet.
+Run `PYTHONPATH=. .venv/bin/python scripts/report_shadow_eligibility.py` to
+measure eligibility on the repository-owned synthetic corpus with the free mock
+backend. The report contains counts by stack, renderer status and differing
+field name. In the current corpus, 1 of 20 regenerated routes is eligible;
+the 46 reported `llm_calls` are mock generation slots, not paid requests.
+`quality_evaluated: false` is intentional: a difference from canned mock text
+does not establish a quality regression or approve zero-call generation.
 Use `orbitkb index <path> --sufficiency-details` or
 `orbitkb update <service> --sufficiency-details` to print one JSON line per
 regenerated route with each dimension's status, reason and evidence IDs. An
