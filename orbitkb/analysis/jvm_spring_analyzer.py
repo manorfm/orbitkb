@@ -23,8 +23,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from orbitkb.analysis import engine
-from orbitkb.analysis.cloud_detection import cloud_edge_kind_and_fact, jvm_client_declarations
-from orbitkb.analysis.jvm_security_analyzer import method_security_requirement
+from orbitkb.analysis.cloud_detection import (
+    cloud_edge_kind_and_fact,
+    jvm_client_declarations,
+)
 from orbitkb.analysis.jvm_scanner import (
     FunctionMatch,
     find_calls,
@@ -34,6 +36,7 @@ from orbitkb.analysis.jvm_scanner import (
     mask_ranges,
     split_top_level,
 )
+from orbitkb.analysis.jvm_security_analyzer import method_security_requirement
 from orbitkb.analysis.models import (
     AnalysisResult,
     ApiHeader,
@@ -47,6 +50,7 @@ from orbitkb.analysis.models import (
 )
 
 _REQUEST_HEADER_RE = re.compile(r'@RequestHeader\s*\(\s*(?:(?:name|value)\s*=\s*)?"(?P<name>[^"]+)"')
+_HANDLER_MAPPING_RE = re.compile(r"@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\b")
 _RESPONSE_HEADER_CALL_RE = re.compile(r'\.header\s*\(\s*"(?P<name>[^"]+)"')
 # `ResponseEntity.BodyBuilder`'s own named header setters -- a fixed, well-known
 # Spring API surface, not a guess: calling `.eTag(...)` always sets the `ETag`
@@ -253,6 +257,26 @@ def _jvm_edges_for_text(symbol: str, function_match: FunctionMatch, path: Path, 
     return edges
 
 
+def _spring_handler_route(modifiers: str, prefix: str | None) -> tuple[str, str] | None:
+    mapping = _HANDLER_MAPPING_RE.search(modifiers)
+    if mapping is None:
+        return None
+    after = mapping.end()
+    while after < len(modifiers) and modifiers[after].isspace():
+        after += 1
+    path = ""
+    if after < len(modifiers) and modifiers[after] == "(":
+        closing = find_matching_paren(modifiers, after)
+        if closing < 0:
+            return None
+        arguments = modifiers[after + 1 : closing]
+        literal = re.search(r'(?:^|,)\s*(?:(?:value|path)\s*=\s*)?"([^"]*)"', arguments)
+        if literal:
+            path = literal.group(1)
+    method = engine.SPRING_ROUTE_ANNOTATION_TO_METHOD[mapping.group(1)]
+    return method, engine._join_route(prefix, path) or "/"
+
+
 def _boundaries_for_text(symbol: str, text: str, evidence: Evidence) -> list[FlowBoundary]:
     patterns = {
         "branch": r"\bif\b|\bwhen\b",
@@ -335,10 +359,8 @@ class _KotlinSpringAnalyzer:
                 result.error_contracts.extend(engine._spring_error_contracts(
                     symbol, function_match.text, modifier_text, evidence, kotlin=True,
                 ))
-                match = re.search(r"@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\s*\(\s*\"([^\"]+)\"", modifier_text)
-                if match:
-                    http_method = engine.SPRING_ROUTE_ANNOTATION_TO_METHOD[match.group(1)]
-                    route = engine._join_route(route_prefix, match.group(2))
+                if handler_route := _spring_handler_route(modifier_text, route_prefix):
+                    http_method, route = handler_route
                     result.entrypoints.append(EntryPoint("http", http_method, route, symbol, evidence))
                     result.contracts[symbol] = engine._spring_http_contract(function_match.text, modifier_text, kotlin=True)
                     result.api_headers.extend(_endpoint_headers(http_method, route, function_match, evidence))
@@ -427,10 +449,8 @@ class _JavaSpringAnalyzer:
                 result.error_contracts.extend(engine._spring_error_contracts(
                     symbol, function_match.text, modifier_text, evidence, kotlin=False,
                 ))
-                match = re.search(r"@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\s*\(\s*\"([^\"]+)\"", modifier_text)
-                if match:
-                    http_method = engine.SPRING_ROUTE_ANNOTATION_TO_METHOD[match.group(1)]
-                    route = engine._join_route(route_prefix, match.group(2))
+                if handler_route := _spring_handler_route(modifier_text, route_prefix):
+                    http_method, route = handler_route
                     result.entrypoints.append(EntryPoint("http", http_method, route, symbol, evidence))
                     result.contracts[symbol] = engine._spring_http_contract(function_match.text, modifier_text)
                     result.api_headers.extend(_endpoint_headers(http_method, route, function_match, evidence))

@@ -209,6 +209,7 @@ The supported deterministic subset is intentionally focused:
 | Runtime evidence | Normalized OTel or broker edges | Experimental; payloads, trace IDs and attributes are rejected. |
 
 Kotlin/Spring flow tracing follows a uniquely resolved interface implementation through constructor injection, including controller → use case → gateway → Feign paths.
+Spring route extraction includes multiline class `@RequestMapping` prefixes and handler mappings without a path argument, such as `@GetMapping` and `@GetMapping()`.
 
 An optional external depth provider can enrich a selected flow when native resolution
 is insufficient. It is bounded by timeout, edge budget, validation, cache and a local
