@@ -487,6 +487,9 @@ analysis bypasses or withholds snapshot reuse, preserving correctness over speed
 For Spring indexing, class-level `@RequestMapping` declarations are not separate
 endpoint generation units; handler mappings create those units with the class path
 prefix included.
+Repeated hints for the same method and full path produce one API generation, with
+evidence from every matching source retained. Different methods on the same path
+remain separate APIs.
 Index results report `llm_calls` as successfully generated units and
 `llm_invocations` as actual backend attempts, including retries and failed units.
 Older runs show `null` for invocations because that count was not recorded.

@@ -3,6 +3,7 @@ schema validation -> SQLite writes -> incremental hash-based skip) against the
 project's own verify/sample_project fixture, faking only the LLM call itself so the
 suite stays deterministic and never shells out to a real `claude`/`codex` CLI.
 """
+import json
 import logging
 import shutil
 from pathlib import Path
@@ -232,6 +233,62 @@ def test_reindexing_unchanged_files_skips_generation(tmp_path: Path):
     assert all(r.llm_calls == 0 for r in results)
     assert all(r.llm_invocations == 0 for r in results)
     assert calls_after_first_run > 0  # sanity: the first run did do real work
+
+
+def test_duplicate_route_hint_generates_once_but_distinct_methods_share_path(tmp_path: Path):
+    root = tmp_path / "menus-service"
+    root.mkdir()
+    (root / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
+    (root / "main.py").write_text(
+        'from fastapi import FastAPI\napp = FastAPI()\n'
+        '@app.get("/menus")\n@app.get("/menus")\n'
+        'def list_menus():\n    return []\n'
+        '@app.post("/menus")\n'
+        'def create_menu():\n    return {}\n',
+        encoding="utf-8",
+    )
+    detector = detector_for(root)
+    assert detector is not None
+    assert len(detector.collect_hints(root).endpoints) == 3
+    conn = open_db(tmp_path / "routes.db")
+    backend = RecordingOrchestratorBackend()
+
+    result = index_service(conn, "menus-service", root, detector, backend)
+
+    assert result.status == "ok"
+    assert len(backend.prompts_by_kind["api_detail"]) == 2
+    assert backend.prompts_by_kind["component"][0].count("- GET /menus:") == 1
+    assert {(row["method"], row["path"]) for row in apis_repo.list_apis(conn, result.service_id)} == {
+        ("GET", "/menus"), ("POST", "/menus"),
+    }
+    run = index_runs_repo.recent_index_runs(conn, result.service_id, limit=1)[0]
+    endpoint_usage = next(row for row in index_runs_repo.list_unit_usage(conn, run["id"]) if row["unit_kind"] == "endpoint")
+    assert endpoint_usage["generated_units"] == endpoint_usage["llm_invocations"] == 2
+    get_api = apis_repo.get_api_by_key(conn, result.service_id, "GET", "/menus")
+    assert len(json.loads(get_api["evidence_json"])) == 1
+
+
+def test_same_route_in_two_files_retains_both_sources_in_one_generation(tmp_path: Path):
+    root = tmp_path / "shared-route-service"
+    root.mkdir()
+    (root / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
+    (root / "main.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
+    for filename, handler in (("first.py", "first"), ("second.py", "second")):
+        (root / filename).write_text(
+            f'from main import app\n@app.get("/shared")\ndef {handler}():\n    return "{handler}"\n',
+            encoding="utf-8",
+        )
+    conn = open_db(tmp_path / "shared.db")
+    backend = RecordingOrchestratorBackend()
+
+    result = index_service(conn, root.name, root, detector_for(root), backend)
+
+    assert len(backend.prompts_by_kind["api_detail"]) == 1
+    assert len(backend.prompts_by_kind["component"]) == 2
+    prompt = backend.prompts_by_kind["api_detail"][0]
+    assert "first.py" in prompt and "second.py" in prompt
+    api = apis_repo.get_api_by_key(conn, result.service_id, "GET", "/shared")
+    assert {item["file"] for item in json.loads(api["evidence_json"])} == {"first.py", "second.py"}
 
 
 def test_reindexing_unchanged_static_inputs_skips_ast_analysis(tmp_path: Path, monkeypatch):

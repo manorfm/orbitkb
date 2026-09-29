@@ -183,6 +183,23 @@ def _group_endpoints_by_component(endpoints: list[EndpointHint]) -> dict[str, li
     return groups
 
 
+def _unique_endpoint_routes(endpoints: list[EndpointHint]) -> list[EndpointHint]:
+    """One generation per API key, retaining evidence from repeated route hints."""
+    by_route: dict[tuple[str, str], EndpointHint] = {}
+    for endpoint in endpoints:
+        key = (endpoint.method, endpoint.path)
+        if key not in by_route:
+            by_route[key] = replace(endpoint, extra_excerpts=list(endpoint.extra_excerpts))
+            continue
+        current = by_route[key]
+        seen = {current.excerpt, *current.extra_excerpts}
+        for excerpt in (endpoint.excerpt, *endpoint.extra_excerpts):
+            if excerpt not in seen:
+                current.extra_excerpts.append(excerpt)
+                seen.add(excerpt)
+    return list(by_route.values())
+
+
 def _render_api_detail_prompt(name: str, stack: str, endpoint: EndpointHint, hints: ServiceHints) -> str:
     excerpts = [endpoint.excerpt, *endpoint.extra_excerpts]
     code = _join_excerpts(excerpts)
@@ -380,10 +397,13 @@ class ComponentGenerator:
                 continue
             ctx.progress.unit_started(ctx.name, label)
             summary_lines = []
+            summarized_routes: set[tuple[str, str]] = set()
             for endpoint in group:
-                api_row = current_apis_by_key.get((endpoint.method, endpoint.path))
-                if api_row is not None:
+                route_key = (endpoint.method, endpoint.path)
+                api_row = current_apis_by_key.get(route_key)
+                if api_row is not None and route_key not in summarized_routes:
                     summary_lines.append(f"- {endpoint.method} {endpoint.path}: {api_row['summary']}")
+                    summarized_routes.add(route_key)
             endpoint_summaries = "\n".join(summary_lines) or "(no endpoint summaries available yet)"
             prompt = _render_component_prompt(ctx.name, component_name, component_file, endpoint_summaries)
             generation = generate_with_retry(
@@ -574,6 +594,7 @@ def _index_service_unlocked(
     logger.debug("collecting hints: %s (stack=%s) at %s", name, detector.id, root)
     hints = detector.collect_hints(root)
     component_groups = _group_endpoints_by_component(hints.endpoints)
+    hints.endpoints = _unique_endpoint_routes(hints.endpoints)
     total_units = (
         1 + len(hints.endpoints) + len(component_groups)
         + (1 if hints.persistence else 0) + (1 if hints.messaging else 0)
