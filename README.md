@@ -492,8 +492,9 @@ feature flags, cloud operations and HTTP header names from `AnalysisResult` into
 language-neutral facts with stable IDs and source locations.
 It keeps the known origin and confidence, and marks custom authorization logic
 as unknown rather than interpreting its behavior.
-This projection is currently internal; indexing and exports still use the existing
-SQLite representation.
+Indexing stores this snapshot in SQLite when static analysis runs, and reuses it
+when inputs are unchanged. A missing snapshot triggers static reanalysis without
+additional LLM calls. Exports still use their current read paths.
 For Spring indexing, class-level `@RequestMapping` declarations are not separate
 endpoint generation units; handler mappings create those units with the class path
 prefix included.

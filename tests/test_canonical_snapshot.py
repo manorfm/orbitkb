@@ -185,11 +185,11 @@ def test_configuration_security_and_error_projection_preserves_meaning_and_sourc
     assert [source.file_path for source in config.sources] == ["Client.kt", "Config.kt"]
     assert (symbol_rule.kind, symbol_rule.subject, symbol_rule.attributes) == (
         "security_requirement", SymbolKey(ServiceKey("menu-manager"), "MenuController.list"),
-        {"requirement": "hasRole", "roles": ("ADMIN",)},
+        {"requirement": "hasRole", "roles": ["ADMIN"]},
     )
     assert (route_rule.subject, route_rule.status, route_rule.attributes) == (
         RoutePatternKey(ServiceKey("menu-manager"), None, "**"), FactStatus.UNKNOWN,
-        {"requirement": "custom:MenuPolicy", "roles": ()},
+        {"requirement": "custom:MenuPolicy", "roles": []},
     )
     assert (error.kind, error.subject, error.status, error.attributes) == (
         "error_contract", SymbolKey(ServiceKey("menu-manager"), "MenuController.list"), FactStatus.CONFIRMED,
@@ -280,8 +280,8 @@ def test_flow_structure_projection_keeps_declarations_and_unresolved_boundaries_
     symbol, injection, boundary = snapshot.facts
     assert (symbol.kind, symbol.subject, symbol.attributes) == (
         "symbol", SymbolKey(ServiceKey("menu-manager"), "MenuController.list"),
-        {"owner": "MenuController", "member": "list", "implements": ("MenuApi",),
-         "imports": (("MenuService", "app.MenuService"),), "qualifiers": ("primary",), "primary": True},
+        {"owner": "MenuController", "member": "list", "implements": ["MenuApi"],
+         "imports": [["MenuService", "app.MenuService"]], "qualifiers": ["primary"], "primary": True},
     )
     assert len(symbol.sources) == 2
     assert (injection.kind, injection.subject, injection.attributes) == (

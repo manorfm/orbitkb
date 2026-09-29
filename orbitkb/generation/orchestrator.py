@@ -7,9 +7,11 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
+from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.depth import DepthProvider, NoopDepthProvider
 from orbitkb.analysis.engine import STATIC_ANALYSIS_INPUT_VERSION, StaticAnalysisEngine
 from orbitkb.ci.scanner import scan_github_actions_commands
+from orbitkb.db.repositories import canonical_snapshots as canonical_snapshots_repo
 from orbitkb.db.repositories import ci_commands as ci_commands_repo
 from orbitkb.db.repositories import cloud_iac as cloud_iac_repo
 from orbitkb.db.repositories import embeddings as embeddings_repo
@@ -642,12 +644,17 @@ def _index_service_unlocked(
         cacheable_static_analysis and not force and static_digest is not None and snapshot is not None
         and snapshot["input_digest"] == static_digest
         and snapshot["analysis_version"] == STATIC_ANALYSIS_INPUT_VERSION
+        and canonical_snapshots_repo.has_snapshot(conn, service_id)
     )
     if not static_analysis_is_current:
         if not cacheable_static_analysis:
             static_analysis_repo.delete_snapshot(conn, service_id)
         analysis = static_engine.analyze(root, detector.id)
         flows_repo.replace_analysis(conn, service_id, analysis)
+        canonical_snapshots_repo.replace_snapshot(
+            conn, service_id,
+            project_analysis(canonical_snapshots_repo.service_key(conn, service_id), analysis),
+        )
         if cacheable_static_analysis and static_digest is not None and static_engine.input_digest(root, detector.id) == static_digest:
             static_analysis_repo.replace_snapshot(
                 conn, service_id, static_digest, STATIC_ANALYSIS_INPUT_VERSION,

@@ -87,6 +87,18 @@ class FactStatus(str, Enum):
     UNSUPPORTED = "unsupported"
 
 
+def _json_value(value):
+    if isinstance(value, dict):
+        if not all(isinstance(key, str) for key in value):
+            raise ValueError("canonical attribute keys must be strings")
+        return {key: _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise ValueError(f"unsupported canonical attribute: {type(value).__name__}")
+
+
 @dataclass(frozen=True)
 class CanonicalFact:
     id: str
@@ -96,6 +108,9 @@ class CanonicalFact:
     status: FactStatus
     origin: str
     sources: tuple[SourceReference, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "attributes", _json_value(self.attributes))
 
 
 @dataclass(frozen=True)

@@ -12,6 +12,7 @@ import pytest
 
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import apis as apis_repo
+from orbitkb.db.repositories import canonical_snapshots as canonical_snapshots_repo
 from orbitkb.db.repositories import ci_commands as ci_commands_repo
 from orbitkb.db.repositories import components as components_repo
 from orbitkb.db.repositories import embeddings as embeddings_repo
@@ -693,6 +694,44 @@ def test_reindexing_unchanged_static_inputs_skips_ast_analysis(tmp_path: Path, m
 
     assert first_run_count > 0
     assert len(analyzed) == first_run_count
+
+
+def test_missing_canonical_snapshot_is_rebuilt_without_new_llm_calls(tmp_path: Path, monkeypatch):
+    conn = open_db(tmp_path / "canonical-index.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    first = index_service(conn, orders.name, orders.path, orders.detector, FakeOrchestratorBackend())
+    stored = canonical_snapshots_repo.read_snapshot(conn, first.service_id)
+    assert stored is not None and stored.facts
+    assert stored.service == canonical_snapshots_repo.service_key(conn, first.service_id)
+
+    conn.execute("DELETE FROM canonical_snapshots WHERE service_id = ?", (first.service_id,))
+    original_analyze = orchestrator.StaticAnalysisEngine.analyze
+    analyzed: list[Path] = []
+
+    def record_analyze(self, root: Path, stack: str):
+        analyzed.append(root)
+        return original_analyze(self, root, stack)
+
+    monkeypatch.setattr(orchestrator.StaticAnalysisEngine, "analyze", record_analyze)
+    backend = FakeOrchestratorBackend()
+    second = index_service(conn, orders.name, orders.path, orders.detector, backend)
+
+    assert second.status == "ok" and second.llm_invocations == backend.calls == 0
+    assert analyzed == [orders.path]
+    assert canonical_snapshots_repo.read_snapshot(conn, first.service_id) == stored
+
+
+def test_repository_rename_refreshes_canonical_identity_without_new_llm_calls(tmp_path: Path):
+    conn = open_db(tmp_path / "renamed-canonical.db")
+    first = index_path(conn, SAMPLE_ROOT, FakeOrchestratorBackend(), repository_name="shop")
+    service_id = next(result.service_id for result in first if result.service_name == "orders-service")
+
+    backend = FakeOrchestratorBackend()
+    renamed = index_path(conn, SAMPLE_ROOT, backend, repository_name="dining")
+
+    assert next(result.service_id for result in renamed if result.service_name == "orders-service") == service_id
+    assert sum(result.llm_invocations for result in renamed) == backend.calls == 0
+    assert canonical_snapshots_repo.read_snapshot(conn, service_id).service.repository == "dining"
 
 
 def test_reindexing_changed_static_inputs_reanalyzes_only_the_affected_service(tmp_path: Path, monkeypatch):

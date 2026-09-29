@@ -738,6 +738,16 @@ CREATE TABLE IF NOT EXISTS static_analysis_snapshots (
     updated_at       TEXT NOT NULL
 );
 
+-- Canonical static facts for one completed analysis, including an empty snapshot.
+-- Source references and derived metadata are stored without source code content.
+CREATE TABLE IF NOT EXISTS canonical_snapshots (
+    service_id       INTEGER PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
+    service_name     TEXT NOT NULL,
+    repository_name  TEXT,
+    payload_json     TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+
 -- Privacy-safe calibration data for get_change_context. These rows deliberately
 -- contain no task/prompt text, source/code excerpts or generated card text: only
 -- response measurements, service IDs and bounded tool metadata.
