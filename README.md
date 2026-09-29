@@ -512,6 +512,9 @@ and carries navigation boundaries and truncation forward without calling a model
 An evidence reducer combines multiple routes, sends a shared fact once, keeps each
 route's path to that fact, and reports estimated characters and every fact omitted
 by its budget. A limited source flow or budget omission marks the capsule truncated.
+Endpoint generation now adds compact, route-reachable HTTP call evidence from the
+canonical snapshot to its existing source excerpts and outbound hints. It labels
+limited navigation or omitted calls instead of treating missing evidence as no call.
 `describe_entrypoint.boundaries` also reports unresolved local symbols, cycles
 and traversal limits alongside known static boundaries, with source locations
 when the bounded edge is included.

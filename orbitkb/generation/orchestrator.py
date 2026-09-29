@@ -57,6 +57,7 @@ from orbitkb.generation.knowledge import (
 from orbitkb.generation.legacy_knowledge import LegacyKnowledgeAdapter
 from orbitkb.generation.llm_harness import generate_with_retry, load_prompt, load_schema
 from orbitkb.generation.policy import GenerationPolicy
+from orbitkb.generation.route_evidence import route_outbound_hints
 from orbitkb.generation.unit import IndexUnit
 from orbitkb.iac.scanner import scan_repository_facts
 from orbitkb.security.findings import find_security_findings
@@ -192,6 +193,7 @@ def _unique_endpoint_routes(endpoints: list[EndpointHint]) -> list[EndpointHint]
 def _render_api_detail_prompt(
     name: str, stack: str, endpoint: EndpointHint, hints: ServiceHints,
     evidence_source: EvidenceSource | None = None,
+    outbound_evidence: str | None = None,
 ) -> str:
     source = evidence_source or EvidenceSource.from_excerpts(
         [endpoint.excerpt, *endpoint.extra_excerpts], MAX_EXCERPT_CHARS,
@@ -199,10 +201,13 @@ def _render_api_detail_prompt(
     code = source.prompt_text
     dep_files = endpoint.dependency_files()
     own_calls = [c for c in hints.outbound_calls if c.excerpt.file_path in dep_files]
-    outbound = "\n".join(
+    legacy_outbound = "\n".join(
         f"- [{c.call_kind}] {c.target_hint} ({c.excerpt.file_path}:{c.excerpt.start_line})"
         for c in own_calls[:30]
     ) or "(none found)"
+    outbound = legacy_outbound
+    if outbound_evidence:
+        outbound = outbound_evidence if legacy_outbound == "(none found)" else f"{legacy_outbound}\n{outbound_evidence}"
     return load_prompt("api_detail").substitute(
         service_name=name,
         stack=stack,
@@ -336,6 +341,7 @@ class EndpointGenerator:
 
     def run(self, ctx: IndexContext) -> UnitOutcome:
         outcome = UnitOutcome()
+        snapshot = canonical_snapshots_repo.read_snapshot(ctx.conn, ctx.service_id)
         existing_keys = ctx.knowledge_reader.endpoint_keys(ctx.service_id)
         keep_api_keys: set[tuple[str, str]] = set()
         for endpoint in ctx.hints.endpoints:
@@ -353,7 +359,13 @@ class EndpointGenerator:
             source = EvidenceSource.from_excerpts(
                 [endpoint.excerpt, *endpoint.extra_excerpts], MAX_EXCERPT_CHARS,
             )
-            prompt = _render_api_detail_prompt(ctx.name, ctx.detector.id, endpoint, ctx.hints, source)
+            outbound_evidence = (
+                route_outbound_hints(snapshot, endpoint.method, endpoint.path) if snapshot else None
+            )
+            prompt = _render_api_detail_prompt(
+                ctx.name, ctx.detector.id, endpoint, ctx.hints, source,
+                outbound_evidence=outbound_evidence,
+            )
             generation = generate_with_retry(
                 ctx.backend, prompt, load_schema("api_detail"), ctx.root, ctx.failures_root,
                 f"{ctx.name}-{endpoint.method}-{endpoint.path}",

@@ -11,8 +11,8 @@ rather than guessing.
 Handler code (and any directly-called helper in the same or an imported file):
 $code_excerpts
 
-Outbound-call hints found elsewhere in this service (may or may not relate to this
-specific endpoint — use judgment based on the handler code above):
+Outbound-call hints (route-reachable calls are marked; other hints may or may not
+relate to this endpoint — use judgment based on the handler code above):
 $outbound_call_hints
 
 Return:
