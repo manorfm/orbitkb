@@ -418,7 +418,8 @@ make readiness-audit
 ```
 
 The frozen indexing baseline checks public MCP query fields and Markdown/Mermaid
-exports using synthetic Python, Node/JavaScript, Java/Spring, Kotlin/Spring and Go fixtures.
+exports using synthetic Python, JavaScript, TypeScript, Java/Spring,
+Kotlin/Spring and Go fixtures.
 It also checks a seeded HTTP, vendor and messaging graph. It uses the mock backend
 and makes no paid LLM calls:
 

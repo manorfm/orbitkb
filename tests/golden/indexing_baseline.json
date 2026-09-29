@@ -7,6 +7,9 @@
     "inventory-service/apis/post-internal-stock-sku-adjust.md": "da399b35f22cf179d60fdd05368bfc1b2c540b702a14a7d400475c34c0897046",
     "inventory-service/apis/post-stock-sku-reserve.md": "6562be5c47fe4e9b9e9439c73b87e241827b2732c7b89ce3ab2cc4d23018a351",
     "inventory-service/index.md": "db3c5cf2f69c5ba8c362d3be77980bba1042ca4d4405c20f8c8b91b256c31d47",
+    "inventory-typescript-service/apis/get-items-id.md": "9c03e60bba575c469efb32df11d3b508f9020759eff41e7a4b51d46f798c7957",
+    "inventory-typescript-service/apis/post-items.md": "5caff2a58c17698de0100369b2dc0bc255bd8ded70f3139525cbf64a8c470995",
+    "inventory-typescript-service/index.md": "6b04fb9be387d50ffaba3a53733517b35ed3aef508ea8b4b46fad3a74e5ccdeb",
     "menu-kotlin-service/apis/get-menus-id.md": "bcaa45744ced1d0953d9aad21f4bf6f62a685cb6f859438fbab7a6ce98e069ef",
     "menu-kotlin-service/apis/post-menus.md": "dc5dbdf6b56189fa081f4ac210a1c7de2197db2ae915a93caa3439207c0077ae",
     "menu-kotlin-service/index.md": "b71e7c5e5f61301fc5da24ba530d213458494c8800cd42746ab85c008d3acc1d",
@@ -19,7 +22,7 @@
     "payments-service/apis/post-charge.md": "27055073f3457af04faa97a53022a45f93e7f59ac703aa44a6d6d7c1f05d87e1",
     "payments-service/apis/post-payments-id-refund.md": "ab939579774c7c85689deeeaaec5f9536918bde9eb1a6b127ab14c44b12c72eb",
     "payments-service/index.md": "cef40365a90fd40ca9d63273a09fedf3a5954b89f4283e8c21a4f4b8b4e2fc53",
-    "topology.mmd": "a11537f1c8eb3b35cb123e55d724b5b62e7452d79a0bb75a7015ed3ffb25c6ce"
+    "topology.mmd": "9f0ffb8fdeccd6d62ffa6cce8d74a4464d19b6c6867d50fe373be08d1b5c3577"
   },
   "integration_fixture": {
     "exports": {
@@ -67,6 +70,12 @@
       "llm_calls": 8,
       "llm_invocations": 8,
       "service": "inventory-service",
+      "status": "ok"
+    },
+    {
+      "llm_calls": 4,
+      "llm_invocations": 4,
+      "service": "inventory-typescript-service",
       "status": "ok"
     },
     {
@@ -156,6 +165,35 @@
       "persists": [],
       "short_desc": "Mock short description.",
       "stack": "jvm-spring"
+    },
+    {
+      "api_count": 2,
+      "apis": [
+        {
+          "method": "POST",
+          "path": "/items",
+          "summary": "Mock summary."
+        },
+        {
+          "method": "GET",
+          "path": "/items/:id",
+          "summary": "Mock summary."
+        }
+      ],
+      "calls": [],
+      "components": [
+        {
+          "name": "main",
+          "summary": "Mock component summary."
+        }
+      ],
+      "long_desc": "Mock long description.",
+      "mermaid": "graph TD\n  svc_inventory_typescript_service[\"inventory-typescript-service\"]",
+      "messages": [],
+      "name": "inventory-typescript-service",
+      "persists": [],
+      "short_desc": "Mock short description.",
+      "stack": "node-ts"
     },
     {
       "api_count": 2,
