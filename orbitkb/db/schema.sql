@@ -825,6 +825,7 @@ CREATE TABLE IF NOT EXISTS index_run_unit_usage (
     input_tokens    INTEGER,
     output_tokens   INTEGER,
     cost_usd        REAL,
+    backend_duration_ms REAL CHECK (backend_duration_ms >= 0),
     PRIMARY KEY (run_id, unit_kind)
 );
 

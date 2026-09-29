@@ -46,6 +46,7 @@ def generate_with_retry(
     backend: LLMBackend, prompt: str, schema: dict, cwd: Path, failures_dir: Path, label: str,
     on_attempt: Callable[[], None] | None = None,
     on_usage: Callable[[LLMUsage], None] | None = None,
+    on_duration_ms: Callable[[float], None] | None = None,
 ) -> GenerationOutcome | None:
     last_error: Exception | None = None
     safe_prompt = redact_sensitive_values(prompt)
@@ -55,7 +56,12 @@ def generate_with_retry(
         try:
             if on_attempt is not None:
                 on_attempt()
-            outcome = backend.generate(current_prompt, schema, cwd)
+            started_at = time.perf_counter()
+            try:
+                outcome = backend.generate(current_prompt, schema, cwd)
+            finally:
+                if on_duration_ms is not None:
+                    on_duration_ms((time.perf_counter() - started_at) * 1000)
             total_usage = total_usage + outcome.usage  # a retried call is still a billed call
             if on_usage is not None:
                 on_usage(outcome.usage)

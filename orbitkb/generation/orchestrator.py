@@ -260,9 +260,13 @@ class UnitOutcome:
     had_failure: bool = False
     failed_files: set[str] = field(default_factory=set)
     usage: LLMUsage = field(default_factory=LLMUsage)
+    backend_duration_ms: float = 0.0
 
     def record_usage(self, usage: LLMUsage) -> None:
         self.usage = self.usage + usage
+
+    def record_duration(self, duration_ms: float) -> None:
+        self.backend_duration_ms += duration_ms
 
 
 @dataclass
@@ -327,6 +331,7 @@ class EndpointGenerator:
                 f"{ctx.name}-{endpoint.method}-{endpoint.path}",
                 on_attempt=ctx.record_llm_invocation,
                 on_usage=outcome.record_usage,
+                on_duration_ms=outcome.record_duration,
             )
             if not generation:
                 outcome.had_failure = True
@@ -386,6 +391,7 @@ class ComponentGenerator:
                 f"{ctx.name}-component-{component_name}",
                 on_attempt=ctx.record_llm_invocation,
                 on_usage=outcome.record_usage,
+                on_duration_ms=outcome.record_duration,
             )
             if not generation:
                 outcome.had_failure = True
@@ -428,6 +434,7 @@ class PersistenceGenerator:
             ctx.backend, prompt, load_schema("persistence"), ctx.root, ctx.failures_root, f"{ctx.name}-persistence",
             on_attempt=ctx.record_llm_invocation,
             on_usage=outcome.record_usage,
+            on_duration_ms=outcome.record_duration,
         )
         if generation:
             result = generation.structured
@@ -467,6 +474,7 @@ class MessagingGenerator:
             ctx.backend, prompt, load_schema("messaging"), ctx.root, ctx.failures_root, f"{ctx.name}-messaging",
             on_attempt=ctx.record_llm_invocation,
             on_usage=outcome.record_usage,
+            on_duration_ms=outcome.record_duration,
         )
         if generation:
             result = generation.structured
@@ -516,6 +524,7 @@ class OverviewGenerator:
             ctx.backend, prompt, load_schema("service_overview"), ctx.root, ctx.failures_root, f"{ctx.name}-overview",
             on_attempt=ctx.record_llm_invocation,
             on_usage=outcome.record_usage,
+            on_duration_ms=outcome.record_duration,
         )
         if generation:
             result = generation.structured
@@ -634,6 +643,7 @@ def _index_service_unlocked(
             conn, run_id, generator.kind, outcome.llm_calls,
             ctx.llm_invocations - invocations_before, outcome.had_failure,
             outcome.usage.input_tokens, outcome.usage.output_tokens, outcome.usage.cost_usd,
+            outcome.backend_duration_ms,
         )
         llm_calls += outcome.llm_calls
         had_failure = had_failure or outcome.had_failure

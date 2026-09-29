@@ -42,8 +42,8 @@ def test_unit_usage_is_scoped_to_one_run(tmp_path: Path):
     first = repository.start_index_run(conn, service_id, "claude")
     second = repository.start_index_run(conn, service_id, "claude")
 
-    repository.record_unit_usage(conn, first, "endpoint", 2, 3, False, 100, 20, 0.1)
-    repository.record_unit_usage(conn, second, "endpoint", 0, 0, False, None, None, None)
+    repository.record_unit_usage(conn, first, "endpoint", 2, 3, False, 100, 20, 0.1, 750.0)
+    repository.record_unit_usage(conn, second, "endpoint", 0, 0, False, None, None, None, 0.0)
 
     first_usage = repository.list_unit_usage(conn, first)
     second_usage = repository.list_unit_usage(conn, second)
@@ -53,6 +53,8 @@ def test_unit_usage_is_scoped_to_one_run(tmp_path: Path):
     assert [(row["generated_units"], row["llm_invocations"], row["cost_usd"]) for row in second_usage] == [
         (0, 0, None),
     ]
+    assert first_usage[0]["backend_duration_ms"] == 750.0
+    assert second_usage[0]["backend_duration_ms"] == 0.0
 
 
 def test_usage_totals_sums_across_runs_for_one_service(tmp_path: Path):

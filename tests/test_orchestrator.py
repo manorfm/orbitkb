@@ -435,6 +435,29 @@ def test_invalid_responses_keep_reported_usage_in_unit_metrics(tmp_path: Path):
     assert run["cost_usd"] == pytest.approx(0.04)
 
 
+def test_unit_metrics_include_backend_duration_for_retries_and_skips(tmp_path: Path, monkeypatch):
+    clock = [0.0]
+
+    class TimedBackend(FakeOrchestratorBackend):
+        def generate(self, prompt: str, schema: dict, cwd: Path) -> GenerationOutcome:
+            clock[0] += 0.25
+            return super().generate(prompt, schema, cwd)
+
+    monkeypatch.setattr("orbitkb.generation.llm_harness.time.perf_counter", lambda: clock[0])
+    conn = open_db(tmp_path / "duration.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    result = index_service(
+        conn, orders.name, orders.path, orders.detector, TimedBackend(fail_kind="service_overview"),
+        failures_root=tmp_path / "failures",
+    )
+    run = index_runs_repo.recent_index_runs(conn, result.service_id, limit=1)[0]
+    units = index_runs_repo.list_unit_usage(conn, run["id"])
+
+    assert result.status == "partial"
+    assert sum(unit["backend_duration_ms"] for unit in units) == pytest.approx(250 * result.llm_invocations)
+    assert all(unit["backend_duration_ms"] == pytest.approx(250 * unit["llm_invocations"]) for unit in units)
+
+
 def test_index_path_raises_discovery_error_on_empty_directory(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     empty_dir = tmp_path / "nothing_here"

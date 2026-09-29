@@ -92,14 +92,15 @@ def record_unit_usage(
     conn: sqlite3.Connection, run_id: int, unit_kind: str, generated_units: int,
     llm_invocations: int, had_failure: bool, input_tokens: int | None,
     output_tokens: int | None, cost_usd: float | None,
+    backend_duration_ms: float,
 ) -> None:
     conn.execute(
         """INSERT INTO index_run_unit_usage
            (run_id, unit_kind, generated_units, llm_invocations, had_failure,
-            input_tokens, output_tokens, cost_usd)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            input_tokens, output_tokens, cost_usd, backend_duration_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (run_id, unit_kind, generated_units, llm_invocations, int(had_failure),
-         input_tokens, output_tokens, cost_usd),
+         input_tokens, output_tokens, cost_usd, backend_duration_ms),
     )
     conn.commit()
 

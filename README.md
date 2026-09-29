@@ -490,8 +490,12 @@ Index results report `llm_calls` as successfully generated units and
 `llm_invocations` as actual backend attempts, including retries and failed units.
 Older runs show `null` for invocations because that count was not recorded.
 `orbitkb status <service>` also shows generated units, backend invocations, reported
-tokens and cost by generation kind. These aggregates do not store endpoint names,
-paths, prompts or source code; older runs have no per-kind breakdown.
+tokens and cost by generation kind. `backend_duration_ms` sums wall time spent in
+backend calls for that kind, including failed attempts and retries; it excludes
+discovery, prompt rendering, validation and database work. Older per-kind rows
+show `None` for duration because it was not measured. These aggregates do not
+store endpoint names, paths, prompts or source code; older runs have no per-kind
+breakdown.
 
 Architecture rules have fact-mutation tests for cycles and fan-out (both at
 service level and their intra-service component analog), shared storage,

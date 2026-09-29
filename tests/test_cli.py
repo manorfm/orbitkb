@@ -247,6 +247,7 @@ def test_status_command_for_one_service(tmp_path: Path, capsys):
     assert "cumulative usage:" in out
     assert "endpoint: generated=" in out
     assert "overview: generated=" in out
+    assert "backend_duration_ms=" in out
 
 
 def test_status_command_global(tmp_path: Path, capsys):

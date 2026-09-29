@@ -103,6 +103,21 @@ def test_invocation_observer_counts_failed_backend_attempts(tmp_path: Path):
     assert len(attempts) == backend.calls == 2
 
 
+def test_backend_duration_observer_includes_failed_retry(tmp_path: Path, monkeypatch):
+    backend = ScriptedBackend([GenerationError("first"), GenerationOutcome(structured={"summary": "ok"})])
+    ticks = iter([10.0, 10.25, 11.0, 11.5])
+    monkeypatch.setattr("orbitkb.generation.llm_harness.time.perf_counter", lambda: next(ticks))
+    durations: list[float] = []
+
+    result = generate_with_retry(
+        backend, "prompt", SCHEMA, tmp_path, tmp_path / "failures", "label",
+        on_duration_ms=durations.append,
+    )
+
+    assert result is not None
+    assert durations == [250.0, 500.0]
+
+
 def test_usage_observer_keeps_usage_from_invalid_responses(tmp_path: Path):
     backend = ScriptedBackend([
         GenerationOutcome(structured={"wrong": "shape"}, usage=LLMUsage(input_tokens=10, cost_usd=0.02)),
