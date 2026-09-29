@@ -583,6 +583,10 @@ dimension for its exact matching HTTP route. Missing or blank descriptions
 remain missing; other incomplete dimensions still require generation.
 The same assessment treats a bodyless OpenAPI operation as having a known empty
 request payload. An optional or unresolved body still needs payload evidence.
+If source code declares a body while OpenAPI declares none, the request shape is
+ambiguous. An internal renderer can produce schema-valid API details for a direct
+public GET with an explicit OpenAPI summary and description, a typed response,
+and a complete route flow without calls. It is not wired to skip LLM generation yet.
 Use `orbitkb index <path> --sufficiency-details` or
 `orbitkb update <service> --sufficiency-details` to print one JSON line per
 regenerated route with each dimension's status, reason and evidence IDs. An

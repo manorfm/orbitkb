@@ -27,6 +27,12 @@ def _has_proven_request_shape(contract: dict) -> bool:
     )
 
 
+def _has_conflicting_request_declarations(contract: dict) -> bool:
+    formal = contract.get("formal_contract")
+    return (contract.get("request") is not None and isinstance(formal, dict)
+            and formal.get("format") == "openapi" and formal.get("request_body_present") is False)
+
+
 class SufficiencyStatus(str, Enum):
     ENOUGH = "enough"
     MISSING = "missing"
@@ -95,6 +101,7 @@ class DeterministicSufficiencyEvaluator:
         request_enough = bool(contracts) and len(contracts) == len(entrypoints) and all(
             _has_proven_request_shape(contract) for contract in contracts
         )
+        request_conflict = any(_has_conflicting_request_declarations(contract) for contract in contracts)
         flow_incomplete = capsule.truncated or any(
             boundary.reason in {"unresolved", "depth_limit", "node_limit", "edge_limit"}
             for boundary in capsule.boundaries
@@ -134,9 +141,12 @@ class DeterministicSufficiencyEvaluator:
             ),
             DimensionAssessment(
                 "request_shape",
-                SufficiencyStatus.ENOUGH if request_enough else SufficiencyStatus.MISSING,
+                SufficiencyStatus.AMBIGUOUS if request_conflict else (
+                    SufficiencyStatus.ENOUGH if request_enough else SufficiencyStatus.MISSING
+                ),
                 tuple(fact.id for fact in entrypoints),
-                "request payload fields or explicit absence of a body require evidence",
+                "source declares a request body but OpenAPI declares none" if request_conflict
+                else "request payload fields or explicit absence of a body require evidence",
             ),
             DimensionAssessment(
                 "response_shape",

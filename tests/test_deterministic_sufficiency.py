@@ -21,6 +21,7 @@ from orbitkb.domain.sufficiency import (
 )
 
 CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/menu-kotlin-service"
+STATUS_CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/status-kotlin-service"
 
 
 def _capsule(max_chars=100_000):
@@ -134,40 +135,8 @@ def test_unresolved_flow_cannot_prove_that_no_call_purpose_is_needed():
     assert result.status("integration_purpose") == SufficiencyStatus.AMBIGUOUS
 
 
-def test_simple_local_kotlin_route_has_known_empty_integrations(tmp_path: Path):
-    (tmp_path / "StatusController.kt").write_text(
-        '''data class Status(val value: String)
-@RestController
-class StatusController {
-    @GetMapping("/status")
-    fun get(): Status = Status("ok")
-}
-''', encoding="utf-8",
-    )
-    (tmp_path / "SecurityConfig.kt").write_text(
-        '''class SecurityConfig {
-    fun filterChain(http: HttpSecurity): SecurityFilterChain {
-        http {
-            authorizeHttpRequests {
-                authorize(HttpMethod.GET, "/status", permitAll)
-            }
-        }
-        return http.build()
-    }
-}
-''', encoding="utf-8",
-    )
-    (tmp_path / "openapi.yaml").write_text(
-        '''openapi: 3.0.3
-paths:
-  /status:
-    get:
-      description: Returns the current service status.
-      responses:
-        "200": {}
-''', encoding="utf-8",
-    )
-    snapshot = project_analysis(ServiceKey("status"), StaticAnalysisEngine().analyze(tmp_path, "jvm-spring"))
+def test_simple_local_kotlin_route_has_known_empty_integrations():
+    snapshot = project_analysis(ServiceKey("status"), StaticAnalysisEngine().analyze(STATUS_CORPUS, "jvm-spring"))
     route = next(fact.subject for fact in snapshot.facts if fact.kind == "entrypoint")
     profile = EvidenceProfile(frozenset({"entrypoint", "flow_edge", "service_call", "security_requirement"}))
     evidence = EvidenceComposer(KnowledgeNavigator(snapshot)).compose(route, profile, TraversalPolicy())
@@ -222,7 +191,7 @@ def test_openapi_body_absence_cannot_override_source_request_type_without_fields
 
     result = DeterministicSufficiencyEvaluator().evaluate(capsule)
 
-    assert result.status("request_shape") == SufficiencyStatus.MISSING
+    assert result.status("request_shape") == SufficiencyStatus.AMBIGUOUS
 
 
 def test_omitted_call_cannot_be_marked_sufficient():

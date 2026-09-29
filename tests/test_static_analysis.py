@@ -2686,6 +2686,7 @@ paths:
     assert result.contracts["OrdersController.create"]["formal_contract"] == {
         "format": "openapi",
         "operation_id": "createOrder",
+        "summary": None,
         "description": None,
         "request_body_present": True,
         "request_body_required": True,
@@ -2746,6 +2747,7 @@ class OrdersController {
 paths:
   /orders:
     get:
+      summary: "Bearer summarySecret"
       description: "Returns orders. Bearer secret123"
       responses:
         "200": {}
@@ -2756,6 +2758,9 @@ paths:
 
     assert result.contracts["OrdersController.list"]["formal_contract"]["description"] == (
         "Returns orders. Bearer [REDACTED]"
+    )
+    assert result.contracts["OrdersController.list"]["formal_contract"]["summary"] == (
+        "Bearer [REDACTED]"
     )
 
 

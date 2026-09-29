@@ -1,0 +1,8 @@
+openapi: 3.0.3
+paths:
+  /status:
+    get:
+      summary: Get service status
+      description: Returns the current service status.
+      responses:
+        "200": {}

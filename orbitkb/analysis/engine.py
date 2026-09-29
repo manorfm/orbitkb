@@ -79,7 +79,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "42"
+STATIC_ANALYSIS_INPUT_VERSION = "43"
 
 # Shared with jvm_spring_analyzer.py's Kotlin/Java analyzers, and with
 # _feign_endpoints below (a Feign client's mapping annotation implies the same
@@ -3538,6 +3538,7 @@ class _OpenApiOperation:
     method: str
     path: str
     operation_id: str | None
+    summary: str | None
     description: str | None
     request_body_present: bool | None
     request_body_required: bool | None
@@ -3560,6 +3561,7 @@ def _enrich_openapi_contracts(result: AnalysisResult, root: Path) -> None:
         contract["formal_contract"] = {
             "format": "openapi",
             "operation_id": operation.operation_id,
+            "summary": operation.summary,
             "description": operation.description,
             "request_body_present": operation.request_body_present,
             "request_body_required": operation.request_body_required,
@@ -3593,16 +3595,12 @@ def _openapi_operations(root: Path) -> list[_OpenApiOperation]:
                 operation_id = operation.get("operationId")
                 if not isinstance(operation_id, str):
                     operation_id = None
-                description = operation.get("description")
-                if not isinstance(description, str) or not description.strip():
-                    description = None
-                else:
-                    description = redact_sensitive_values(description.strip())
                 operations.append(_OpenApiOperation(
                     method=method.upper(),
                     path=raw_path,
                     operation_id=operation_id,
-                    description=description,
+                    summary=_openapi_operation_text(operation.get("summary")),
+                    description=_openapi_operation_text(operation.get("description")),
                     request_body_present=_openapi_request_body_present(operation, path_item),
                     request_body_required=_openapi_request_body_required(operation, path_item),
                     response_statuses=_openapi_response_statuses(operation),
@@ -3610,6 +3608,10 @@ def _openapi_operations(root: Path) -> list[_OpenApiOperation]:
                     evidence=_openapi_evidence(path, root, source, operation_id, raw_path),
                 ))
     return operations
+
+
+def _openapi_operation_text(value: object) -> str | None:
+    return redact_sensitive_values(value.strip()) if isinstance(value, str) and value.strip() else None
 
 
 def _openapi_files(root: Path) -> list[Path]:
