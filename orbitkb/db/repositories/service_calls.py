@@ -5,13 +5,17 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from orbitkb.discovery.integration_heuristics import classify_resource_type, classify_target_kind
+from orbitkb.discovery.integration_heuristics import (
+    classify_resource_type,
+    classify_target_kind,
+)
 
 from ._util import now
 
 
 def replace_calls_for_api(
-    conn: sqlite3.Connection, from_service_id: int, api_id: int, calls: list[dict], evidence: list[dict]
+    conn: sqlite3.Connection, from_service_id: int, api_id: int, calls: list[dict], evidence: list[dict],
+    *, commit: bool = True,
 ) -> None:
     conn.execute("DELETE FROM service_calls WHERE from_api_id = ?", (api_id,))
     evidence_json = json.dumps(evidence)
@@ -38,11 +42,14 @@ def replace_calls_for_api(
             for c in calls
         ],
     )
-    conn.commit()
-    reconcile_service_call_targets(conn, service_id=from_service_id)
+    if commit:
+        conn.commit()
+    reconcile_service_call_targets(conn, service_id=from_service_id, commit=commit)
 
 
-def reconcile_service_call_targets(conn: sqlite3.Connection, service_id: int | None = None) -> None:
+def reconcile_service_call_targets(
+    conn: sqlite3.Connection, service_id: int | None = None, *, commit: bool = True,
+) -> None:
     """Resolve to_service_id by exact name within the caller's repository, then refine target_kind:
 
     - Ground truth wins: any call that resolves to a real indexed service in the
@@ -167,7 +174,8 @@ def reconcile_service_call_targets(conn: sqlite3.Connection, service_id: int | N
         if resource_type != "unknown":
             conn.execute("UPDATE service_calls SET resource_type = ? WHERE id = ?", (resource_type, row["id"]))
 
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def list_calls_for_service(conn: sqlite3.Connection, service_id: int) -> list[sqlite3.Row]:

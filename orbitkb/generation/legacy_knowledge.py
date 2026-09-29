@@ -29,15 +29,25 @@ class LegacyKnowledgeAdapter:
         ]
 
     def save_endpoint(self, service_id: int, documentation: EndpointDocumentation) -> None:
-        api_id = apis_repo.upsert_api(
-            self._conn, service_id, documentation.method, documentation.path,
-            documentation.summary, documentation.description, documentation.response_shape,
-            documentation.evidence, request_shape=documentation.request_shape,
-        )
-        apis_repo.replace_api_validations(self._conn, api_id, documentation.validations)
-        service_calls_repo.replace_calls_for_api(
-            self._conn, service_id, api_id, documentation.calls, documentation.evidence,
-        )
+        self._conn.execute("SAVEPOINT endpoint_documentation")
+        try:
+            api_id = apis_repo.upsert_api(
+                self._conn, service_id, documentation.method, documentation.path,
+                documentation.summary, documentation.description, documentation.response_shape,
+                documentation.evidence, request_shape=documentation.request_shape, commit=False,
+            )
+            apis_repo.replace_api_validations(
+                self._conn, api_id, documentation.validations, commit=False,
+            )
+            service_calls_repo.replace_calls_for_api(
+                self._conn, service_id, api_id, documentation.calls, documentation.evidence,
+                commit=False,
+            )
+        except Exception:
+            self._conn.execute("ROLLBACK TO SAVEPOINT endpoint_documentation")
+            self._conn.execute("RELEASE SAVEPOINT endpoint_documentation")
+            raise
+        self._conn.execute("RELEASE SAVEPOINT endpoint_documentation")
 
     def prune_endpoints(self, service_id: int, keep_keys: set[RouteKey]) -> None:
         apis_repo.prune_apis_not_in(self._conn, service_id, keep_keys)

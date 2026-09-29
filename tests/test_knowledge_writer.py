@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
-from orbitkb.db.connection import open_db
+import pytest
+
+from orbitkb.db.connection import open_db, open_readonly_db
 from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
@@ -38,3 +40,54 @@ def test_legacy_writer_replaces_endpoint_children_and_prunes_absent_routes(tmp_p
 
     writer.prune_endpoints(service_id, set())
     assert apis_repo.get_api_by_key(conn, service_id, "GET", "/menus") is None
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_legacy_writer_rolls_back_complete_endpoint_when_calls_fail(tmp_path: Path, existing: bool):
+    path = tmp_path / "atomic-writer.db"
+    conn = open_db(path)
+    service_id = services_repo.ensure_service(conn, "menus", "/tmp/menus", "python")
+    writer = LegacyKnowledgeAdapter(conn)
+    evidence = [{"file": "menu.py", "start_line": 4, "end_line": 9}]
+    if existing:
+        writer.save_endpoint(service_id, EndpointDocumentation(
+            method="GET", path="/menus", summary="Original", description="Original description",
+            response_shape=[], request_shape=[],
+            validations=[{"kind": "authorization", "description": "Original rule"}],
+            calls=[{"to_service_name": "users", "call_kind": "http"}], evidence=evidence,
+        ))
+
+    with pytest.raises(KeyError, match="to_service_name"):
+        writer.save_endpoint(service_id, EndpointDocumentation(
+            method="GET", path="/menus", summary="Partial", description="Partial description",
+            response_shape=[], request_shape=[],
+            validations=[{"kind": "input_validation", "description": "Partial rule"}],
+            calls=[{"call_kind": "http"}], evidence=evidence,
+        ))
+
+    for checked in (conn, open_db(path)):
+        api = apis_repo.get_api_by_key(checked, service_id, "GET", "/menus")
+        if not existing:
+            assert api is None
+            continue
+        assert api["summary"] == "Original"
+        assert [row["description"] for row in apis_repo.list_validations_for_api(checked, api["id"])] == ["Original rule"]
+        assert [row["to_service_name"] for row in service_calls_repo.list_calls_for_api(checked, api["id"])] == ["users"]
+
+
+def test_legacy_writer_preserves_an_outer_transaction(tmp_path: Path):
+    path = tmp_path / "outer-transaction.db"
+    conn = open_db(path)
+    service_id = services_repo.ensure_service(conn, "menus", "/tmp/menus", "python")
+    conn.execute("INSERT INTO schema_meta (key, value) VALUES ('unrelated', 'pending')")
+
+    LegacyKnowledgeAdapter(conn).save_endpoint(service_id, EndpointDocumentation(
+        method="GET", path="/menus", summary="Menus", description="Lists menus",
+        response_shape=[], request_shape=[], validations=[], calls=[], evidence=[],
+    ))
+
+    assert conn.in_transaction
+    assert apis_repo.get_api_by_key(open_readonly_db(path), service_id, "GET", "/menus") is None
+    conn.rollback()
+    assert apis_repo.get_api_by_key(conn, service_id, "GET", "/menus") is None
+    assert conn.execute("SELECT value FROM schema_meta WHERE key = 'unrelated'").fetchone() is None

@@ -514,6 +514,8 @@ endpoint → component → overview order and accepts an injected reader for
 alternate views or isolated tests.
 Endpoint generation writes the API, its validations and outbound calls through
 `KnowledgeWriter`; the default adapter uses the existing SQLite repositories.
+Those three writes are atomic for each endpoint, including when indexing runs
+inside an existing database transaction.
 
 Architecture rules have fact-mutation tests for cycles and fan-out (both at
 service level and their intra-service component analog), shared storage,

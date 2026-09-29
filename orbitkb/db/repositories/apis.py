@@ -18,6 +18,8 @@ def upsert_api(
     response_shape: dict,
     evidence: list[dict],
     request_shape: list[dict] | None = None,
+    *,
+    commit: bool = True,
 ) -> int:
     row = conn.execute(
         "SELECT id FROM apis WHERE service_id = ? AND method = ? AND path = ?",
@@ -41,17 +43,21 @@ def upsert_api(
             (service_id, method, path, *payload),
         )
         api_id = cur.lastrowid
-    conn.commit()
+    if commit:
+        conn.commit()
     return api_id
 
 
-def replace_api_validations(conn: sqlite3.Connection, api_id: int, validations: list[dict]) -> None:
+def replace_api_validations(
+    conn: sqlite3.Connection, api_id: int, validations: list[dict], *, commit: bool = True,
+) -> None:
     conn.execute("DELETE FROM api_validations WHERE api_id = ?", (api_id,))
     conn.executemany(
         "INSERT INTO api_validations (api_id, kind, description) VALUES (?, ?, ?)",
         [(api_id, v["kind"], v["description"]) for v in validations],
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def prune_apis_not_in(conn: sqlite3.Connection, service_id: int, keep_keys: set[tuple[str, str]]) -> None:
