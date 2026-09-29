@@ -118,6 +118,13 @@ def generate_topology_diagram(
         label = edge["resource_type"] or "external"
         lines.append(f"  {from_id} -.->|{label}| {target_id}")
 
+    for edge in service_calls_repo.list_unresolved_edges(conn):
+        from_id = service_ids.get(edge["from_name"])
+        if from_id is None:
+            continue
+        target_id = external_node(edge["to_service_name"])
+        lines.append(f"  {from_id} -.->|{edge['call_kind']} (unresolved)| {target_id}")
+
     for fact in flows_repo.list_all_static_cloud_facts(conn):
         from_id = service_ids.get(fact["from_name"])
         if from_id is None:

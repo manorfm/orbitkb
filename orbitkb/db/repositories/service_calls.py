@@ -248,3 +248,14 @@ def list_external_edges(conn: sqlite3.Connection) -> list[sqlite3.Row]:
            WHERE sc.target_kind = 'external'
            ORDER BY from_name, to_service_name"""
     ).fetchall()
+
+
+def list_unresolved_edges(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Indexed calls whose target cannot yet be resolved or classified."""
+    return conn.execute(
+        """SELECT DISTINCT s.name AS from_name, sc.to_service_name, sc.call_kind
+           FROM service_calls sc
+           JOIN services s ON s.id = sc.from_service_id
+           WHERE sc.to_service_id IS NULL AND sc.target_kind = 'unknown'
+           ORDER BY from_name, to_service_name, call_kind"""
+    ).fetchall()

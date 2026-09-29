@@ -72,6 +72,23 @@ def test_generate_topology_diagram_includes_cloud_nodes(tmp_path: Path):
     assert "orders-queue" in diagram
 
 
+def test_generate_topology_diagram_keeps_unresolved_indexed_calls(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "menu-service", "/tmp/menu", "jvm-spring")
+    api_id = apis_repo.upsert_api(conn, service_id, "GET", "/menus", "s", "d", [], EVIDENCE)
+    service_calls_repo.replace_calls_for_api(
+        conn, service_id, api_id,
+        [{"to_service_name": "RestaurantClient", "call_kind": "http", "reason": "lookup",
+          "data_needed": [], "purpose_kind": "data_fetch", "confidence": 0.6,
+          "target_kind": "unknown"}], EVIDENCE,
+    )
+
+    diagram = generate_topology_diagram(conn, root_services={"menu-service"})
+
+    assert 'ext_restaurantclient(("RestaurantClient"))' in diagram
+    assert 'svc_menu_service -.->|http (unresolved)| ext_restaurantclient' in diagram
+
+
 def test_generate_topology_diagram_shows_unmatched_messaging_and_persistence(tmp_path: Path):
     """A single-service repo that both publishes and consumes on the same channel (no
     other indexed service on it) and persists to a DB shouldn't render an empty
