@@ -425,6 +425,10 @@ make readiness-audit
 The frozen indexing baseline checks public MCP query fields and Markdown/Mermaid
 exports using synthetic Python, JavaScript, TypeScript, Java/Spring,
 Kotlin/Spring and Go fixtures.
+The separate `verify/flow_corpus/sample-order-kotlin-service` sample exercises a
+complex Kotlin/Spring route through interface injection, Feign, MongoDB,
+Redis publication and route security without adding a service to the frozen
+ShopFlow baseline. Its test records where source-backed navigation stops.
 It also checks a seeded HTTP, vendor and messaging graph. It uses the mock backend
 and makes no paid LLM calls:
 
