@@ -43,7 +43,11 @@ from orbitkb.analysis.jvm_grpc_analyzer import (
     kotlin_grpc_client_bindings,
     kotlin_grpc_handlers,
 )
-from orbitkb.analysis.jvm_scanner import find_matching_brace
+from orbitkb.analysis.jvm_scanner import (
+    find_classes,
+    find_matching_brace,
+    split_top_level,
+)
 from orbitkb.analysis.jvm_security_analyzer import (
     spring_filter_chain_security_requirements,
 )
@@ -74,7 +78,7 @@ from orbitkb.analysis.resolution import BoundedFlowResolver
 from orbitkb.discovery.scan_helpers import SKIP_DIRS
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "33"
+STATIC_ANALYSIS_INPUT_VERSION = "34"
 
 # Shared with jvm_spring_analyzer.py's Kotlin/Java analyzers, and with
 # _feign_endpoints below (a Feign client's mapping annotation implies the same
@@ -428,13 +432,52 @@ def _spring_http_client_receivers(
 
 
 def _spring_data_repository_types(files: list[Path]) -> frozenset[str]:
-    """Find local interfaces whose declaration proves a Spring Data contract."""
-    types = set()
+    """Find direct Spring Data interfaces and uniquely backed parent contracts."""
+    parents_by_interface: dict[str, set[str]] = {}
+    children_by_parent: dict[str, set[str]] = {}
+    duplicate_interfaces: set[str] = set()
+
+    def parent_names(declaration: str) -> set[str]:
+        return {
+            match.group(1).rsplit(".", 1)[-1]
+            for parent in split_top_level(declaration)
+            if (match := re.match(r"\s*([\w.]+)", parent))
+        }
+
     for path in files:
+        if path.suffix not in {".java", ".kt"}:
+            continue
         source = path.read_text(encoding="utf-8", errors="ignore")
-        for name, parents in re.findall(r"\binterface\s+(\w+)\s*(?:extends|:)\s*([^\{]+)\{", source):
-            if any(re.search(rf"\b{base}\b", parents) for base in _SPRING_DATA_REPOSITORY_BASE_TYPES):
-                types.add(name)
+        for match in re.finditer(
+            r"\binterface\s+(?P<name>\w+)(?:[ \t]*(?:extends|:)[ \t]*(?P<parents>[^\{\n]+))?",
+            source,
+        ):
+            name = match.group("name")
+            if name in parents_by_interface:
+                duplicate_interfaces.add(name)
+            parents = parent_names(match.group("parents") or "")
+            parents_by_interface[name] = parents
+            for parent in parents:
+                children_by_parent.setdefault(parent, set()).add(name)
+        for declaration in find_classes(source):
+            java_parents = re.search(r"\bimplements\s+([^\{]+)", declaration.header)
+            parents = (parent_names(java_parents.group(1)) if java_parents
+                       else set(_kotlin_supertypes(declaration.header)))
+            for parent in parents:
+                children_by_parent.setdefault(parent.rsplit(".", 1)[-1], set()).add(declaration.name)
+    types = {
+        name for name, parents in parents_by_interface.items()
+        if name not in duplicate_interfaces and parents & _SPRING_DATA_REPOSITORY_BASE_TYPES
+    }
+    changed = True
+    while changed:
+        inferred = {
+            parent for parent, children in children_by_parent.items()
+            if parent in parents_by_interface and parent not in duplicate_interfaces
+            and len(children) == 1 and next(iter(children)) in types
+        }
+        changed = bool(inferred - types)
+        types.update(inferred)
     return frozenset(types)
 
 

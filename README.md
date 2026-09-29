@@ -526,6 +526,9 @@ ambiguous declarations remain unresolved.
 When a source location has exactly one call edge and one proven outbound service
 call, navigation reports that edge as an external boundary. A different source
 or competing edge remains unresolved.
+Spring Data derived queries also retain their read/write classification when a
+custom repository interface has one local Spring Data implementation. Another
+local implementation leaves that classification unproven.
 An internal evidence composer can select route facts by profile for later prompt
 reduction. It preserves each fact's source, route path, status and content digest,
 and carries navigation boundaries and truncation forward without calling a model.

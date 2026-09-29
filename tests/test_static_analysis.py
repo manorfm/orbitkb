@@ -1808,6 +1808,63 @@ def test_spring_data_derived_operations_require_a_local_repository_interface(tmp
     }
 
 
+def test_spring_data_derived_method_on_a_unique_custom_parent_interface(tmp_path: Path):
+    (tmp_path / "OrderRepository.kt").write_text('''interface OrderRepository {
+  fun findByStatus(status: String): Order
+}
+interface MongoOrderDAO : OrderRepository, MongoRepository<Order, String>
+''', encoding="utf-8")
+    (tmp_path / "Orders.kt").write_text('''class Orders(private val repository: OrderRepository) {
+  fun find(status: String) = repository.findByStatus(status)
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert ("Orders.find", "repository.findByStatus", "reads") in {
+        (edge.source, edge.target, edge.kind) for edge in result.edges
+    }
+
+
+def test_java_spring_data_derived_method_on_a_unique_custom_parent_interface(tmp_path: Path):
+    (tmp_path / "OrderRepository.java").write_text('''interface OrderRepository {
+  Order findByStatus(String status);
+}
+interface JpaOrderDAO extends OrderRepository, JpaRepository<Order, String> {}
+''', encoding="utf-8")
+    (tmp_path / "Orders.java").write_text('''class Orders {
+  private final OrderRepository repository;
+  Order find(String status) { return repository.findByStatus(status); }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert ("Orders.find", "repository.findByStatus", "reads") in {
+        (edge.source, edge.target, edge.kind) for edge in result.edges
+    }
+
+
+def test_spring_data_parent_with_another_local_implementation_is_ambiguous(tmp_path: Path):
+    (tmp_path / "OrderRepository.kt").write_text('''interface OrderRepository {
+  fun findByStatus(status: String): Order
+}
+interface MongoOrderDAO : OrderRepository, MongoRepository<Order, String>
+class ManualOrderRepository : OrderRepository {
+  override fun findByStatus(status: String): Order = Order()
+}
+''', encoding="utf-8")
+    (tmp_path / "Orders.kt").write_text('''class Orders(private val repository: OrderRepository) {
+  fun find(status: String) = repository.findByStatus(status)
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Orders.find" and edge.kind == "invokes"
+               and edge.target == "ManualOrderRepository.findByStatus" for edge in result.edges)
+
+
 def test_spring_data_query_operations_require_local_repository_and_modifying_evidence(tmp_path: Path):
     (tmp_path / "OrderRepository.java").write_text(
         '''interface OrderRepository extends JpaRepository<Order, String> {

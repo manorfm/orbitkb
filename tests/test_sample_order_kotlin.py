@@ -102,6 +102,12 @@ def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
         "/venues/{restaurantId}/ingredients/{ingredientId}",
     }
     assert all("FetchItemMediator.get" in reached.path_to(call.id) for call in catalog_calls)
+    assert any(
+        edge.source == "BillService.get"
+        and edge.target == "billRepository.findByIdAndTableIdAndTableRestaurantId"
+        and edge.kind == "reads"
+        for edge in analysis.edges
+    )
     extension_edges = {
         fact.attributes["target"]: fact
         for fact in reached.facts
