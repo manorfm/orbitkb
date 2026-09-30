@@ -323,6 +323,8 @@ Mermaid slug, including entity names in ER diagrams; relationships still point
 to the intended entity.
 Fields that normalize to the same ER name also remain distinct, and their
 relationship labels match the displayed field names.
+ER attribute names and types that start with digits receive a letter prefix
+required by Mermaid syntax; collisions after prefixing remain distinct.
 ER relationship labels use the same normalized field names shown in entity
 blocks, so indexed field text cannot add diagram statements.
 Entrypoint sequence diagrams encode indexed participant and message labels,

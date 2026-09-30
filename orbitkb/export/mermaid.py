@@ -51,6 +51,11 @@ def _sanitize_ident(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_]+", "_", text or "").strip("_") or "field"
 
 
+def _er_attribute_token(text: str, prefix: str) -> str:
+    token = _sanitize_ident(text)
+    return f"{prefix}_{token}" if token[0].isdigit() else token
+
+
 def _cycle_service_ids(conn: sqlite3.Connection) -> set[int]:
     run_id = architecture_repo.latest_run_id(conn)
     if run_id is None:
@@ -292,11 +297,13 @@ def generate_er_diagram(conn: sqlite3.Connection, service_id: int) -> str | None
         fields = json.loads(entity["schema_json"] or "[]")
         used_field_names: set[str] = set()
         named_fields = [
-            (field, _unique_node_id(_sanitize_ident(field.get("field", "field")), used_field_names))
+            (field, _unique_node_id(_er_attribute_token(field.get("field", "field"), "field"), used_field_names))
             for field in fields
         ]
         for field, field_name in named_fields:
-            type_token = _sanitize_ident((field.get("type_desc") or "string").split(",")[0].strip()) or "string"
+            type_token = _er_attribute_token(
+                (field.get("type_desc") or "string").split(",")[0].strip(), "type",
+            )
             lines.append(f"    {type_token} {field_name}")
         lines.append("  }")
 

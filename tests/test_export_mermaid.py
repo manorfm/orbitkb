@@ -618,6 +618,30 @@ def test_generate_er_diagram_keeps_colliding_field_names_distinct(tmp_path: Path
     assert '  orders }o--|| customers : "customer_id_2"' in diagram
 
 
+def test_generate_er_diagram_uses_valid_attribute_tokens_for_numeric_names(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")
+    persistence_repo.replace_persistence_entities(
+        conn, service_id,
+        [
+            {"name": "orders", "kind": "sql_table", "engine": "postgres",
+             "schema_json": [
+                 {"field": "1st_item", "type_desc": "64bit, item identifier",
+                  "references": {"target_entity": "items", "unique": False}},
+                 {"field": "field_1st_item", "type_desc": "string"},
+             ]},
+            {"name": "items", "kind": "sql_table", "engine": "postgres",
+             "schema_json": [{"field": "id", "type_desc": "string"}]},
+        ],
+        EVIDENCE,
+    )
+
+    diagram = generate_er_diagram(conn, service_id)
+
+    assert "  orders {\n    type_64bit field_1st_item\n    string field_1st_item_2\n  }" in diagram
+    assert '  orders }o--|| items : "field_1st_item"' in diagram
+
+
 def test_generate_er_diagram_skips_a_reference_to_an_entity_not_in_this_diagram(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     orders_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")
