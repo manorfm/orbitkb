@@ -3,13 +3,20 @@ response_shape treatment (see db/repositories/apis.py upsert_api)."""
 from pathlib import Path
 
 from orbitkb.analysis.engine import StaticAnalysisEngine
-from orbitkb.analysis.models import AnalysisResult, Evidence, SecurityRequirement
+from orbitkb.analysis.models import (
+    AnalysisResult,
+    EntryPoint,
+    Evidence,
+    FlowEdge,
+    SecurityRequirement,
+)
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import flows as flows_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.domain.route_patterns import route_pattern_covers
+from orbitkb.export.markdown import export_markdown
 from orbitkb.mcp import queries
 
 SAMPLE_ORDER = Path(__file__).resolve().parents[1] / "verify/flow_corpus/sample-order-kotlin-service"
@@ -170,8 +177,9 @@ def test_describe_api_exposes_route_reachable_source_calls_separately(tmp_path: 
         ("catalog-service", "GET", "/venues/{restaurantId}/ingredients/{ingredientId}"),
     }
     assert all(call["destination_status"] == "unresolved" for call in order["source_calls"])
-    assert order["source_calls_truncated"] is False
+    assert order["source_calls_status"] == "assessed"
     assert health["source_calls"] == []
+    assert health["source_calls_status"] == "unassessed"
 
     api_id = apis_repo.get_api_by_key(conn, service_id, "POST", route)["id"]
     service_calls_repo.replace_calls_for_api(conn, service_id, api_id, [
@@ -184,4 +192,35 @@ def test_describe_api_exposes_route_reachable_source_calls_separately(tmp_path: 
     assert represented["source_calls"] == []
 
     flows_repo.replace_analysis(conn, service_id, AnalysisResult())
-    assert queries.describe_api(conn, "sample-order", "POST", route)["source_calls"] == []
+    removed = queries.describe_api(conn, "sample-order", "POST", route)
+    assert removed["source_calls"] == []
+    assert removed["source_calls_status"] == "unassessed"
+
+
+def test_api_call_status_distinguishes_absent_complete_and_limited_flow(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "menu-service", "/tmp/menu", "jvm-spring")
+    apis_repo.upsert_api(conn, service_id, "GET", "/slow", "s", "d", [], [])
+
+    absent = queries.describe_api(conn, "menu-service", "GET", "/slow")
+    export_markdown(conn, tmp_path / "docs")
+    markdown = (tmp_path / "docs/menu-service/apis/get-slow.md").read_text(encoding="utf-8")
+    assert absent["source_calls_status"] == "unassessed"
+    assert "route source flow unavailable; additional calls unknown" in markdown
+    assert "no dependency detected" not in markdown
+
+    source = Evidence("Flow.kt", 1, 1)
+    entrypoint = EntryPoint("http", "GET", "/slow", "Controller.get", source)
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(entrypoints=[entrypoint]))
+    complete = queries.describe_api(conn, "menu-service", "GET", "/slow")
+    assert complete["source_calls_status"] == "assessed"
+    assert complete["source_calls"] == []
+
+    symbols = ["Controller.get", *(f"Worker{index}.run" for index in range(10))]
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(
+        entrypoints=[entrypoint],
+        edges=[FlowEdge(current, following, "invokes", source)
+               for current, following in zip(symbols, symbols[1:])],
+    ))
+    limited = queries.describe_api(conn, "menu-service", "GET", "/slow")
+    assert limited["source_calls_status"] == "limited"

@@ -487,7 +487,7 @@ def describe_api(conn: sqlite3.Connection, service: str, method: str, path: str,
              "target_path": call.path, "destination_status": "unresolved"}
             for call in source_calls.calls
         ],
-        "source_calls_truncated": source_calls.truncated,
+        "source_calls_status": source_calls.status.value,
         "validations": [{"kind": v["kind"], "description": v["description"]} for v in validations],
         "api_shape": {
             "method": api["method"],

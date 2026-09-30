@@ -13,7 +13,7 @@ from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.domain.navigation import KnowledgeNavigator
-from orbitkb.domain.route_calls import route_declared_http_calls
+from orbitkb.domain.route_calls import RouteCallStatus, route_declared_http_calls
 from orbitkb.export.dependencies import unresolved_declared_http_targets
 from orbitkb.export.messaging import has_confirmed_redis_publication
 from orbitkb.export.persistence import has_unrepresented_mongo_access
@@ -140,8 +140,10 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
                     operation = " ".join(part for part in (call.method, call.path) if part)
                     suffix = f": {operation}" if operation else ""
                     call_lines.append(f"- **{call.target_service}** (http (unresolved), source-proven){suffix}")
-                if source_calls.truncated:
+                if source_calls.status is RouteCallStatus.LIMITED:
                     call_lines.append("- (static flow limited; other calls may exist)")
+                elif source_calls.status is RouteCallStatus.UNASSESSED:
+                    call_lines.append("- (route source flow unavailable; additional calls unknown)")
                 api_lines += ["", "## Calls", *(call_lines or ["- (no dependency detected)"])]
                 security = flows_repo.matching_route_security_requirement(
                     security_rules, a["method"], a["path"],

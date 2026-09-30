@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from enum import Enum
 
 from orbitkb.domain.canonical import FactStatus
 from orbitkb.domain.navigation import (
@@ -18,10 +19,16 @@ class DeclaredHttpCall:
     path: str | None
 
 
+class RouteCallStatus(str, Enum):
+    UNASSESSED = "unassessed"
+    ASSESSED = "assessed"
+    LIMITED = "limited"
+
+
 @dataclass(frozen=True)
 class RouteHttpCalls:
     calls: tuple[DeclaredHttpCall, ...]
-    truncated: bool
+    status: RouteCallStatus
 
 
 def route_declared_http_calls(
@@ -29,11 +36,14 @@ def route_declared_http_calls(
 ) -> RouteHttpCalls:
     """Reach confirmed HTTP calls, omitting targets already represented by indexed calls."""
     if navigator is None:
-        return RouteHttpCalls((), False)
+        return RouteHttpCalls((), RouteCallStatus.UNASSESSED)
+    entrypoints = route_entrypoints(navigator.snapshot, method, path)
+    if not entrypoints:
+        return RouteHttpCalls((), RouteCallStatus.UNASSESSED)
     represented = set(represented_targets)
     calls: set[DeclaredHttpCall] = set()
     truncated = False
-    for entrypoint in route_entrypoints(navigator.snapshot, method, path):
+    for entrypoint in entrypoints:
         reached = navigator.reachable(entrypoint, TraversalPolicy())
         truncated |= reached.truncated
         for fact in reached.facts:
@@ -47,4 +57,4 @@ def route_declared_http_calls(
             ))
     return RouteHttpCalls(tuple(sorted(calls, key=lambda call: (
         call.target_service, call.method or "", call.path or "",
-    ))), truncated)
+    ))), RouteCallStatus.LIMITED if truncated else RouteCallStatus.ASSESSED)
