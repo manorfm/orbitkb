@@ -11,6 +11,7 @@ from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
+from orbitkb.export.dependencies import unresolved_declared_http_targets
 
 
 def _slug(text: str) -> str:
@@ -43,6 +44,10 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
         service_dir.mkdir(parents=True, exist_ok=True)
 
         calls = service_calls_repo.list_calls_for_service(conn, svc["id"])
+        declared_targets = unresolved_declared_http_targets(
+            flows_repo.list_static_service_calls(conn, svc["id"]),
+            (call["to_service_name"] for call in calls),
+        )
         apis = apis_repo.list_apis(conn, svc["id"])
         persistence = persistence_repo.list_persistence(conn, svc["id"])
         messages = messages_repo.list_messages(conn, svc["id"])
@@ -58,7 +63,9 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
             f"**Stack:** {svc['stack'] or '?'}",
             "",
             "## Depends on",
-            *_fmt_calls(calls),
+            *(_fmt_calls(calls) if calls else []),
+            *(f"- **{target}** (http (unresolved), declared target)" for target in declared_targets),
+            *(["- (no dependency detected)"] if not calls and not declared_targets else []),
             "",
             "## APIs",
         ]

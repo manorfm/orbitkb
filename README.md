@@ -280,6 +280,9 @@ orbitkb export mermaid --out docs/
 stack, dependencies with the reason and data each call needs, APIs, persistence,
 messaging, cloud integrations) and one `docs/<service>/apis/<method-path>.md` per
 detected API (response shape, calls it makes, validations/constraints).
+The service dependency list also includes source-proven HTTP client targets
+when no indexed call represents them, labeled `unresolved` rather than treated
+as a confirmed destination.
 
 `export mermaid` writes `docs/topology.mmd` (system-wide service topology —
 dependencies, external/cloud nodes, architecture cycles highlighted) and one

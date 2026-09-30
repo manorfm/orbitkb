@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from orbitkb.analysis.models import AnalysisResult, CloudFact, Evidence
+from orbitkb.analysis.models import (
+    AnalysisResult,
+    CloudFact,
+    Evidence,
+    StaticServiceCall,
+)
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import flows as flows_repo
@@ -121,3 +126,40 @@ def test_export_markdown_handles_service_with_no_apis(tmp_path: Path):
     assert "no API detected" in index_text
     assert not (out_dir / "empty-service" / "apis").exists()
     assert len(written) == 1
+
+
+def test_markdown_reports_source_proven_http_target_without_model_call(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(static_service_calls=[
+        StaticServiceCall(
+            "Orders.fetch", "catalog-service", "http", "GET", "/catalog/{id}",
+            Evidence("CatalogClient.kt", 8, 8),
+        ),
+    ]))
+
+    export_markdown(conn, tmp_path / "docs")
+
+    text = (tmp_path / "docs/orders-service/index.md").read_text(encoding="utf-8")
+    dependencies = text.split("## Depends on\n", 1)[1].split("\n## APIs", 1)[0]
+    assert "catalog-service" in dependencies
+    assert "http (unresolved)" in dependencies
+    assert "no dependency detected" not in dependencies
+
+
+def test_markdown_does_not_repeat_a_source_target_already_in_indexed_calls(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = _seed(conn)
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(static_service_calls=[
+        StaticServiceCall(
+            "Orders.charge", "payments-service", "http", "POST", "/charges",
+            Evidence("PaymentsClient.kt", 8, 8),
+        ),
+    ]))
+
+    export_markdown(conn, tmp_path / "docs")
+
+    text = (tmp_path / "docs/orders-service/index.md").read_text(encoding="utf-8")
+    dependencies = text.split("## Depends on\n", 1)[1].split("\n## APIs", 1)[0]
+    assert dependencies.count("payments-service") == 1
+    assert "charge the customer" in dependencies

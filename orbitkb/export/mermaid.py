@@ -18,6 +18,7 @@ from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.domain.canonical import CanonicalSnapshot, FactStatus
+from orbitkb.export.dependencies import unresolved_declared_http_targets
 
 
 def _slug(text: str) -> str:
@@ -166,13 +167,13 @@ def generate_topology_diagram(
         from_id = service_ids.get(svc["name"])
         if from_id is None:
             continue
-        for call in flows_repo.list_static_service_calls(conn, svc["id"]):
-            key = (svc["name"], call["target_service"])
-            if call["protocol"] != "http" or key in rendered_targets:
-                continue
-            target_id = external_node(f"{call['target_service']} (declared target)")
+        for target in unresolved_declared_http_targets(
+            flows_repo.list_static_service_calls(conn, svc["id"]),
+            (name for source, name in rendered_targets if source == svc["name"]),
+        ):
+            target_id = external_node(f"{target} (declared target)")
             lines.append(f"  {from_id} -.->|http (unresolved)| {target_id}")
-            rendered_targets.add(key)
+            rendered_targets.add((svc["name"], target))
 
     for fact in flows_repo.list_all_static_cloud_facts(conn):
         from_id = service_ids.get(fact["from_name"])
