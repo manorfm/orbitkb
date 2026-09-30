@@ -15,6 +15,10 @@ class LanguageFrontend(Protocol):
     def analyze_file(self, path: Path, root: Path) -> AnalysisResult: ...
 
 
+class FrameworkAdapter(Protocol):
+    def enrich(self, result: AnalysisResult, files: list[Path], root: Path) -> None: ...
+
+
 @dataclass(frozen=True)
 class AnalyzerFrontend:
     """Connect an existing file analyzer to the shared source pipeline."""

@@ -36,7 +36,11 @@ from orbitkb.analysis.cloud_taxonomy import (
     AWS_SERVICE_RESOURCE_TYPE,
 )
 from orbitkb.analysis.depth import DepthProvider, NoopDepthProvider
-from orbitkb.analysis.frontends import AnalyzerFrontend, LanguageFrontend
+from orbitkb.analysis.frontends import (
+    AnalyzerFrontend,
+    FrameworkAdapter,
+    LanguageFrontend,
+)
 from orbitkb.analysis.go_imports import parse_go_import_declarations
 from orbitkb.analysis.jvm_grpc_analyzer import (
     jvm_grpc_client_bindings,
@@ -49,9 +53,7 @@ from orbitkb.analysis.jvm_scanner import (
     find_matching_brace,
     split_top_level,
 )
-from orbitkb.analysis.jvm_security_analyzer import (
-    spring_filter_chain_security_requirements,
-)
+from orbitkb.analysis.jvm_security_analyzer import SpringSecurityAdapter
 from orbitkb.analysis.kotlin_dto_shapes import kotlin_data_class_shapes
 from orbitkb.analysis.kotlin_expression_returns import enrich_kotlin_expression_returns
 from orbitkb.analysis.models import (
@@ -3103,6 +3105,7 @@ class StaticAnalysisEngine:
     def __init__(
         self, depth_provider: DepthProvider | None = None,
         frontends: Mapping[str, LanguageFrontend] | None = None,
+        framework_adapters: Mapping[str, FrameworkAdapter] | None = None,
     ) -> None:
         # Deferred: jvm_spring_analyzer imports this module for its shared Spring
         # helpers, so importing it back at module load time would be circular.
@@ -3125,6 +3128,9 @@ class StaticAnalysisEngine:
         }
         if frontends:
             self._frontends.update(frontends)
+        self._framework_adapters: dict[str, FrameworkAdapter] = {"jvm-spring": SpringSecurityAdapter()}
+        if framework_adapters:
+            self._framework_adapters.update(framework_adapters)
 
     def list_files(self, root: Path, stack: str) -> list[Path]:
         """The file listing alone -- a plain `rglob`, no parsing (see `analyze_files`)."""
@@ -3187,7 +3193,9 @@ class StaticAnalysisEngine:
         if stack == "jvm-spring":
             result.static_service_calls.extend(_spring_feign_service_calls(result, files))
             result.configuration_bindings.extend(_feign_client_url_bindings(files, root))
-            result.security_requirements.extend(spring_filter_chain_security_requirements(files, root))
+        adapter = self._framework_adapters.get(stack)
+        if adapter is not None:
+            adapter.enrich(result, files, root)
         result.edges.extend(self._depth_provider.enrich(root, result))
         return result
 

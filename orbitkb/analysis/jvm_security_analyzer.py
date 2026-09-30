@@ -7,8 +7,8 @@ Two independent sources feed the same `SecurityRequirement` fact:
   jvm_spring_analyzer.py's per-function loop, since it's naturally per-symbol).
 - A `SecurityFilterChain` bean's Kotlin `authorizeHttpRequests { authorize(...) }`
   DSL or Java `authorizeHttpRequests(...requestMatchers(...).permitAll())` chain
-  (this module's `spring_filter_chain_security_requirements`, called from
-  engine.py's `enrich()` since it's a whole-service, cross-file concern -- the
+  (this module's `spring_filter_chain_security_requirements`, called through
+  `SpringSecurityAdapter` since it's a whole-service, cross-file concern -- the
   requirement referenced can be defined in a different file than the route it
   guards).
 
@@ -30,7 +30,7 @@ from orbitkb.analysis.jvm_scanner import (
     find_matching_paren,
     split_top_level,
 )
-from orbitkb.analysis.models import Evidence, SecurityRequirement
+from orbitkb.analysis.models import AnalysisResult, Evidence, SecurityRequirement
 
 _PRE_AUTHORIZE = re.compile(r'@PreAuthorize\s*\(\s*"(?P<expr>[^"]*)"\s*\)')
 _SECURED = re.compile(r'@Secured\s*\(\s*(?P<value>\{[^}]*\}|"[^"]*")\s*\)')
@@ -289,3 +289,10 @@ def spring_filter_chain_security_requirements(files: list[Path], root: Path) -> 
                         Evidence(path.relative_to(root).as_posix(), line, line),
                     ))
     return requirements
+
+
+class SpringSecurityAdapter:
+    """Add source-proven Spring filter-chain rules after per-file analysis."""
+
+    def enrich(self, result: AnalysisResult, files: list[Path], root: Path) -> None:
+        result.security_requirements.extend(spring_filter_chain_security_requirements(files, root))

@@ -572,6 +572,8 @@ analysis bypasses or withholds snapshot reuse, preserving correctness over speed
 Static source parsing now uses a per-language frontend contract for file selection
 and per-file analysis. Existing parsers use the same contract, and the shared
 enrichment and canonical projection continue after their results are combined.
+Cross-file Spring Security filter-chain rules run through a framework adapter
+in that shared enrichment pass.
 The canonical projection converts entrypoints, symbol declarations, injections,
 flow boundary markers, flow edges, service calls,
 configuration keys, security requirements, error contracts, message contracts,
