@@ -490,7 +490,7 @@ def test_generate_er_diagram_lists_entity_fields(tmp_path: Path):
         EVIDENCE,
     )
 
-    diagram = generate_er_diagram(conn, "orders-service")
+    diagram = generate_er_diagram(conn, orders_id)
 
     assert diagram.startswith("erDiagram")
     assert "orders {" in diagram
@@ -522,7 +522,7 @@ def test_generate_er_diagram_includes_relationship_lines_from_field_references(t
         EVIDENCE,
     )
 
-    diagram = generate_er_diagram(conn, "orders-service")
+    diagram = generate_er_diagram(conn, orders_id)
 
     assert 'orders }o--|| customers : "customer_id"' in diagram
     assert "No cross-entity relationships shown" not in diagram
@@ -543,7 +543,7 @@ def test_generate_er_diagram_skips_a_reference_to_an_entity_not_in_this_diagram(
         EVIDENCE,
     )
 
-    diagram = generate_er_diagram(conn, "orders-service")
+    diagram = generate_er_diagram(conn, orders_id)
 
     assert "customers" not in diagram  # never fabricate a node for an unresolved reference
     assert "No cross-entity relationships shown" in diagram
@@ -551,7 +551,7 @@ def test_generate_er_diagram_skips_a_reference_to_an_entity_not_in_this_diagram(
 
 def test_generate_er_diagram_for_unknown_service(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
-    assert generate_er_diagram(conn, "does-not-exist") is None
+    assert generate_er_diagram(conn, -1) is None
 
 
 def test_export_mermaid_writes_topology_and_er_files(tmp_path: Path):

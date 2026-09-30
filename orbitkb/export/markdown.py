@@ -20,6 +20,7 @@ from orbitkb.domain.route_calls import (
 )
 from orbitkb.export.dependencies import unresolved_declared_http_targets
 from orbitkb.export.messaging import has_confirmed_redis_publication
+from orbitkb.export.paths import service_output_dirs
 from orbitkb.export.persistence import has_unrepresented_mongo_access
 
 
@@ -67,11 +68,13 @@ def _fmt_messages(messages: list[sqlite3.Row]) -> list[str]:
 
 def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str | None = None) -> list[Path]:
     written: list[Path] = []
-    for svc in services_repo.list_services(conn):
+    services = services_repo.list_services(conn)
+    output_dirs = service_output_dirs(out_dir, services)
+    for svc in services:
         if service_filter and svc["name"] != service_filter:
             continue
-        service_row = services_repo.get_service_by_name(conn, svc["name"])
-        service_dir = out_dir / svc["name"]
+        service_row = services_repo.get_service_by_id(conn, svc["id"])
+        service_dir = output_dirs[svc["id"]]
         service_dir.mkdir(parents=True, exist_ok=True)
 
         calls = service_calls_repo.list_calls_for_service(conn, svc["id"])

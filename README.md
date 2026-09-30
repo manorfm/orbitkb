@@ -280,6 +280,9 @@ orbitkb export mermaid --out docs/
 stack, dependencies with the reason and data each call needs, APIs, persistence,
 messaging, cloud integrations) and one `docs/<service>/apis/<method-path>.md` per
 detected API (response shape, calls it makes, validations/constraints).
+When service names repeat across repositories, both Markdown and Mermaid use
+`docs/<repository>--<service>/` for those services. Unsafe or colliding directory
+names receive a safe, unique suffix. `--service` selects every matching service.
 API pages show the first source-proven route security rule that matches their
 method and path. Method-level annotations are not correlated to API pages yet,
 so this is a declared route rule, not a complete effective policy.
@@ -308,7 +311,7 @@ when no MongoDB entity is indexed; its collection remains unresolved.
 
 `export mermaid` writes `docs/topology.mmd` (system-wide service topology —
 dependencies, external/cloud nodes, architecture cycles highlighted) and one
-`docs/<service>.er.mmd` entity-relationship diagram per service, from detected
+`docs/<service>/er.mmd` entity-relationship diagram per service, from detected
 persistence facts. Mermaid renders natively in GitHub/GitLab/most editors, and
 is plain text — versionable and diffable in a PR, unlike a generated image.
 Node identifiers remain distinct when different names normalize to the same

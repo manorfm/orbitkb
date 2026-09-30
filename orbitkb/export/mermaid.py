@@ -20,6 +20,7 @@ from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.export.dependencies import unresolved_declared_http_targets
 from orbitkb.export.messaging import has_confirmed_redis_publication
+from orbitkb.export.paths import service_output_dirs
 from orbitkb.export.persistence import has_unrepresented_mongo_access
 
 
@@ -268,12 +269,12 @@ def generate_entrypoint_sequence(edges: list, entrypoint_symbol: str, entrypoint
     return "\n".join(lines)
 
 
-def generate_er_diagram(conn: sqlite3.Connection, service_name: str) -> str | None:
+def generate_er_diagram(conn: sqlite3.Connection, service_id: int) -> str | None:
     """One service's `erDiagram`: an entity block per persisted table/collection, with
     its fields, plus a relationship line for every field whose LLM-inferred
     `references` names another entity present in this same diagram — a reference to
     an entity not in this diagram is skipped rather than fabricating a dangling node."""
-    row = services_repo.get_service_by_name(conn, service_name)
+    row = services_repo.get_service_by_id(conn, service_id)
     if row is None:
         return None
     entities = persistence_repo.list_persistence(conn, row["id"])
@@ -319,13 +320,15 @@ def export_mermaid(conn: sqlite3.Connection, out_dir: Path, service_filter: str 
         topology_path.write_text(generate_topology_diagram(conn) + "\n", encoding="utf-8")
         written.append(topology_path)
 
-    for svc in services_repo.list_services(conn):
+    services = services_repo.list_services(conn)
+    output_dirs = service_output_dirs(out_dir, services)
+    for svc in services:
         if service_filter and svc["name"] != service_filter:
             continue
-        diagram = generate_er_diagram(conn, svc["name"])
+        diagram = generate_er_diagram(conn, svc["id"])
         if not diagram or diagram.count("\n") <= 1:  # header lines only, no entities
             continue
-        service_dir = out_dir / svc["name"]
+        service_dir = output_dirs[svc["id"]]
         service_dir.mkdir(parents=True, exist_ok=True)
         er_path = service_dir / "er.mmd"
         er_path.write_text(diagram + "\n", encoding="utf-8")
