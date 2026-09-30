@@ -1,9 +1,11 @@
 from pathlib import Path
 
+from orbitkb.analysis.engine import StaticAnalysisEngine
 from orbitkb.analysis.models import (
     AnalysisResult,
     ApiHeader,
     CloudFact,
+    EntryPoint,
     Evidence,
     FlowEdge,
     Injection,
@@ -19,6 +21,8 @@ from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.export.markdown import export_markdown
 from orbitkb.export.mermaid import generate_topology_diagram
+
+SAMPLE_ORDER = Path(__file__).resolve().parents[1] / "verify/flow_corpus/sample-order-kotlin-service"
 
 
 def _seed(conn):
@@ -343,3 +347,57 @@ def test_api_markdown_shows_source_proven_headers_for_the_matching_route(tmp_pat
     get_doc = (api_dir / "get-menus.md").read_text(encoding="utf-8")
     assert "## Request headers" not in get_doc
     assert "## Response headers" not in get_doc
+
+
+def test_api_markdown_scopes_source_proven_http_calls_to_reachable_route(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "sample-order", str(SAMPLE_ORDER), "jvm-spring")
+    analysis = StaticAnalysisEngine().analyze(SAMPLE_ORDER, "jvm-spring")
+    flows_repo.replace_analysis(conn, service_id, analysis)
+    route = "/venues/{restaurantId}/spots/{tableId}/checks/{billId}/items"
+    apis_repo.upsert_api(conn, service_id, "POST", route, "s", "d", [], [])
+    apis_repo.upsert_api(conn, service_id, "GET", "/health", "s", "d", [], [])
+
+    export_markdown(conn, tmp_path / "docs")
+
+    api_dir = tmp_path / "docs/sample-order/apis"
+    order_doc = next(path.read_text(encoding="utf-8") for path in api_dir.glob("post-*.md"))
+    health_doc = (api_dir / "get-health.md").read_text(encoding="utf-8")
+    calls = order_doc.split("## Calls\n", 1)[1].split("\n##", 1)[0]
+    assert calls.count("**catalog-service**") == 2
+    assert "/catalogs/{menuId}/products/{itemId}/summary" in calls
+    assert "/ingredients/{ingredientId}" in calls
+    assert "source-proven" in calls
+    assert "catalog-service" not in health_doc
+
+    api_id = apis_repo.get_api_by_key(conn, service_id, "POST", route)["id"]
+    service_calls_repo.replace_calls_for_api(conn, service_id, api_id, [
+        {"to_service_name": "catalog-service", "call_kind": "http", "reason": "load catalog",
+         "data_needed": [], "purpose_kind": "data_fetch", "confidence": 0.8,
+         "target_kind": "unknown"},
+    ], [])
+    export_markdown(conn, tmp_path / "docs")
+    order_doc = next(path.read_text(encoding="utf-8") for path in api_dir.glob("post-*.md"))
+    calls = order_doc.split("## Calls\n", 1)[1].split("\n##", 1)[0]
+    assert calls.count("**catalog-service**") == 1
+    assert "load catalog" in calls
+
+
+def test_api_markdown_reports_bounded_flow_instead_of_claiming_no_calls(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "menu-service", "/tmp/menu", "jvm-spring")
+    apis_repo.upsert_api(conn, service_id, "GET", "/slow", "s", "d", [], [])
+    source = Evidence("Flow.kt", 1, 1)
+    symbols = ["Controller.get", *(f"Worker{index}.run" for index in range(10))]
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(
+        entrypoints=[EntryPoint("http", "GET", "/slow", symbols[0], source)],
+        edges=[FlowEdge(current, following, "invokes", source)
+               for current, following in zip(symbols, symbols[1:])],
+    ))
+
+    export_markdown(conn, tmp_path / "docs")
+
+    api_doc = (tmp_path / "docs/menu-service/apis/get-slow.md").read_text(encoding="utf-8")
+    calls = api_doc.split("## Calls\n", 1)[1].split("\n##", 1)[0]
+    assert "static flow limited; other calls may exist" in calls
+    assert "no dependency detected" not in calls

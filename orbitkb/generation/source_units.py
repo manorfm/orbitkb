@@ -9,8 +9,11 @@ from pathlib import Path
 
 from orbitkb.discovery.base import CodeExcerpt
 from orbitkb.domain.canonical import CanonicalFact, CanonicalSnapshot, SymbolKey
-from orbitkb.domain.navigation import KnowledgeNavigator, TraversalPolicy
-from orbitkb.generation.route_evidence import route_entrypoints
+from orbitkb.domain.navigation import (
+    KnowledgeNavigator,
+    TraversalPolicy,
+    route_entrypoints,
+)
 
 
 @dataclass(frozen=True)

@@ -285,6 +285,10 @@ method and path. Method-level annotations are not correlated to API pages yet,
 so this is a declared route rule, not a complete effective policy.
 They also list source-proven request and response header names for that exact
 method and path; header values are not captured or exported.
+When a route's bounded static flow reaches an HTTP client, its API page lists
+the declared operation even without a model-generated call. The target remains
+marked unresolved; an already indexed call for that target takes precedence.
+If traversal reaches its limit, the page says that other calls may exist.
 The service dependency list also includes source-proven HTTP client targets
 when no indexed call represents them, labeled `unresolved` rather than treated
 as a confirmed destination.

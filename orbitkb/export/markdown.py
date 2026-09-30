@@ -12,7 +12,11 @@ from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
-from orbitkb.export.dependencies import unresolved_declared_http_targets
+from orbitkb.domain.navigation import KnowledgeNavigator
+from orbitkb.export.dependencies import (
+    route_declared_http_calls,
+    unresolved_declared_http_targets,
+)
 from orbitkb.export.messaging import has_confirmed_redis_publication
 from orbitkb.export.persistence import has_unrepresented_mongo_access
 
@@ -55,6 +59,7 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
         apis = apis_repo.list_apis(conn, svc["id"])
         persistence = persistence_repo.list_persistence(conn, svc["id"])
         snapshot = snapshots_repo.read_snapshot(conn, svc["id"])
+        navigator = KnowledgeNavigator(snapshot) if snapshot is not None else None
         messages = messages_repo.list_messages(conn, svc["id"])
         security_rules = flows_repo.list_static_security_requirements_in_declaration_order(conn, svc["id"])
         cloud_facts = flows_repo.list_static_cloud_facts(conn, svc["id"])
@@ -121,6 +126,10 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
                 validations = apis_repo.list_validations_for_api(conn, api_row["id"])
                 response_shape = json.loads(api_row["response_shape"] or "[]")
                 headers = flows_repo.list_static_api_headers_for_route(conn, svc["id"], a["method"], a["path"])
+                source_calls = route_declared_http_calls(
+                    navigator, a["method"], a["path"],
+                    (call["to_service_name"] for call in api_calls),
+                )
 
                 api_lines = [f"# {a['method']} {a['path']}", "", api_row["description"] or "", "", "## Response"]
                 api_lines += [f"- `{f['field']}`: {f['type_desc']}" for f in response_shape] or ["(not detected)"]
@@ -128,7 +137,14 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
                     names = [header["name"] for header in headers if header["direction"] == direction]
                     if names:
                         api_lines += ["", f"## {direction.title()} headers", *(f"- `{name}`" for name in names)]
-                api_lines += ["", "## Calls", *_fmt_calls(api_calls)]
+                call_lines = _fmt_calls(api_calls) if api_calls else []
+                for call in source_calls.calls:
+                    operation = " ".join(part for part in (call.method, call.path) if part)
+                    suffix = f": {operation}" if operation else ""
+                    call_lines.append(f"- **{call.target_service}** (http (unresolved), source-proven){suffix}")
+                if source_calls.truncated:
+                    call_lines.append("- (static flow limited; other calls may exist)")
+                api_lines += ["", "## Calls", *(call_lines or ["- (no dependency detected)"])]
                 security = flows_repo.matching_route_security_requirement(
                     security_rules, a["method"], a["path"],
                 )

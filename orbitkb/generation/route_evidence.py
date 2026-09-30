@@ -2,22 +2,18 @@
 
 from __future__ import annotations
 
-from orbitkb.domain.canonical import CanonicalSnapshot, EntrypointKey
+from orbitkb.domain.canonical import CanonicalSnapshot
 from orbitkb.domain.evidence import EvidenceComposer, EvidenceProfile
-from orbitkb.domain.navigation import KnowledgeNavigator, TraversalPolicy
+from orbitkb.domain.navigation import (
+    KnowledgeNavigator,
+    TraversalPolicy,
+    route_entrypoints,
+)
 from orbitkb.domain.reduction import ContextCapsule, EvidenceBudget, EvidenceReducer
 from orbitkb.domain.sufficiency import (
     DeterministicSufficiencyEvaluator,
     SufficiencyResult,
 )
-
-
-def route_entrypoints(snapshot: CanonicalSnapshot, method: str, path: str) -> tuple[EntrypointKey, ...]:
-    return tuple(
-        fact.subject for fact in snapshot.facts
-        if fact.kind == "entrypoint" and isinstance(fact.subject, EntrypointKey)
-        and fact.subject.method == method and fact.subject.name == path
-    )
 
 
 def route_capsule(snapshot: CanonicalSnapshot, method: str, path: str) -> ContextCapsule | None:

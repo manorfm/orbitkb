@@ -56,6 +56,16 @@ class TraversalResult:
         raise KeyError(fact_id)
 
 
+def route_entrypoints(snapshot: CanonicalSnapshot, method: str, path: str) -> tuple[EntrypointKey, ...]:
+    """HTTP entrypoints for one declared method and path in a canonical snapshot."""
+    return tuple(
+        fact.subject for fact in snapshot.facts
+        if fact.kind == "entrypoint" and isinstance(fact.subject, EntrypointKey)
+        and fact.subject.transport == "http"
+        and fact.subject.method == method and fact.subject.name == path
+    )
+
+
 class KnowledgeNavigator:
     """Visits only symbol links backed by facts in one canonical snapshot."""
 
