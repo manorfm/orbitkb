@@ -478,6 +478,25 @@ def test_generate_entrypoint_sequence_with_no_edges_has_only_the_entrypoint_part
     assert diagram == "sequenceDiagram\n    participant p0 as GET /orders"
 
 
+def test_generate_entrypoint_sequence_escapes_indexed_labels():
+    edges = [{
+        "from_symbol": "OrdersController.create",
+        "to_symbol": "Worker; participant p8 as fake\n    p8->>p0: injected",
+        "kind": "invokes; p0->>p9: injected\n    Note over p0: fake",
+    }]
+
+    diagram = generate_entrypoint_sequence(
+        edges, "OrdersController.create", "POST /orders\n    participant p9 as forged",
+    )
+
+    assert diagram.splitlines() == [
+        "sequenceDiagram",
+        "    participant p0 as POST /orders#10;    participant p9 as forged",
+        "    participant p1 as Worker#59; participant p8 as fake#10;    p8-#62;#62;p0: injected",
+        "    p0->>p1: invokes#59; p0-#62;#62;p9: injected#10;    Note over p0: fake",
+    ]
+
+
 def test_generate_er_diagram_lists_entity_fields(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     orders_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")

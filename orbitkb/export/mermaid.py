@@ -42,7 +42,7 @@ def _mermaid_label(value: str) -> str:
     """Keep indexed text inside one Mermaid label, including edge labels."""
     return "".join(
         "#quot;" if char == '"' else
-        f"#{ord(char)};" if char in '|<>&#`' or ord(char) < 32 or ord(char) == 127 else char
+        f"#{ord(char)};" if char in '|<>&#`;' or ord(char) < 32 or ord(char) == 127 else char
         for char in value
     )
 
@@ -254,7 +254,7 @@ def generate_entrypoint_sequence(edges: list, entrypoint_symbol: str, entrypoint
     def participant(label: str) -> str:
         if label not in participant_ids:
             participant_ids[label] = f"p{len(participant_ids)}"
-            lines.append(f"    participant {participant_ids[label]} as {label}")
+            lines.append(f"    participant {participant_ids[label]} as {_mermaid_label(label)}")
         return participant_ids[label]
 
     # The only symbol that ever needs a friendlier label than its own name is
@@ -265,7 +265,7 @@ def generate_entrypoint_sequence(edges: list, entrypoint_symbol: str, entrypoint
         from_id = participant(symbol_labels.get(edge["from_symbol"], edge["from_symbol"]))
         to_label = "DB" if edge["kind"] in {"reads", "writes"} else edge["to_symbol"]
         to_id = participant(to_label)
-        lines.append(f"    {from_id}->>{to_id}: {edge['kind']}")
+        lines.append(f"    {from_id}->>{to_id}: {_mermaid_label(edge['kind'])}")
     return "\n".join(lines)
 
 

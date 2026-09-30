@@ -323,6 +323,8 @@ Mermaid slug, including entity names in ER diagrams; relationships still point
 to the intended entity.
 ER relationship labels use the same normalized field names shown in entity
 blocks, so indexed field text cannot add diagram statements.
+Entrypoint sequence diagrams encode indexed participant and message labels,
+including line breaks and semicolons, before writing Mermaid statements.
 Services with the same name in different repositories are labeled with their
 repository; calls and scoped topology queries retain their separate identities.
 Cycle highlighting follows the same service identities.
