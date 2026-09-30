@@ -552,6 +552,29 @@ def test_generate_er_diagram_keeps_colliding_entity_names_and_relationships_dist
     assert '  invoices }o--|| order_items_2 : "item_id"' in diagram
 
 
+def test_generate_er_diagram_sanitizes_relationship_field_labels(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")
+    injected_field = 'customer_id"\n  forged ||--|| orders : "invented'
+    persistence_repo.replace_persistence_entities(
+        conn, service_id,
+        [
+            {"name": "orders", "kind": "sql_table", "engine": "postgres",
+             "schema_json": [{"field": injected_field, "type_desc": "string",
+                              "references": {"target_entity": "customers", "unique": False}}]},
+            {"name": "customers", "kind": "sql_table", "engine": "postgres",
+             "schema_json": [{"field": "id", "type_desc": "string"}]},
+        ],
+        EVIDENCE,
+    )
+
+    diagram = generate_er_diagram(conn, service_id)
+
+    assert 'orders }o--|| customers : "customer_id_forged_orders_invented"' in diagram
+    assert "\n  forged ||--||" not in diagram
+    assert diagram.count("}o--||") == 1
+
+
 def test_generate_er_diagram_skips_a_reference_to_an_entity_not_in_this_diagram(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     orders_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")
