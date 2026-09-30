@@ -47,6 +47,7 @@ from orbitkb.domain.navigation import (
     TraversalPolicy,
     TraversalResult,
 )
+from orbitkb.domain.route_calls import route_declared_http_calls
 from orbitkb.export.mermaid import (
     generate_entrypoint_sequence,
     generate_topology_diagram,
@@ -460,6 +461,11 @@ def describe_api(conn: sqlite3.Connection, service: str, method: str, path: str,
     if api is None:
         return {"error": f"unknown api: {method} {path} on {service}"}
     calls = service_calls_repo.list_calls_for_api(conn, api["id"])
+    snapshot = canonical_snapshots_repo.read_snapshot(conn, row["id"])
+    source_calls = route_declared_http_calls(
+        KnowledgeNavigator(snapshot) if snapshot is not None else None,
+        api["method"], api["path"], (call["to_service_name"] for call in calls),
+    )
     validations = apis_repo.list_validations_for_api(conn, api["id"])
     response_shape = json.loads(api["response_shape"] or "[]")
     request_shape = json.loads(api["request_shape"] or "[]")
@@ -476,6 +482,12 @@ def describe_api(conn: sqlite3.Connection, service: str, method: str, path: str,
         "response_shape": response_shape,
         "request_shape": request_shape,
         "calls": [_fmt_call(c) for c in calls],
+        "source_calls": [
+            {"target_service": call.target_service, "target_method": call.method,
+             "target_path": call.path, "destination_status": "unresolved"}
+            for call in source_calls.calls
+        ],
+        "source_calls_truncated": source_calls.truncated,
         "validations": [{"kind": v["kind"], "description": v["description"]} for v in validations],
         "api_shape": {
             "method": api["method"],

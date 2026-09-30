@@ -2,13 +2,17 @@
 response_shape treatment (see db/repositories/apis.py upsert_api)."""
 from pathlib import Path
 
+from orbitkb.analysis.engine import StaticAnalysisEngine
 from orbitkb.analysis.models import AnalysisResult, Evidence, SecurityRequirement
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import flows as flows_repo
+from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.domain.route_patterns import route_pattern_covers
 from orbitkb.mcp import queries
+
+SAMPLE_ORDER = Path(__file__).resolve().parents[1] / "verify/flow_corpus/sample-order-kotlin-service"
 
 
 def test_describe_api_includes_request_shape(tmp_path: Path):
@@ -146,3 +150,38 @@ def test_describe_api_headers_are_empty_lists_when_none_were_extracted(tmp_path:
 
     assert result["api_shape"]["request"]["headers"] == []
     assert result["api_shape"]["response"]["headers"] == []
+
+
+def test_describe_api_exposes_route_reachable_source_calls_separately(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "sample-order", str(SAMPLE_ORDER), "jvm-spring")
+    flows_repo.replace_analysis(conn, service_id, StaticAnalysisEngine().analyze(SAMPLE_ORDER, "jvm-spring"))
+    route = "/venues/{restaurantId}/spots/{tableId}/checks/{billId}/items"
+    apis_repo.upsert_api(conn, service_id, "POST", route, "s", "d", [], [])
+    apis_repo.upsert_api(conn, service_id, "GET", "/health", "s", "d", [], [])
+
+    order = queries.describe_api(conn, "sample-order", "POST", route)
+    health = queries.describe_api(conn, "sample-order", "GET", "/health")
+
+    assert order["calls"] == []
+    assert {(call["target_service"], call["target_method"], call["target_path"])
+            for call in order["source_calls"]} == {
+        ("catalog-service", "GET", "/venues/{restaurantId}/catalogs/{menuId}/products/{itemId}/summary"),
+        ("catalog-service", "GET", "/venues/{restaurantId}/ingredients/{ingredientId}"),
+    }
+    assert all(call["destination_status"] == "unresolved" for call in order["source_calls"])
+    assert order["source_calls_truncated"] is False
+    assert health["source_calls"] == []
+
+    api_id = apis_repo.get_api_by_key(conn, service_id, "POST", route)["id"]
+    service_calls_repo.replace_calls_for_api(conn, service_id, api_id, [
+        {"to_service_name": "catalog-service", "call_kind": "http", "reason": "load catalog",
+         "data_needed": [], "purpose_kind": "data_fetch", "confidence": 0.8,
+         "target_kind": "unknown"},
+    ], [])
+    represented = queries.describe_api(conn, "sample-order", "POST", route)
+    assert len(represented["calls"]) == 1
+    assert represented["source_calls"] == []
+
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult())
+    assert queries.describe_api(conn, "sample-order", "POST", route)["source_calls"] == []

@@ -289,6 +289,9 @@ When a route's bounded static flow reaches an HTTP client, its API page lists
 the declared operation even without a model-generated call. The target remains
 marked unresolved; an already indexed call for that target takes precedence.
 If traversal reaches its limit, the page says that other calls may exist.
+`describe_api` exposes the same supplemental calls in `source_calls`, separate
+from generated `calls`, and reports the traversal limit in
+`source_calls_truncated`. A declared target is not a confirmed runtime address.
 The service dependency list also includes source-proven HTTP client targets
 when no indexed call represents them, labeled `unresolved` rather than treated
 as a confirmed destination.

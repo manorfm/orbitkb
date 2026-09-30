@@ -13,10 +13,8 @@ from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.domain.navigation import KnowledgeNavigator
-from orbitkb.export.dependencies import (
-    route_declared_http_calls,
-    unresolved_declared_http_targets,
-)
+from orbitkb.domain.route_calls import route_declared_http_calls
+from orbitkb.export.dependencies import unresolved_declared_http_targets
 from orbitkb.export.messaging import has_confirmed_redis_publication
 from orbitkb.export.persistence import has_unrepresented_mongo_access
 
