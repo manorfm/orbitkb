@@ -528,6 +528,30 @@ def test_generate_er_diagram_includes_relationship_lines_from_field_references(t
     assert "No cross-entity relationships shown" not in diagram
 
 
+def test_generate_er_diagram_keeps_colliding_entity_names_and_relationships_distinct(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")
+    persistence_repo.replace_persistence_entities(
+        conn, service_id,
+        [
+            {"name": "order-items", "kind": "sql_table", "engine": "postgres",
+             "schema_json": [{"field": "legacy_code", "type_desc": "string"}]},
+            {"name": "order_items", "kind": "sql_table", "engine": "postgres",
+             "schema_json": [{"field": "sku", "type_desc": "string"}]},
+            {"name": "invoices", "kind": "sql_table", "engine": "postgres",
+             "schema_json": [{"field": "item_id", "type_desc": "string",
+                              "references": {"target_entity": "order_items", "unique": False}}]},
+        ],
+        EVIDENCE,
+    )
+
+    diagram = generate_er_diagram(conn, service_id)
+
+    assert "  order_items {\n    string legacy_code\n  }" in diagram
+    assert "  order_items_2 {\n    string sku\n  }" in diagram
+    assert '  invoices }o--|| order_items_2 : "item_id"' in diagram
+
+
 def test_generate_er_diagram_skips_a_reference_to_an_entity_not_in_this_diagram(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     orders_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")

@@ -319,7 +319,8 @@ dependencies, external/cloud nodes, architecture cycles highlighted) and one
 persistence facts. Mermaid renders natively in GitHub/GitLab/most editors, and
 is plain text — versionable and diffable in a PR, unlike a generated image.
 Node identifiers remain distinct when different names normalize to the same
-Mermaid slug.
+Mermaid slug, including entity names in ER diagrams; relationships still point
+to the intended entity.
 Services with the same name in different repositories are labeled with their
 repository; calls and scoped topology queries retain their separate identities.
 Cycle highlighting follows the same service identities.

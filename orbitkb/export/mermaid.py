@@ -278,7 +278,11 @@ def generate_er_diagram(conn: sqlite3.Connection, service_id: int) -> str | None
     if row is None:
         return None
     entities = persistence_repo.list_persistence(conn, row["id"])
-    entity_ids = {entity["name"]: _sanitize_ident(entity["name"]) for entity in entities}
+    used_ids: set[str] = set()
+    entity_ids = {
+        entity["name"]: _unique_node_id(_sanitize_ident(entity["name"]), used_ids)
+        for entity in entities
+    }
 
     lines = ["erDiagram"]
     relationships: list[str] = []
