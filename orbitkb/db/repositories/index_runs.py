@@ -148,6 +148,21 @@ def list_run_units(conn: sqlite3.Connection, run_id: int) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def last_run_unit_failed(
+    conn: sqlite3.Connection, service_id: int, kind: str, identity: tuple[str, ...],
+) -> bool:
+    """Retry an unsuccessful unit even when its source file hash is unchanged."""
+    unit_key = _opaque_unit_key(conn, service_id, kind, identity)
+    row = conn.execute(
+        """SELECT unit.status FROM index_run_units AS unit
+           JOIN index_runs AS run ON run.id = unit.run_id
+           WHERE run.service_id = ? AND unit.unit_kind = ? AND unit.unit_key = ?
+           ORDER BY run.id DESC LIMIT 1""",
+        (service_id, kind, unit_key),
+    ).fetchone()
+    return row is not None and row["status"] == "failed"
+
+
 def usage_totals(conn: sqlite3.Connection, service_id: int | None = None) -> dict:
     """Cumulative token/cost usage across every index_runs row (optionally scoped to
     one service) — the number `orbitkb status` prints alongside the recent-runs list,

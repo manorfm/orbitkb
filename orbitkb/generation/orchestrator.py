@@ -36,6 +36,7 @@ from orbitkb.discovery.hashing import file_hash, git_head_commit
 from orbitkb.discovery.registry import detector_by_id
 from orbitkb.discovery.scan_helpers import SKIP_DIRS, collect_config_excerpts
 from orbitkb.discovery.walker import ServiceCandidate, discover_services
+from orbitkb.domain.canonical import CanonicalSnapshot
 from orbitkb.domain.sufficiency import (
     DeterministicSufficiencyEvaluator,
     SufficiencyResult,
@@ -62,7 +63,11 @@ from orbitkb.generation.knowledge import (
 from orbitkb.generation.legacy_knowledge import LegacyKnowledgeAdapter
 from orbitkb.generation.llm_harness import generate_with_retry, load_prompt, load_schema
 from orbitkb.generation.policy import GenerationPolicy
-from orbitkb.generation.route_evidence import route_capsule, route_outbound_hints
+from orbitkb.generation.route_evidence import (
+    route_capsule,
+    route_documentation_state,
+    route_outbound_hints,
+)
 from orbitkb.generation.unit import IndexUnit
 from orbitkb.iac.scanner import scan_repository_facts
 from orbitkb.security.findings import find_security_findings
@@ -318,7 +323,7 @@ class UnitOutcome:
 @dataclass
 class IndexContext:
     """Shared state one index_service call passes through every UnitGenerator.
-    any_endpoint_regenerated/any_component_regenerated are written by the endpoint/
+    regenerated_endpoints/any_component_regenerated are written by the endpoint/
     component generators and read by OverviewGenerator (composed last, see above)."""
 
     conn: sqlite3.Connection
@@ -339,8 +344,9 @@ class IndexContext:
     knowledge_reader: KnowledgeReader
     knowledge_writer: KnowledgeWriter
     generation_policy: GenerationPolicy
+    previous_snapshot: CanonicalSnapshot | None
     embedding_backend: EmbeddingBackend | None = None
-    any_endpoint_regenerated: bool = False
+    regenerated_endpoints: set[tuple[str, str]] = field(default_factory=set)
     any_component_regenerated: bool = False
     llm_invocations: int = 0
     sufficiency_shadow: dict[str, int] = field(default_factory=dict)
@@ -374,6 +380,15 @@ class EndpointGenerator:
             keep_api_keys.add(key)
             dep_files = endpoint.dependency_files()
             needs_regen = ctx.force or key not in existing_keys or bool(dep_files & ctx.changed)
+            if not needs_regen and snapshot is not None and ctx.previous_snapshot is not None:
+                needs_regen = (
+                    route_documentation_state(route_capsule(ctx.previous_snapshot, *key))
+                    != route_documentation_state(route_capsule(snapshot, *key))
+                )
+            if not needs_regen:
+                needs_regen = index_runs_repo.last_run_unit_failed(
+                    ctx.conn, ctx.service_id, self.kind, key,
+                )
             label = f"{endpoint.method} {endpoint.path}"
             if not needs_regen:
                 outcome.add(unit)
@@ -429,7 +444,7 @@ class EndpointGenerator:
             )
             unit.status = "success"
             outcome.add(unit)
-            ctx.any_endpoint_regenerated = True
+            ctx.regenerated_endpoints.add(key)
             ctx.progress.unit_finished(ctx.name, label, "ok")
 
         ctx.knowledge_writer.prune_endpoints(ctx.service_id, keep_api_keys)
@@ -453,7 +468,10 @@ class ComponentGenerator:
             group_dep_files: set[str] = set()
             for endpoint in group:
                 group_dep_files |= endpoint.dependency_files()
-            needs_regen = ctx.force or ctx.is_new or bool(group_dep_files & ctx.changed)
+            needs_regen = (
+                ctx.force or ctx.is_new or bool(group_dep_files & ctx.changed)
+                or any((endpoint.method, endpoint.path) in ctx.regenerated_endpoints for endpoint in group)
+            )
             label = f"component {component_name}"
             if not needs_regen:
                 outcome.add(unit)
@@ -602,7 +620,7 @@ class OverviewGenerator:
         needs_overview = (
             ctx.force or ctx.is_new or bool(ctx.changed & entry_files)
             or not (ctx.existing and ctx.existing["short_desc"])
-            or ctx.any_endpoint_regenerated or ctx.any_component_regenerated
+            or ctx.regenerated_endpoints or ctx.any_component_regenerated
         )
         if not needs_overview:
             outcome.add(unit)
@@ -694,6 +712,11 @@ def _index_service_unlocked(
         and snapshot["analysis_version"] == STATIC_ANALYSIS_INPUT_VERSION
         and canonical_snapshots_repo.has_snapshot(conn, service_id)
     )
+    previous_snapshot = (
+        canonical_snapshots_repo.read_snapshot(conn, service_id)
+        if not static_analysis_is_current and canonical_snapshots_repo.has_snapshot(conn, service_id)
+        else None
+    )
     if not static_analysis_is_current:
         if not cacheable_static_analysis:
             static_analysis_repo.delete_snapshot(conn, service_id)
@@ -706,7 +729,21 @@ def _index_service_unlocked(
     security_findings_repo.replace_findings(conn, service_id, find_security_findings(root))
 
     old_hashes = indexed_files_repo.get_indexed_file_hashes(conn, service_id)
-    relevant = hints.relevant_files()
+    route_sources: set[str] = set()
+    current_snapshot = canonical_snapshots_repo.read_snapshot(conn, service_id)
+    for endpoint in hints.endpoints:
+        for route_snapshot in (previous_snapshot, current_snapshot):
+            if route_snapshot is None:
+                continue
+            capsule = route_capsule(route_snapshot, endpoint.method, endpoint.path)
+            if capsule is None:
+                continue
+            route_sources.update(
+                source.file_path
+                for fact in capsule.facts if fact.kind in {"entrypoint", "security_requirement"}
+                for source in fact.sources
+            )
+    relevant = hints.relevant_files() | route_sources
     new_hashes: dict[str, str] = {}
     changed: set[str] = set()
     for rel in relevant:
@@ -730,6 +767,7 @@ def _index_service_unlocked(
         knowledge_reader=knowledge_reader if knowledge_reader is not None else knowledge_adapter,
         knowledge_writer=knowledge_writer if knowledge_writer is not None else knowledge_adapter,
         generation_policy=GenerationPolicy(force, is_new, changed, removed),
+        previous_snapshot=previous_snapshot,
         embedding_backend=embedding_backend,
     )
 

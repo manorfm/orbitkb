@@ -204,7 +204,7 @@ def test_injected_reader_controls_endpoint_regeneration_without_file_changes(tmp
     assert first.status == second.status == "ok"
     assert second.files_changed == 0
     assert second.llm_invocations == backend.calls
-    assert second.llm_calls == 5  # four routes plus the overview they refresh
+    assert second.llm_calls == 7  # four routes, their two components, and the overview
 
 
 def test_endpoint_evidence_excludes_excerpts_cut_from_the_prompt_budget(tmp_path: Path, monkeypatch):

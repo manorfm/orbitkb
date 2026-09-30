@@ -592,6 +592,11 @@ For regenerated routes, the indexer uses this document without an endpoint LLM
 call when all conditions hold. Other routes keep the existing LLM path. Route
 details report `render_status` as `used` or `ineligible`. Two source-reviewed
 synthetic goldens verify all six API detail fields for Kotlin and Java examples.
+Incremental indexing tracks OpenAPI and HTTP security files referenced by a
+route. A contract or authorization change refreshes that endpoint and its
+component and overview, even when the controller is untouched. An unrelated
+operation or comment in a shared OpenAPI file does not regenerate the route.
+Failed endpoint generation is retried on the next run without another file edit.
 Run `PYTHONPATH=. .venv/bin/python scripts/report_shadow_eligibility.py` to
 measure eligibility on the repository-owned synthetic corpus with the free mock
 backend. The report contains counts by stack and renderer status. In the

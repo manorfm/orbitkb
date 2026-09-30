@@ -39,6 +39,32 @@ def route_sufficiency(snapshot: CanonicalSnapshot, method: str, path: str) -> Su
     return DeterministicSufficiencyEvaluator().evaluate(capsule) if capsule else None
 
 
+def route_documentation_state(capsule: ContextCapsule | None) -> tuple | None:
+    """Compare route meaning while ignoring source locations and budget size."""
+    if capsule is None:
+        return None
+    facts = []
+    for fact in capsule.facts:
+        value = fact.value
+        if fact.kind == "entrypoint":
+            contract = value.get("contract")
+            formal = contract.get("formal_contract") if isinstance(contract, dict) else None
+            if isinstance(formal, dict):
+                value = {
+                    **value,
+                    "contract": {
+                        **contract,
+                        "formal_contract": {key: item for key, item in formal.items() if key != "evidence"},
+                    },
+                }
+        facts.append((fact.id, fact.kind, value, fact.status, fact.origin, fact.path))
+    return (
+        capsule.entrypoints, tuple(facts), capsule.uses, capsule.boundaries,
+        capsule.report.omitted_fact_ids, capsule.report.omitted_fact_kinds,
+        capsule.truncated, capsule.navigation_truncated, capsule.selected_kinds,
+    )
+
+
 def route_outbound_hints(snapshot: CanonicalSnapshot, method: str, path: str,
                          *, max_chars: int = 4_000) -> str | None:
     entrypoints = _entrypoints(snapshot, method, path)
