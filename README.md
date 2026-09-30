@@ -246,6 +246,10 @@ The nonnegative limit applies separately to each service and counts retries;
 `0` runs only deterministic work. When reached, indexing reports `partial`
 and exits with an error code. A later run retries pending units while reusing
 completed ones. This bounds calls, not tokens or the cost of an individual call.
+`--max-reported-cost-usd N` also stops later attempts once cumulative reported
+cost reaches the nonnegative per-service limit. If a call fails or omits cost,
+later attempts are deferred because the remaining budget is unknown. A single
+call can exceed the limit; use the invocation limit as a separate safeguard.
 
 Re-indexing is authoritative for detected service boundaries. Removed services are
 removed from the knowledge base; moved services keep their identity by name, while a

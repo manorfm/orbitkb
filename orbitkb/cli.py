@@ -78,6 +78,7 @@ def _cmd_index(args: argparse.Namespace) -> int:
                 progress=progress, repository_name=args.repository_name, embedding_backend=embedding_backend,
                 stack_override=args.stack, depth_provider=depth_provider,
                 max_llm_invocations=args.max_llm_invocations,
+                max_reported_cost_usd=args.max_reported_cost_usd,
             )
     except (DiscoveryError, GenerationError, ValueError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -118,6 +119,7 @@ def _update_one_service(
             conn, row["name"], root, detector, backend, force=args.force, progress=progress,
             embedding_backend=embedding_backend, depth_provider=depth_provider,
             max_llm_invocations=args.max_llm_invocations,
+            max_reported_cost_usd=args.max_reported_cost_usd,
         )
     except (ValueError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -741,6 +743,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_index.add_argument("--force", action="store_true", help="Regenerate everything, ignoring file-hash skip")
     p_index.add_argument("--max-llm-invocations", type=int, default=None,
                          help="Maximum backend attempts per service in this run (0 allows deterministic work only)")
+    p_index.add_argument("--max-reported-cost-usd", type=float, default=None,
+                         help="Stop later model attempts when reported cost reaches this per-service USD limit")
     p_index.add_argument("--sufficiency-details", action="store_true", help="Print per-route evidence sufficiency as JSON lines")
     p_index.add_argument(
         "--verbose", "-v", action="store_true",
@@ -766,6 +770,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_update.add_argument("--force", action="store_true", help="Regenerate everything, ignoring file-hash skip")
     p_update.add_argument("--max-llm-invocations", type=int, default=None,
                           help="Maximum backend attempts per service in this run (0 allows deterministic work only)")
+    p_update.add_argument("--max-reported-cost-usd", type=float, default=None,
+                          help="Stop later model attempts when reported cost reaches this per-service USD limit")
     p_update.add_argument("--sufficiency-details", action="store_true", help="Print per-route evidence sufficiency as JSON lines")
     p_update.add_argument(
         "--verbose", "-v", action="store_true",

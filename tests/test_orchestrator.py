@@ -1009,6 +1009,80 @@ def test_invocation_budget_rejects_negative_values_before_indexing(tmp_path: Pat
     assert index_runs_repo.recent_index_runs(conn) == []
 
 
+def test_reported_cost_budget_stops_later_attempts_and_keeps_paid_usage(tmp_path: Path):
+    class CostBackend(FakeOrchestratorBackend):
+        def generate(self, prompt: str, schema: dict, cwd: Path) -> GenerationOutcome:
+            outcome = super().generate(prompt, schema, cwd)
+            return GenerationOutcome(outcome.structured, LLMUsage(cost_usd=0.03))
+
+    conn = open_db(tmp_path / "cost-budget.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    backend = CostBackend()
+
+    result = index_service(conn, orders.name, orders.path, orders.detector, backend,
+                           max_reported_cost_usd=0.05)
+
+    run = index_runs_repo.recent_index_runs(conn, result.service_id, limit=1)[0]
+    assert result.status == "partial"
+    assert result.llm_invocations == backend.calls == 2
+    assert result.cost_usd == pytest.approx(0.06)
+    assert run["cost_usd"] == pytest.approx(0.06)
+    assert "cost budget exhausted" in run["notes"]
+
+
+def test_reported_cost_budget_stops_after_unreported_cost(tmp_path: Path):
+    conn = open_db(tmp_path / "unknown-cost.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    backend = FakeOrchestratorBackend()
+
+    result = index_service(conn, orders.name, orders.path, orders.detector, backend,
+                           max_reported_cost_usd=0.05)
+
+    run = index_runs_repo.recent_index_runs(conn, result.service_id, limit=1)[0]
+    assert result.status == "partial"
+    assert result.llm_invocations == backend.calls == 1
+    assert result.cost_usd is None
+    assert "cost unavailable" in run["notes"]
+
+
+def test_reported_cost_budget_zero_blocks_the_first_attempt(tmp_path: Path):
+    conn = open_db(tmp_path / "zero-cost.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    backend = FakeOrchestratorBackend()
+
+    result = index_service(conn, orders.name, orders.path, orders.detector, backend,
+                           max_reported_cost_usd=0)
+
+    assert result.status == "partial"
+    assert result.llm_invocations == backend.calls == 0
+
+
+def test_reported_cost_budget_does_not_retry_a_failure_with_unknown_cost(tmp_path: Path):
+    conn = open_db(tmp_path / "failed-cost.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    backend = FakeOrchestratorBackend(fail_kind="api_detail")
+
+    result = index_service(conn, orders.name, orders.path, orders.detector, backend,
+                           max_reported_cost_usd=0.05, failures_root=tmp_path / "failures")
+
+    run = index_runs_repo.recent_index_runs(conn, result.service_id, limit=1)[0]
+    assert result.status == "partial"
+    assert result.llm_invocations == backend.calls == 1
+    assert "cost unavailable" in run["notes"]
+
+
+@pytest.mark.parametrize("invalid", [-1.0, float("nan"), float("inf")])
+def test_reported_cost_budget_rejects_invalid_values(tmp_path: Path, invalid: float):
+    conn = open_db(tmp_path / "cost-budget.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+
+    with pytest.raises(ValueError, match="max_reported_cost_usd"):
+        index_service(conn, orders.name, orders.path, orders.detector, FakeOrchestratorBackend(),
+                      max_reported_cost_usd=invalid)
+
+    assert index_runs_repo.recent_index_runs(conn) == []
+
+
 def test_failed_unit_keeps_retry_count_and_unknown_cost(tmp_path: Path):
     conn = open_db(tmp_path / "failed-units.db")
     orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")

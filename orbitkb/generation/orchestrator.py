@@ -44,6 +44,7 @@ from orbitkb.domain.sufficiency import (
 )
 from orbitkb.generation.architecture import recompute_architecture_view
 from orbitkb.generation.backend_base import LLMBackend, LLMUsage
+from orbitkb.generation.budget import ModelBudget
 from orbitkb.generation.deterministic_endpoint import render_simple_endpoint
 from orbitkb.generation.embeddings import EmbeddingBackend
 from orbitkb.generation.evidence import AggregateEvidenceSource, EvidenceSource
@@ -346,25 +347,29 @@ class IndexContext:
     knowledge_writer: KnowledgeWriter
     generation_policy: GenerationPolicy
     previous_snapshot: CanonicalSnapshot | None
+    budget: ModelBudget
     source_units_by_route: dict[tuple[str, str], tuple[SourceUnit, ...]] = field(default_factory=dict)
     changed_source_unit_keys: set[str] = field(default_factory=set)
     embedding_backend: EmbeddingBackend | None = None
-    max_llm_invocations: int | None = None
-    budget_exhausted: bool = False
     regenerated_endpoints: set[tuple[str, str]] = field(default_factory=set)
     endpoint_inventory_changed: bool = False
     any_component_regenerated: bool = False
-    llm_invocations: int = 0
     sufficiency_shadow: dict[str, int] = field(default_factory=dict)
     sufficiency_details: list[RouteSufficiency] = field(default_factory=list)
 
+    @property
+    def llm_invocations(self) -> int:
+        return self.budget.invocations
+
     def record_llm_invocation(self, unit: IndexUnit) -> bool:
-        if self.max_llm_invocations is not None and self.llm_invocations >= self.max_llm_invocations:
-            self.budget_exhausted = True
+        if not self.budget.start_attempt():
             return False
-        self.llm_invocations += 1
         unit.record_attempt()
         return True
+
+    def record_usage(self, unit: IndexUnit, usage: LLMUsage) -> None:
+        unit.record_usage(usage)
+        self.budget.record_usage(usage)
 
 
 class UnitGenerator(Protocol):
@@ -441,7 +446,7 @@ class EndpointGenerator:
                     ctx.backend, prompt, load_schema("api_detail"), ctx.root, ctx.failures_root,
                     f"{ctx.name}-{endpoint.method}-{endpoint.path}",
                     on_attempt=lambda unit=unit: ctx.record_llm_invocation(unit),
-                    on_usage=unit.record_usage,
+                    on_usage=lambda usage, unit=unit: ctx.record_usage(unit, usage),
                     on_duration_ms=unit.record_duration,
                     on_prompt=unit.record_prompt,
                 )
@@ -535,7 +540,7 @@ class ComponentGenerator:
                 ctx.backend, prompt, schema, ctx.root, ctx.failures_root,
                 f"{ctx.name}-component-{component_name}",
                 on_attempt=lambda unit=unit: ctx.record_llm_invocation(unit),
-                on_usage=unit.record_usage,
+                on_usage=lambda usage, unit=unit: ctx.record_usage(unit, usage),
                 on_duration_ms=unit.record_duration,
                 on_prompt=unit.record_prompt,
             )
@@ -592,7 +597,7 @@ class PersistenceGenerator:
         generation = generate_with_retry(
             ctx.backend, prompt, load_schema("persistence"), ctx.root, ctx.failures_root, f"{ctx.name}-persistence",
             on_attempt=lambda: ctx.record_llm_invocation(unit),
-            on_usage=unit.record_usage,
+            on_usage=lambda usage: ctx.record_usage(unit, usage),
             on_duration_ms=unit.record_duration,
             on_prompt=unit.record_prompt,
         )
@@ -642,7 +647,7 @@ class MessagingGenerator:
         generation = generate_with_retry(
             ctx.backend, prompt, load_schema("messaging"), ctx.root, ctx.failures_root, f"{ctx.name}-messaging",
             on_attempt=lambda: ctx.record_llm_invocation(unit),
-            on_usage=unit.record_usage,
+            on_usage=lambda usage: ctx.record_usage(unit, usage),
             on_duration_ms=unit.record_duration,
             on_prompt=unit.record_prompt,
         )
@@ -691,7 +696,7 @@ class OverviewGenerator:
         generation = generate_with_retry(
             ctx.backend, prompt, load_schema("service_overview"), ctx.root, ctx.failures_root, f"{ctx.name}-overview",
             on_attempt=lambda: ctx.record_llm_invocation(unit),
-            on_usage=unit.record_usage,
+            on_usage=lambda usage: ctx.record_usage(unit, usage),
             on_duration_ms=unit.record_duration,
             on_prompt=unit.record_prompt,
         )
@@ -742,7 +747,7 @@ def _index_service_unlocked(
     depth_provider: DepthProvider | None = None,
     knowledge_reader: KnowledgeReader | None = None,
     knowledge_writer: KnowledgeWriter | None = None,
-    max_llm_invocations: int | None = None,
+    budget: ModelBudget | None = None,
 ) -> IndexResult:
     failures_root = failures_root or (Path.home() / ".orbitkb" / "failures")
     progress = progress or NullProgressReporter()
@@ -844,10 +849,10 @@ def _index_service_unlocked(
         knowledge_writer=knowledge_writer if knowledge_writer is not None else knowledge_adapter,
         generation_policy=GenerationPolicy(force, is_new, changed, removed),
         previous_snapshot=previous_snapshot,
+        budget=budget or ModelBudget(),
         source_units_by_route=source_units_by_route,
         changed_source_unit_keys=changed_source_unit_keys,
         embedding_backend=embedding_backend,
-        max_llm_invocations=max_llm_invocations,
     )
 
     llm_calls = 0
@@ -893,8 +898,8 @@ def _index_service_unlocked(
 
     status = "partial" if had_failure else "ok"
     run_error = (
-        "LLM invocation budget exhausted; pending units will retry on the next run"
-        if ctx.budget_exhausted else "some units failed, see failures dir" if had_failure else None
+        f"LLM {ctx.budget.stop_reason}; pending units will retry on the next run"
+        if ctx.budget.stop_reason else "some units failed, see failures dir" if had_failure else None
     )
     index_runs_repo.finish_index_run(
         conn, run_id, status, len(changed) + len(removed), llm_calls,
@@ -922,10 +927,10 @@ def index_service(
     knowledge_reader: KnowledgeReader | None = None,
     knowledge_writer: KnowledgeWriter | None = None,
     max_llm_invocations: int | None = None,
+    max_reported_cost_usd: float | None = None,
 ) -> IndexResult:
     """Serialize one service identity while retaining independent-service parallelism."""
-    if max_llm_invocations is not None and max_llm_invocations < 0:
-        raise ValueError("max_llm_invocations must be nonnegative")
+    budget = ModelBudget(max_llm_invocations, max_reported_cost_usd)
     lock_key = f"{repository_id if repository_id is not None else 'standalone'}:{name}"
     if not index_runs_repo.acquire_service_lock(conn, lock_key):
         raise RuntimeError(f"index already in progress for service {name!r}")
@@ -933,7 +938,7 @@ def index_service(
         return _index_service_unlocked(
             conn, name, root, detector, backend, force, failures_root, progress,
             repository_id, embedding_backend, depth_provider, knowledge_reader, knowledge_writer,
-            max_llm_invocations,
+            budget,
         )
     finally:
         index_runs_repo.release_service_lock(conn, lock_key)
@@ -955,6 +960,7 @@ def index_path(
     stack_override: str | None = None,
     depth_provider: DepthProvider | None = None,
     max_llm_invocations: int | None = None,
+    max_reported_cost_usd: float | None = None,
 ) -> list[IndexResult]:
     if stack_override is not None:
         # Explicit "I already know what this is" escape hatch (see `orbitkb index
@@ -990,6 +996,7 @@ def index_path(
             conn, c.name, c.path, c.detector, backend, force=force, progress=progress,
             repository_id=repository_id, embedding_backend=embedding_backend, depth_provider=depth_provider,
             max_llm_invocations=max_llm_invocations,
+            max_reported_cost_usd=max_reported_cost_usd,
         )
         for c in candidates
     ]
