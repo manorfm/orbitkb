@@ -928,9 +928,14 @@ def index_service(
     knowledge_writer: KnowledgeWriter | None = None,
     max_llm_invocations: int | None = None,
     max_reported_cost_usd: float | None = None,
+    max_reported_tokens: int | None = None,
 ) -> IndexResult:
     """Serialize one service identity while retaining independent-service parallelism."""
-    budget = ModelBudget(max_llm_invocations, max_reported_cost_usd)
+    budget = ModelBudget(
+        max_invocations=max_llm_invocations,
+        max_reported_cost_usd=max_reported_cost_usd,
+        max_reported_tokens=max_reported_tokens,
+    )
     lock_key = f"{repository_id if repository_id is not None else 'standalone'}:{name}"
     if not index_runs_repo.acquire_service_lock(conn, lock_key):
         raise RuntimeError(f"index already in progress for service {name!r}")
@@ -961,6 +966,7 @@ def index_path(
     depth_provider: DepthProvider | None = None,
     max_llm_invocations: int | None = None,
     max_reported_cost_usd: float | None = None,
+    max_reported_tokens: int | None = None,
 ) -> list[IndexResult]:
     if stack_override is not None:
         # Explicit "I already know what this is" escape hatch (see `orbitkb index
@@ -997,6 +1003,7 @@ def index_path(
             repository_id=repository_id, embedding_backend=embedding_backend, depth_provider=depth_provider,
             max_llm_invocations=max_llm_invocations,
             max_reported_cost_usd=max_reported_cost_usd,
+            max_reported_tokens=max_reported_tokens,
         )
         for c in candidates
     ]

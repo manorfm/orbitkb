@@ -250,6 +250,10 @@ completed ones. This bounds calls, not tokens or the cost of an individual call.
 cost reaches the nonnegative per-service limit. If a call fails or omits cost,
 later attempts are deferred because the remaining budget is unknown. A single
 call can exceed the limit; use the invocation limit as a separate safeguard.
+`--max-reported-tokens N` similarly uses the backend's reported input plus
+output tokens per service. It does not add cached input tokens again. Missing
+either count defers later attempts. Like the cost limit, it is checked between
+calls and cannot cap tokens consumed by a call already running.
 
 Re-indexing is authoritative for detected service boundaries. Removed services are
 removed from the knowledge base; moved services keep their identity by name, while a

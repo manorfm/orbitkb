@@ -381,6 +381,38 @@ def test_update_accepts_a_reported_cost_budget(tmp_path: Path, capsys):
     assert "cost unavailable" in run["notes"]
 
 
+def test_index_accepts_a_reported_token_budget(tmp_path: Path, capsys):
+    db_path = tmp_path / "token-budget.db"
+
+    exit_code = cli._cmd_index(_parse([
+        "index", str(SAMPLE_ROOT / "orders-service"), "--db", str(db_path),
+        "--max-reported-tokens", "100",
+    ]))
+
+    assert exit_code == 1
+    assert "status=partial" in capsys.readouterr().out
+    run = index_runs_repo.recent_index_runs(open_db(db_path), limit=1)[0]
+    assert run["llm_invocations"] == 1
+    assert "token usage unavailable" in run["notes"]
+
+
+def test_update_accepts_a_reported_token_budget(tmp_path: Path, capsys):
+    db_path = tmp_path / "token-budget.db"
+    assert cli._cmd_index(_parse(["index", str(SAMPLE_ROOT / "orders-service"), "--db", str(db_path)])) == 0
+    capsys.readouterr()
+
+    exit_code = cli._cmd_update(_parse([
+        "update", "orders-service", "--force", "--db", str(db_path),
+        "--max-reported-tokens", "100",
+    ]))
+
+    assert exit_code == 1
+    assert "status=partial" in capsys.readouterr().out
+    run = index_runs_repo.recent_index_runs(open_db(db_path), limit=1)[0]
+    assert run["llm_invocations"] == 1
+    assert "token usage unavailable" in run["notes"]
+
+
 def test_status_command_global(tmp_path: Path, capsys):
     db_path = tmp_path / "test.db"
     cli._cmd_index(_parse(["index", str(SAMPLE_ROOT), "--db", str(db_path)]))

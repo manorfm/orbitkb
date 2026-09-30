@@ -1083,6 +1083,85 @@ def test_reported_cost_budget_rejects_invalid_values(tmp_path: Path, invalid: fl
     assert index_runs_repo.recent_index_runs(conn) == []
 
 
+def test_reported_token_budget_stops_later_attempts_and_keeps_usage(tmp_path: Path):
+    class TokenBackend(FakeOrchestratorBackend):
+        def generate(self, prompt: str, schema: dict, cwd: Path) -> GenerationOutcome:
+            outcome = super().generate(prompt, schema, cwd)
+            return GenerationOutcome(outcome.structured, LLMUsage(
+                input_tokens=40, output_tokens=20, cached_input_tokens=10,
+            ))
+
+    conn = open_db(tmp_path / "token-budget.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    backend = TokenBackend()
+
+    result = index_service(conn, orders.name, orders.path, orders.detector, backend,
+                           max_reported_tokens=65)
+
+    run = index_runs_repo.recent_index_runs(conn, result.service_id, limit=1)[0]
+    assert result.status == "partial"
+    assert result.llm_invocations == backend.calls == 2
+    assert result.input_tokens == 80
+    assert result.output_tokens == 40
+    assert "token budget exhausted" in run["notes"]
+
+
+def test_reported_token_budget_stops_after_missing_usage(tmp_path: Path):
+    conn = open_db(tmp_path / "unknown-tokens.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    backend = FakeOrchestratorBackend()
+
+    result = index_service(conn, orders.name, orders.path, orders.detector, backend,
+                           max_reported_tokens=100)
+
+    run = index_runs_repo.recent_index_runs(conn, result.service_id, limit=1)[0]
+    assert result.status == "partial"
+    assert result.llm_invocations == backend.calls == 1
+    assert "token usage unavailable" in run["notes"]
+
+
+def test_reported_token_budget_requires_both_input_and_output_counts(tmp_path: Path):
+    class PartialUsageBackend(FakeOrchestratorBackend):
+        def generate(self, prompt: str, schema: dict, cwd: Path) -> GenerationOutcome:
+            outcome = super().generate(prompt, schema, cwd)
+            return GenerationOutcome(outcome.structured, LLMUsage(input_tokens=40))
+
+    conn = open_db(tmp_path / "partial-tokens.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    backend = PartialUsageBackend()
+
+    result = index_service(conn, orders.name, orders.path, orders.detector, backend,
+                           max_reported_tokens=100)
+
+    run = index_runs_repo.recent_index_runs(conn, result.service_id, limit=1)[0]
+    assert result.status == "partial"
+    assert result.llm_invocations == backend.calls == 1
+    assert "token usage unavailable" in run["notes"]
+
+
+def test_reported_token_budget_zero_blocks_the_first_attempt(tmp_path: Path):
+    conn = open_db(tmp_path / "zero-tokens.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    backend = FakeOrchestratorBackend()
+
+    result = index_service(conn, orders.name, orders.path, orders.detector, backend,
+                           max_reported_tokens=0)
+
+    assert result.status == "partial"
+    assert result.llm_invocations == backend.calls == 0
+
+
+def test_reported_token_budget_rejects_negative_values(tmp_path: Path):
+    conn = open_db(tmp_path / "token-budget.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+
+    with pytest.raises(ValueError, match="max_reported_tokens"):
+        index_service(conn, orders.name, orders.path, orders.detector, FakeOrchestratorBackend(),
+                      max_reported_tokens=-1)
+
+    assert index_runs_repo.recent_index_runs(conn) == []
+
+
 def test_failed_unit_keeps_retry_count_and_unknown_cost(tmp_path: Path):
     conn = open_db(tmp_path / "failed-units.db")
     orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")

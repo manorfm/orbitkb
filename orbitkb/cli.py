@@ -79,6 +79,7 @@ def _cmd_index(args: argparse.Namespace) -> int:
                 stack_override=args.stack, depth_provider=depth_provider,
                 max_llm_invocations=args.max_llm_invocations,
                 max_reported_cost_usd=args.max_reported_cost_usd,
+                max_reported_tokens=args.max_reported_tokens,
             )
     except (DiscoveryError, GenerationError, ValueError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -120,6 +121,7 @@ def _update_one_service(
             embedding_backend=embedding_backend, depth_provider=depth_provider,
             max_llm_invocations=args.max_llm_invocations,
             max_reported_cost_usd=args.max_reported_cost_usd,
+            max_reported_tokens=args.max_reported_tokens,
         )
     except (ValueError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -745,6 +747,8 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Maximum backend attempts per service in this run (0 allows deterministic work only)")
     p_index.add_argument("--max-reported-cost-usd", type=float, default=None,
                          help="Stop later model attempts when reported cost reaches this per-service USD limit")
+    p_index.add_argument("--max-reported-tokens", type=int, default=None,
+                         help="Stop later attempts when reported input + output tokens reach this per-service limit")
     p_index.add_argument("--sufficiency-details", action="store_true", help="Print per-route evidence sufficiency as JSON lines")
     p_index.add_argument(
         "--verbose", "-v", action="store_true",
@@ -772,6 +776,8 @@ def build_parser() -> argparse.ArgumentParser:
                           help="Maximum backend attempts per service in this run (0 allows deterministic work only)")
     p_update.add_argument("--max-reported-cost-usd", type=float, default=None,
                           help="Stop later model attempts when reported cost reaches this per-service USD limit")
+    p_update.add_argument("--max-reported-tokens", type=int, default=None,
+                          help="Stop later attempts when reported input + output tokens reach this per-service limit")
     p_update.add_argument("--sufficiency-details", action="store_true", help="Print per-route evidence sufficiency as JSON lines")
     p_update.add_argument(
         "--verbose", "-v", action="store_true",
