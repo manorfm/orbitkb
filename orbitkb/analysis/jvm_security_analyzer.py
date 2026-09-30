@@ -94,6 +94,7 @@ _AUTHORIZE_CALL = re.compile(r"(?<![.\w])authorize\s*\(")
 _JAVA_AUTHORIZE_CALL = re.compile(r"\bauthorizeHttpRequests\s*\(")
 _JAVA_MATCHER_CALL = re.compile(r"\.\s*(requestMatchers|anyRequest)\s*\(")
 _JAVA_TERMINAL_CALL = re.compile(r"\s*\.\s*([A-Za-z_]\w*)\s*\(")
+_DYNAMIC_ROUTE_REQUIREMENT = "custom:dynamic_route_pattern"
 _DSL_ROLE_CALL = re.compile(
     r'^(?P<fn>hasRole|hasAnyRole|hasAuthority|hasAnyAuthority)\s*\(\s*'
     r'(?P<args>"[^"]*"(?:\s*,\s*"[^"]*")*)\s*\)$',
@@ -140,6 +141,8 @@ def _dsl_requirement(expr: str, policy_roles: dict[str, tuple[str, ...]]) -> tup
     `("custom:<expr>", ())` for anything else.
     """
     expr = expr.strip()
+    if expr == _DYNAMIC_ROUTE_REQUIREMENT:
+        return expr, ()
     if expr in _DSL_BARE_KEYWORDS:
         return expr, ()
     call_match = _DSL_ROLE_CALL.match(expr)
@@ -171,21 +174,18 @@ def _authorize_pattern(arg: str) -> str | None:
 
 
 def _parse_authorize_args(args: list[str]) -> tuple[str | None, str, str] | None:
-    """(method, route_pattern, requirement_expr) from one `authorize(...)`
-    call's already-split arguments, or `None` when the call isn't one of the
-    two shapes this DSL uses (`authorize(pattern, requirement)` or
-    `authorize(HttpMethod.X, pattern, requirement)`) or its pattern isn't a
-    provable literal.
+    """Return a literal rule or an unknown wildcard for a computed pattern.
     """
     if len(args) == 3:
         method_match = _HTTP_METHOD_ARG.match(args[0])
         if method_match is None:
             return None
         pattern = _authorize_pattern(args[1])
-        return None if pattern is None else (method_match.group("method"), pattern, args[2])
+        return (method_match.group("method"), pattern or "**",
+                args[2] if pattern is not None else _DYNAMIC_ROUTE_REQUIREMENT)
     if len(args) == 2:
         pattern = _authorize_pattern(args[0])
-        return None if pattern is None else (None, pattern, args[1])
+        return (None, pattern or "**", args[1] if pattern is not None else _DYNAMIC_ROUTE_REQUIREMENT)
     return None
 
 
@@ -215,6 +215,12 @@ def _java_filter_chain_requirements(
             else:
                 continue
             if pattern is None:
+                offset = authorize.end() + matcher.start()
+                line = start_line + body.count("\n", 0, offset)
+                requirements.append(SecurityRequirement(
+                    "**", method, None, _DYNAMIC_ROUTE_REQUIREMENT, (),
+                    Evidence(path.relative_to(root).as_posix(), line, line),
+                ))
                 continue
             terminal = _JAVA_TERMINAL_CALL.match(segment, matcher_end + 1)
             if terminal is None:

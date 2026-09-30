@@ -170,10 +170,13 @@ internal fun administrationPolicy() = AuthorizationPolicy(
     ]
 
 
-def test_filter_chain_ignores_a_dynamic_route_pattern(tmp_path: Path):
+def test_filter_chain_marks_a_dynamic_route_pattern_as_unknown(tmp_path: Path):
     path = _write_filter_chain(tmp_path, "                authorize(someComputedPattern, authenticated)")
 
-    assert spring_filter_chain_security_requirements([path], tmp_path) == []
+    requirements = spring_filter_chain_security_requirements([path], tmp_path)
+    assert [(r.route_pattern, r.method, r.requirement) for r in requirements] == [
+        ("**", None, "custom:dynamic_route_pattern"),
+    ]
 
 
 def test_filter_chain_ignores_files_that_never_mention_security_filter_chain(tmp_path: Path):
@@ -204,7 +207,7 @@ class SecurityConfig {
     ]
 
 
-def test_java_filter_chain_ignores_dynamic_matcher_pattern(tmp_path: Path):
+def test_java_filter_chain_marks_dynamic_matcher_pattern_as_unknown(tmp_path: Path):
     path = tmp_path / "SecurityConfig.java"
     path.write_text('''
 class SecurityConfig {
@@ -216,4 +219,7 @@ class SecurityConfig {
 }
 ''', encoding="utf-8")
 
-    assert spring_filter_chain_security_requirements([path], tmp_path) == []
+    requirements = spring_filter_chain_security_requirements([path], tmp_path)
+    assert [(r.route_pattern, r.method, r.requirement) for r in requirements] == [
+        ("**", "GET", "custom:dynamic_route_pattern"),
+    ]

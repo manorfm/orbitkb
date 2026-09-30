@@ -47,8 +47,12 @@ class EvidenceFact:
     def from_canonical(cls, fact: CanonicalFact, path: tuple[str, ...]) -> EvidenceFact:
         confidence = fact.attributes.get("confidence")
         confidence = confidence if isinstance(confidence, str) else None
+        value = dict(fact.attributes)
+        if fact.kind == "security_requirement" and isinstance(fact.subject, RoutePatternKey):
+            value["route_pattern"] = fact.subject.pattern
+            value["method"] = fact.subject.method
         content = {
-            "id": fact.id, "kind": fact.kind, "value": fact.attributes,
+            "id": fact.id, "kind": fact.kind, "value": value,
             "status": fact.status.value, "origin": fact.origin, "confidence": confidence,
             "sources": [asdict(source) for source in fact.sources],
         }

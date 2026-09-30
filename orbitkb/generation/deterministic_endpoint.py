@@ -22,7 +22,9 @@ def render_simple_endpoint(capsule: ContextCapsule, assessment: SufficiencyResul
             or any(fact.kind in {"flow_edge", "service_call"} for fact in capsule.facts)
             or any(fact.status != FactStatus.CONFIRMED or fact.origin != "static"
                    for fact in (*entries, *security))
-            or security[0].value.get("requirement") != "permitAll"):
+            or security[0].value.get("requirement") != "permitAll"
+            or security[0].value.get("route_pattern") != capsule.entrypoints[0].name
+            or security[0].value.get("method") not in (None, "GET")):
         return None
     contract = entries[0].value.get("contract")
     if (not isinstance(contract, dict) or contract.get("request") is not None

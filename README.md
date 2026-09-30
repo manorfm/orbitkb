@@ -586,7 +586,10 @@ request payload. An optional or unresolved body still needs payload evidence.
 If source code declares a body while OpenAPI declares none, the request shape is
 ambiguous. An internal renderer can produce schema-valid API details for a direct
 public GET with an explicit OpenAPI summary and description, a typed response,
-and a complete route flow without calls. For regenerated routes, the indexer now
+an exact public HTTP route rule, and a complete route flow without calls.
+Computed security matchers are retained as unknown rules in declaration order;
+a public wildcard rule alone does not qualify a route for deterministic output.
+For regenerated routes, the indexer now
 compares this candidate with the LLM result in shadow mode. Route details report
 `render_status` (`ineligible`, `matches`, `differs`, or `generation_failed`) and
 the names of differing fields, without storing the candidate text. This is an

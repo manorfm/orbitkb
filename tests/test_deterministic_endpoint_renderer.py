@@ -68,8 +68,9 @@ def test_java_route_with_restricted_filter_rule_is_not_rendered(tmp_path: Path):
     )
     capsule = route_capsule(snapshot, "GET", "/health")
     assert capsule is not None
+    assessment = DeterministicSufficiencyEvaluator().evaluate(capsule)
 
-    assert render_simple_endpoint(capsule, DeterministicSufficiencyEvaluator().evaluate(capsule)) is None
+    assert render_simple_endpoint(capsule, assessment) is None
 
 
 def test_java_method_permit_all_without_public_http_rule_is_not_rendered(tmp_path: Path):
@@ -86,6 +87,51 @@ def test_java_method_permit_all_without_public_http_rule_is_not_rendered(tmp_pat
     assert capsule is not None
 
     assert render_simple_endpoint(capsule, DeterministicSufficiencyEvaluator().evaluate(capsule)) is None
+
+
+def test_public_wildcard_rule_does_not_prove_exact_route_access(tmp_path: Path):
+    copytree(JAVA_CORPUS, tmp_path, dirs_exist_ok=True)
+    security = tmp_path / "SecurityConfig.java"
+    security.write_text(security.read_text().replace(
+        '.requestMatchers(HttpMethod.GET, "/health").permitAll()',
+        '.requestMatchers(HttpMethod.GET, "/**").permitAll()',
+    ), encoding="utf-8")
+    snapshot = project_analysis(ServiceKey("java"), StaticAnalysisEngine().analyze(tmp_path, "jvm-spring"))
+    capsule = route_capsule(snapshot, "GET", "/health")
+    assert capsule is not None
+
+    assert render_simple_endpoint(capsule, DeterministicSufficiencyEvaluator().evaluate(capsule)) is None
+
+
+def test_dynamic_rule_before_public_java_route_blocks_rendering(tmp_path: Path):
+    copytree(JAVA_CORPUS, tmp_path, dirs_exist_ok=True)
+    security = tmp_path / "SecurityConfig.java"
+    security.write_text(security.read_text().replace(
+        '.requestMatchers(HttpMethod.GET, "/health").permitAll()',
+        '.requestMatchers(HttpMethod.GET, route()).authenticated()\n'
+        '            .requestMatchers(HttpMethod.GET, "/health").permitAll()',
+    ), encoding="utf-8")
+    snapshot = project_analysis(ServiceKey("java"), StaticAnalysisEngine().analyze(tmp_path, "jvm-spring"))
+    capsule = route_capsule(snapshot, "GET", "/health")
+    assert capsule is not None
+    assessment = DeterministicSufficiencyEvaluator().evaluate(capsule)
+
+    assert assessment.status("authorization") == SufficiencyStatus.AMBIGUOUS
+    assert render_simple_endpoint(capsule, assessment) is None
+
+
+def test_dynamic_rule_before_public_kotlin_route_blocks_rendering(tmp_path: Path):
+    copytree(CORPUS, tmp_path, dirs_exist_ok=True)
+    security = tmp_path / "SecurityConfig.kt"
+    security.write_text(security.read_text().replace(
+        'authorize(HttpMethod.GET, "/status", permitAll)',
+        'authorize(HttpMethod.GET, computedPath, authenticated)\n'
+        '                authorize(HttpMethod.GET, "/status", permitAll)',
+    ), encoding="utf-8")
+    capsule, assessment = _status_route_from_existing(tmp_path)
+
+    assert assessment.status("authorization") == SufficiencyStatus.AMBIGUOUS
+    assert render_simple_endpoint(capsule, assessment) is None
 
 
 def test_simple_route_without_declared_summary_is_not_rendered(tmp_path: Path):
