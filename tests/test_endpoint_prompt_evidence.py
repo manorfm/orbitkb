@@ -6,6 +6,7 @@ from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.engine import StaticAnalysisEngine
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import apis as apis_repo
+from orbitkb.db.repositories import canonical_snapshots as canonical_snapshots_repo
 from orbitkb.db.repositories import index_runs as index_runs_repo
 from orbitkb.discovery.base import (
     CodeExcerpt,
@@ -20,10 +21,12 @@ from orbitkb.generation.backend_base import GenerationError
 from orbitkb.generation.mock_backend import MockBackend, kind_for_schema
 from orbitkb.generation.orchestrator import _render_api_detail_prompt, index_service
 from orbitkb.generation.route_evidence import route_outbound_hints
+from orbitkb.generation.source_units import SourceUnitCollector
 
 CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/menu-kotlin-service"
 STATUS_CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/status-kotlin-service"
 JAVA_STATUS_CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/status-java-service"
+SAMPLE_ORDER_CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/sample-order-kotlin-service"
 GOLDENS = Path(__file__).resolve().parents[1] / "verify/quality_goldens"
 
 
@@ -81,6 +84,23 @@ def test_endpoint_prompt_uses_route_proven_feign_evidence_without_another_model_
     assert "MenuGateway.kt" in prompt
     assert "(none found)" not in prompt.split("Outbound-call hints", 1)[1].split("Return:", 1)[0]
     assert all(item.render_status == "ineligible" for item in result.sufficiency_details)
+
+
+def test_complex_kotlin_route_prompt_includes_reachable_use_case_and_mediator(tmp_path):
+    backend = RecordingBackend()
+    conn = open_db(tmp_path / "index.db")
+
+    result = index_service(
+        conn, "sample-order", SAMPLE_ORDER_CORPUS, detector_by_id("jvm-spring"), backend,
+    )
+
+    assert result.status == "ok"
+    assert len(backend.endpoint_prompts) == 1
+    prompt = backend.endpoint_prompts[0]
+    assert "AddItemUserCase.kt" in prompt
+    assert "FetchItemMediator.kt" in prompt
+    assert "BillOrderService.kt" in prompt
+    assert "MenuProvider.kt" in prompt
 
 
 def test_simple_route_uses_deterministic_document_without_endpoint_model_call(tmp_path):
@@ -225,6 +245,58 @@ def test_two_routes_share_component_without_reinferring_unchanged_summary(tmp_pa
     assert second.status == "ok"
     assert second.llm_calls == 2  # each endpoint, with shared component and overview reused
     assert len(backend.endpoint_prompts) == 4
+
+
+def test_shared_method_body_change_refreshes_both_routes_and_their_prompt_evidence(tmp_path):
+    root = tmp_path / "service"
+    copytree(CORPUS, root)
+    backend = RecordingBackend()
+    conn = open_db(tmp_path / "index.db")
+    detector = detector_by_id("jvm-spring")
+    first = index_service(conn, "menu-manager", root, detector, backend)
+    assert first.status == "ok"
+    snapshot = canonical_snapshots_repo.read_snapshot(conn, first.service_id)
+    assert snapshot is not None
+    collector = SourceUnitCollector(snapshot, root)
+    first_units = collector.for_route("GET", "/menus/{id}")
+    second_units = collector.for_route("GET", "/menus/by-restaurant/{id}")
+    shared_method = next(unit for unit in first_units if unit.excerpt.file_path.endswith("MenuUseCase.kt"))
+    assert shared_method.unit_key in {unit.unit_key for unit in second_units}
+    assert conn.execute(
+        "SELECT count(*) FROM source_unit_digests WHERE service_id = ? AND unit_key = ?",
+        (first.service_id, shared_method.unit_key),
+    ).fetchone()[0] == 1
+    method = root / "src/main/kotlin/example/menu/MenuUseCase.kt"
+    method.write_text(method.read_text().replace(
+        "menuGateway.fetch(id)", 'menuGateway.fetch(id + "-active")',
+    ), encoding="utf-8")
+
+    second = index_service(conn, "menu-manager", root, detector, backend)
+
+    assert second.status == "ok"
+    assert second.files_changed == 1
+    assert second.llm_calls == 2
+    assert len(backend.endpoint_prompts) == 4
+    assert all('menuGateway.fetch(id + "-active")' in prompt for prompt in backend.endpoint_prompts[-2:])
+
+
+def test_unreachable_method_in_shared_file_does_not_refresh_routes(tmp_path):
+    root = tmp_path / "service"
+    copytree(CORPUS, root)
+    backend = RecordingBackend()
+    conn = open_db(tmp_path / "index.db")
+    detector = detector_by_id("jvm-spring")
+    first = index_service(conn, "menu-manager", root, detector, backend)
+    assert first.status == "ok"
+    method = root / "src/main/kotlin/example/menu/MenuUseCase.kt"
+    method.write_text(method.read_text() + '\nfun unrelated(): String = "new"\n', encoding="utf-8")
+
+    second = index_service(conn, "menu-manager", root, detector, backend)
+
+    assert second.status == "ok"
+    assert second.files_changed == 1
+    assert second.llm_calls == 0
+    assert len(backend.endpoint_prompts) == 2
 
 
 def test_failed_component_is_retried_even_when_endpoint_summary_is_already_stored(tmp_path):

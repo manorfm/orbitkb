@@ -22,6 +22,21 @@ def test_schema_adds_component_digest_without_inventing_existing_input(tmp_path:
     assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()[0] == SCHEMA_VERSION
 
 
+def test_schema_adds_shared_source_unit_digests_to_existing_database(tmp_path: Path):
+    path = tmp_path / "older-source-units.db"
+    conn = open_db(path)
+    conn.execute("DROP TABLE source_unit_digests")
+    conn.execute("UPDATE schema_meta SET value = '48' WHERE key = 'schema_version'")
+    conn.commit()
+    conn.close()
+
+    upgraded = open_db(path)
+
+    columns = {row["name"] for row in upgraded.execute("PRAGMA table_info(source_unit_digests)")}
+    assert {"service_id", "unit_key", "fact_id", "content_digest"} <= columns
+    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()[0] == SCHEMA_VERSION
+
+
 def test_schema_adds_invocation_count_without_rewriting_older_runs(tmp_path: Path):
     path = tmp_path / "legacy-index-runs.db"
     conn = open_db(path)

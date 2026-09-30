@@ -25,6 +25,7 @@ from orbitkb.db.repositories import search as search_repo
 from orbitkb.db.repositories import security_findings as security_findings_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
+from orbitkb.db.repositories import source_units as source_units_repo
 from orbitkb.db.repositories import static_analysis as static_analysis_repo
 from orbitkb.discovery.base import (
     CodeExcerpt,
@@ -69,6 +70,7 @@ from orbitkb.generation.route_evidence import (
     route_documentation_state,
     route_outbound_hints,
 )
+from orbitkb.generation.source_units import SourceUnit, SourceUnitCollector
 from orbitkb.generation.unit import IndexUnit
 from orbitkb.iac.scanner import scan_repository_facts
 from orbitkb.security.findings import find_security_findings
@@ -345,6 +347,8 @@ class IndexContext:
     knowledge_writer: KnowledgeWriter
     generation_policy: GenerationPolicy
     previous_snapshot: CanonicalSnapshot | None
+    source_units_by_route: dict[tuple[str, str], tuple[SourceUnit, ...]] = field(default_factory=dict)
+    changed_source_unit_keys: set[str] = field(default_factory=set)
     embedding_backend: EmbeddingBackend | None = None
     regenerated_endpoints: set[tuple[str, str]] = field(default_factory=set)
     endpoint_inventory_changed: bool = False
@@ -380,7 +384,11 @@ class EndpointGenerator:
             unit = IndexUnit(self.kind, key)
             keep_api_keys.add(key)
             dep_files = endpoint.dependency_files()
-            needs_regen = ctx.force or key not in existing_keys or bool(dep_files & ctx.changed)
+            source_units = ctx.source_units_by_route.get(key, ())
+            needs_regen = (
+                ctx.force or key not in existing_keys or bool(dep_files & ctx.changed)
+                or any(unit.unit_key in ctx.changed_source_unit_keys for unit in source_units)
+            )
             if not needs_regen and snapshot is not None and ctx.previous_snapshot is not None:
                 needs_regen = (
                     route_documentation_state(route_capsule(ctx.previous_snapshot, *key))
@@ -406,9 +414,16 @@ class EndpointGenerator:
             ctx.sufficiency_details.append(detail)
             shadow_status = detail.status
             ctx.sufficiency_shadow[shadow_status] = ctx.sufficiency_shadow.get(shadow_status, 0) + 1
-            source = EvidenceSource.from_excerpts(
-                [endpoint.excerpt, *endpoint.extra_excerpts], MAX_EXCERPT_CHARS,
-            )
+            excerpts = [endpoint.excerpt, *endpoint.extra_excerpts]
+            for source_unit in source_units:
+                excerpt = source_unit.excerpt
+                if not any(
+                    current.file_path == excerpt.file_path
+                    and current.start_line <= excerpt.start_line and current.end_line >= excerpt.end_line
+                    for current in excerpts
+                ):
+                    excerpts.append(excerpt)
+            source = EvidenceSource.from_excerpts(excerpts, MAX_EXCERPT_CHARS)
             if static_doc is None:
                 outbound_evidence = (
                     route_outbound_hints(snapshot, endpoint.method, endpoint.path) if snapshot else None
@@ -427,7 +442,7 @@ class EndpointGenerator:
                 if not generation:
                     unit.status = "failed"
                     outcome.add(unit)
-                    outcome.failed_files |= dep_files
+                    outcome.failed_files |= dep_files | {unit.excerpt.file_path for unit in source_units}
                     ctx.progress.unit_finished(ctx.name, label, "failed")
                     continue
                 result = generation.structured
@@ -762,6 +777,22 @@ def _index_service_unlocked(
     old_hashes = indexed_files_repo.get_indexed_file_hashes(conn, service_id)
     route_sources: set[str] = set()
     current_snapshot = canonical_snapshots_repo.read_snapshot(conn, service_id)
+    source_units_by_route: dict[tuple[str, str], tuple[SourceUnit, ...]] = {}
+    current_unit_digests: dict[str, tuple[str, str]] = {}
+    if current_snapshot is not None:
+        source_collector = SourceUnitCollector(current_snapshot, root)
+        for endpoint in hints.endpoints:
+            key = (endpoint.method, endpoint.path)
+            units = source_collector.for_route(*key)
+            source_units_by_route[key] = units
+            for unit in units:
+                current_unit_digests[unit.unit_key] = (unit.fact_id, unit.digest)
+                route_sources.add(unit.excerpt.file_path)
+    previous_unit_digests = source_units_repo.read_digests(conn, service_id)
+    changed_source_unit_keys = {
+        unit_key for unit_key, (_, digest) in current_unit_digests.items()
+        if previous_unit_digests.get(unit_key) != digest
+    }
     for endpoint in hints.endpoints:
         for route_snapshot in (previous_snapshot, current_snapshot):
             if route_snapshot is None:
@@ -800,6 +831,8 @@ def _index_service_unlocked(
         knowledge_writer=knowledge_writer if knowledge_writer is not None else knowledge_adapter,
         generation_policy=GenerationPolicy(force, is_new, changed, removed),
         previous_snapshot=previous_snapshot,
+        source_units_by_route=source_units_by_route,
+        changed_source_unit_keys=changed_source_unit_keys,
         embedding_backend=embedding_backend,
     )
 
@@ -842,6 +875,7 @@ def _index_service_unlocked(
         indexed_files_repo.set_indexed_file_hash(conn, service_id, rel, h, category)
     if stale_hashes:
         indexed_files_repo.remove_indexed_files(conn, service_id, stale_hashes)
+    source_units_repo.replace_digests(conn, service_id, current_unit_digests)
     conn.commit()
 
     services_repo.set_service_last_commit(conn, service_id, git_head_commit(root))

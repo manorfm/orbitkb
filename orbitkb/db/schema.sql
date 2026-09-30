@@ -427,6 +427,16 @@ CREATE TABLE IF NOT EXISTS components (
 
 CREATE INDEX IF NOT EXISTS idx_components_service ON components(service_id);
 
+-- One content fingerprint per source-proven method, shared by routes that reach it.
+-- Raw source and prompts are never stored here.
+CREATE TABLE IF NOT EXISTS source_unit_digests (
+    service_id      INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+    unit_key        TEXT NOT NULL,
+    fact_id         TEXT NOT NULL,
+    content_digest  TEXT NOT NULL,
+    PRIMARY KEY (service_id, unit_key)
+);
+
 -- Deterministic execution context. These tables intentionally store a bounded
 -- entrypoint-to-boundary flow, not an all-purpose code graph. They are populated
 -- by local AST analyzers and optionally enriched by a depth provider.

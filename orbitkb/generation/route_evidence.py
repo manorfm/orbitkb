@@ -12,7 +12,7 @@ from orbitkb.domain.sufficiency import (
 )
 
 
-def _entrypoints(snapshot: CanonicalSnapshot, method: str, path: str) -> tuple[EntrypointKey, ...]:
+def route_entrypoints(snapshot: CanonicalSnapshot, method: str, path: str) -> tuple[EntrypointKey, ...]:
     return tuple(
         fact.subject for fact in snapshot.facts
         if fact.kind == "entrypoint" and isinstance(fact.subject, EntrypointKey)
@@ -21,7 +21,7 @@ def _entrypoints(snapshot: CanonicalSnapshot, method: str, path: str) -> tuple[E
 
 
 def route_capsule(snapshot: CanonicalSnapshot, method: str, path: str) -> ContextCapsule | None:
-    entrypoints = _entrypoints(snapshot, method, path)
+    entrypoints = route_entrypoints(snapshot, method, path)
     if not entrypoints:
         return None
     composer = EvidenceComposer(KnowledgeNavigator(snapshot))
@@ -67,7 +67,7 @@ def route_documentation_state(capsule: ContextCapsule | None) -> tuple | None:
 
 def route_outbound_hints(snapshot: CanonicalSnapshot, method: str, path: str,
                          *, max_chars: int = 4_000) -> str | None:
-    entrypoints = _entrypoints(snapshot, method, path)
+    entrypoints = route_entrypoints(snapshot, method, path)
     if not entrypoints:
         return None
     composer = EvidenceComposer(KnowledgeNavigator(snapshot))

@@ -608,6 +608,11 @@ Component reuse is keyed by a SHA-256 digest of the rendered prompt, response
 schema and configured backend/model identity; only the digest is stored. Changing
 any of these inputs refreshes the component. Backends without an explicit model
 identity skip this reuse, and `--force` still regenerates it.
+Indexing also fingerprints the source span of each method reached by a route.
+One method fingerprint is shared across all routes that call it. Changing that
+method refreshes those routes and includes its current bounded, redacted excerpt
+in their prompts; changing an unrelated method in the same file does not refresh
+them. The fingerprints contain no source text.
 Run `PYTHONPATH=. .venv/bin/python scripts/report_shadow_eligibility.py` to
 measure eligibility on the repository-owned synthetic corpus with the free mock
 backend. The report contains counts by stack and renderer status. In the
