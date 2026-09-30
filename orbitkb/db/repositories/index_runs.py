@@ -169,16 +169,20 @@ def usage_totals(conn: sqlite3.Connection, service_id: int | None = None) -> dic
     """Cumulative token/cost usage across every index_runs row (optionally scoped to
     one service) — the number `orbitkb status` prints alongside the recent-runs list,
     since that list is capped and shouldn't be mistaken for the full total."""
-    if service_id is not None:
-        row = conn.execute(
-            """SELECT SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
-                      SUM(cost_usd) AS cost_usd
-               FROM index_runs WHERE service_id = ?""",
-            (service_id,),
-        ).fetchone()
-    else:
-        row = conn.execute(
-            "SELECT SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens, SUM(cost_usd) AS cost_usd "
-            "FROM index_runs"
-        ).fetchone()
-    return {"input_tokens": row["input_tokens"], "output_tokens": row["output_tokens"], "cost_usd": row["cost_usd"]}
+    row = conn.execute(
+        """SELECT SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+                  SUM(cost_usd) AS cost_usd,
+                  SUM(CASE WHEN COALESCE(llm_invocations, llm_calls, 0) > 0 AND input_tokens IS NULL
+                      THEN 1 ELSE 0 END) AS unknown_input,
+                  SUM(CASE WHEN COALESCE(llm_invocations, llm_calls, 0) > 0 AND output_tokens IS NULL
+                      THEN 1 ELSE 0 END) AS unknown_output,
+                  SUM(CASE WHEN COALESCE(llm_invocations, llm_calls, 0) > 0 AND cost_usd IS NULL
+                      THEN 1 ELSE 0 END) AS unknown_cost
+           FROM index_runs WHERE (? IS NULL OR service_id = ?)""",
+        (service_id, service_id),
+    ).fetchone()
+    return {
+        "input_tokens": None if row["unknown_input"] else row["input_tokens"],
+        "output_tokens": None if row["unknown_output"] else row["output_tokens"],
+        "cost_usd": None if row["unknown_cost"] else row["cost_usd"],
+    }

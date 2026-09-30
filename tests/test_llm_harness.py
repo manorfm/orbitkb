@@ -68,6 +68,37 @@ def test_usage_is_summed_across_a_validation_retry(tmp_path: Path):
     assert len(attempts) == 2
 
 
+def test_missing_usage_on_a_retry_does_not_turn_partial_cost_into_a_total(tmp_path: Path):
+    backend = ScriptedBackend([
+        GenerationOutcome(structured={"wrong": "shape"}, usage=LLMUsage(input_tokens=50, cost_usd=0.01)),
+        GenerationOutcome(structured={"summary": "ok"}, usage=LLMUsage(output_tokens=10)),
+    ])
+
+    result = generate_with_retry(backend, "prompt", SCHEMA, tmp_path, tmp_path / "failures", "label")
+
+    assert result is not None
+    assert result.usage.input_tokens is None
+    assert result.usage.output_tokens is None
+    assert result.usage.cost_usd is None
+
+
+def test_backend_error_before_a_success_makes_total_usage_unknown(tmp_path: Path):
+    backend = ScriptedBackend([
+        GenerationError("first"),
+        GenerationOutcome(structured={"summary": "ok"}, usage=LLMUsage(input_tokens=50, cost_usd=0.01)),
+    ])
+    observed: list[LLMUsage] = []
+
+    result = generate_with_retry(
+        backend, "prompt", SCHEMA, tmp_path, tmp_path / "failures", "label", on_usage=observed.append,
+    )
+
+    assert result is not None
+    assert backend.calls == len(observed) == 2
+    assert result.usage.input_tokens is None
+    assert result.usage.cost_usd is None
+
+
 def test_usage_stays_none_when_backend_never_reports_it(tmp_path: Path):
     outcome = GenerationOutcome(structured={"summary": "ok"}, usage=LLMUsage())
     backend = ScriptedBackend([outcome])

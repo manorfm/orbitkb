@@ -22,7 +22,10 @@ def test_index_unit_tracks_attempts_usage_and_duration_without_index_context():
     unit.status = "success"
 
     assert unit.llm_invocations == 2
-    assert unit.usage == LLMUsage(input_tokens=10, output_tokens=4, cached_input_tokens=3, cost_usd=0.25)
+    assert unit.usage.input_tokens is None
+    assert unit.usage.output_tokens is None
+    assert unit.usage.cached_input_tokens is None
+    assert unit.usage.cost_usd is None
     assert unit.backend_duration_ms == 20
 
 

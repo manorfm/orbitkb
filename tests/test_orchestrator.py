@@ -914,7 +914,7 @@ def test_invalid_responses_keep_reported_usage_in_unit_metrics(tmp_path: Path):
     assert overview["llm_invocations"] == 2
     assert overview["input_tokens"] == 20
     assert overview["cost_usd"] == pytest.approx(0.04)
-    assert run["cost_usd"] == pytest.approx(0.04)
+    assert run["cost_usd"] is None  # other units did not report cost
     overview_unit = next(
         unit for unit in index_runs_repo.list_run_units(conn, run["id"]) if unit["unit_kind"] == "overview"
     )
@@ -1081,6 +1081,26 @@ def test_reported_cost_budget_rejects_invalid_values(tmp_path: Path, invalid: fl
                       max_reported_cost_usd=invalid)
 
     assert index_runs_repo.recent_index_runs(conn) == []
+
+
+def test_run_usage_remains_unknown_when_any_backend_attempt_omits_it(tmp_path: Path):
+    class MixedUsageBackend(FakeOrchestratorBackend):
+        def generate(self, prompt: str, schema: dict, cwd: Path) -> GenerationOutcome:
+            outcome = super().generate(prompt, schema, cwd)
+            usage = LLMUsage(input_tokens=40, output_tokens=10, cost_usd=0.03) if self.calls == 1 else LLMUsage()
+            return GenerationOutcome(outcome.structured, usage)
+
+    conn = open_db(tmp_path / "mixed-usage.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    result = index_service(conn, orders.name, orders.path, orders.detector, MixedUsageBackend())
+
+    run = index_runs_repo.recent_index_runs(conn, result.service_id, limit=1)[0]
+    assert result.llm_invocations > 1
+    assert result.input_tokens is None
+    assert result.output_tokens is None
+    assert result.cost_usd is None
+    assert run["input_tokens"] is None
+    assert run["cost_usd"] is None
 
 
 def test_reported_token_budget_stops_later_attempts_and_keeps_usage(tmp_path: Path):

@@ -54,6 +54,7 @@ def generate_with_retry(
     current_prompt = safe_prompt
     total_usage = LLMUsage()
     for _attempt in range(2):
+        usage_recorded = False
         try:
             if on_attempt is not None and on_attempt() is False:
                 return None
@@ -65,12 +66,19 @@ def generate_with_retry(
             finally:
                 if on_duration_ms is not None:
                     on_duration_ms((time.perf_counter() - started_at) * 1000)
-            total_usage = total_usage + outcome.usage  # a retried call is still a billed call
+            observed_usage = outcome.usage.observed()
+            total_usage = total_usage + observed_usage  # a retried call is still a billed call
+            usage_recorded = True
             if on_usage is not None:
-                on_usage(outcome.usage)
+                on_usage(observed_usage)
             jsonschema.validate(outcome.structured, schema)
             return GenerationOutcome(structured=redact_structured_values(outcome.structured), usage=total_usage)
         except (GenerationError, jsonschema.ValidationError) as exc:
+            if not usage_recorded:
+                unknown_usage = LLMUsage().observed()
+                total_usage = total_usage + unknown_usage
+                if on_usage is not None:
+                    on_usage(unknown_usage)
             last_error = exc
             current_prompt = (
                 f"{safe_prompt}\n\nYour previous response did not meet generation requirements. "

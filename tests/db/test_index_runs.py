@@ -124,6 +124,23 @@ def test_usage_totals_are_none_when_no_runs_recorded_usage(tmp_path: Path):
     assert totals["cost_usd"] is None
 
 
+def test_usage_totals_do_not_present_a_partial_sum_as_complete(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")
+    known = repository.start_index_run(conn, service_id, "claude")
+    repository.finish_index_run(conn, known, "ok", 1, 1, None,
+                                input_tokens=100, output_tokens=10, cost_usd=0.01)
+    unknown = repository.start_index_run(conn, service_id, "claude")
+    repository.finish_index_run(conn, unknown, "ok", 1, 1, None,
+                                input_tokens=None, output_tokens=20, cost_usd=None)
+    no_call = repository.start_index_run(conn, service_id, "claude")
+    repository.finish_index_run(conn, no_call, "ok", 0, 0, None)
+
+    totals = repository.usage_totals(conn, service_id)
+
+    assert totals == {"input_tokens": None, "output_tokens": 30, "cost_usd": None}
+
+
 def test_recover_unfinished_runs_marks_abandoned_attempts_failed(tmp_path: Path):
     conn = open_db(tmp_path / "runs.db")
     service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "python")

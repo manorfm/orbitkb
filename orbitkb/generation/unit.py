@@ -21,7 +21,7 @@ class IndexUnit:
         self.llm_invocations += 1
 
     def record_usage(self, usage: LLMUsage) -> None:
-        self.usage = self.usage + usage
+        self.usage = self.usage + usage.observed()
 
     def record_duration(self, duration_ms: float) -> None:
         self.backend_duration_ms += duration_ms

@@ -658,6 +658,9 @@ remain separate APIs.
 Index results report `llm_calls` as successfully generated units and
 `llm_invocations` as actual backend attempts, including retries and failed units.
 Older runs show `null` for invocations because that count was not recorded.
+Reported usage totals remain unknown when any attempted call omitted that
+measure; a partial sum is never displayed as a complete total. Older runs
+cannot recover usage that their backends never reported.
 `orbitkb status <service>` also shows generated units, backend invocations, reported
 tokens and cost by generation kind. `backend_duration_ms` sums wall time spent in
 backend calls for that kind, including failed attempts and retries; it excludes

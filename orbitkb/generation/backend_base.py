@@ -13,6 +13,7 @@ class GenerationError(Exception):
 class LLMUsage:
     """Token/cost accounting for one backend call, reported best-effort: a field
     stays None (never guessed) when the backend's CLI output doesn't carry it —
+    including when any attempt in an accumulated run omitted it. This follows
     the same honesty convention the project already uses for e.g.
     persistence_entities.engine = 'unknown'."""
 
@@ -20,16 +21,31 @@ class LLMUsage:
     output_tokens: int | None = None
     cached_input_tokens: int | None = None
     cost_usd: float | None = None
+    observations: int = field(default=0, repr=False, compare=False)
+
+    def observed(self) -> "LLMUsage":
+        """Mark one backend attempt, even when its usage fields are absent."""
+        if self.observations:
+            return self
+        return LLMUsage(
+            self.input_tokens, self.output_tokens, self.cached_input_tokens, self.cost_usd, 1,
+        )
 
     def __add__(self, other: "LLMUsage") -> "LLMUsage":
         def _sum(a: int | float | None, b: int | float | None) -> int | float | None:
-            return a if b is None else (b if a is None else a + b)
+            return a + b if a is not None and b is not None else None
+
+        if not self.observations:
+            return other
+        if not other.observations:
+            return self
 
         return LLMUsage(
             input_tokens=_sum(self.input_tokens, other.input_tokens),
             output_tokens=_sum(self.output_tokens, other.output_tokens),
             cached_input_tokens=_sum(self.cached_input_tokens, other.cached_input_tokens),
             cost_usd=_sum(self.cost_usd, other.cost_usd),
+            observations=self.observations + other.observations,
         )
 
 
