@@ -189,7 +189,7 @@ def test_describe_api_exposes_route_reachable_source_calls_separately(tmp_path: 
     ], [])
     represented = queries.describe_api(conn, "sample-order", "POST", route)
     assert len(represented["calls"]) == 1
-    assert represented["source_calls"] == []
+    assert represented["source_calls"] == order["source_calls"]
 
     flows_repo.replace_analysis(conn, service_id, AnalysisResult())
     removed = queries.describe_api(conn, "sample-order", "POST", route)

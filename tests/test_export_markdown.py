@@ -381,6 +381,9 @@ def test_api_markdown_scopes_source_proven_http_calls_to_reachable_route(tmp_pat
     calls = order_doc.split("## Calls\n", 1)[1].split("\n##", 1)[0]
     assert calls.count("**catalog-service**") == 1
     assert "load catalog" in calls
+    assert "/catalogs/{menuId}/products/{itemId}/summary" in calls
+    assert "/ingredients/{ingredientId}" in calls
+    assert "source-proven" in calls
 
 
 def test_api_markdown_reports_bounded_flow_instead_of_claiming_no_calls(tmp_path: Path):

@@ -13,7 +13,11 @@ from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.domain.navigation import KnowledgeNavigator
-from orbitkb.domain.route_calls import RouteCallStatus, route_declared_http_calls
+from orbitkb.domain.route_calls import (
+    DeclaredHttpCall,
+    RouteCallStatus,
+    route_declared_http_calls,
+)
 from orbitkb.export.dependencies import unresolved_declared_http_targets
 from orbitkb.export.messaging import has_confirmed_redis_publication
 from orbitkb.export.persistence import has_unrepresented_mongo_access
@@ -33,6 +37,27 @@ def _fmt_calls(calls: list[sqlite3.Row]) -> list[str]:
             line += f" — needs: {data_needed}"
         lines.append(line)
     return lines or ["- (no dependency detected)"]
+
+
+def _fmt_api_calls(calls: list[sqlite3.Row], source_calls: tuple[DeclaredHttpCall, ...]) -> list[str]:
+    lines = _fmt_calls(calls) if calls else []
+    represented: set[str] = set()
+    for index, call in enumerate(calls):
+        target = call["to_service_name"]
+        if call["call_kind"] != "http" or target in represented:
+            continue
+        operations = [" ".join(part for part in (source.method, source.path) if part)
+                      for source in source_calls if source.target_service == target]
+        if operations:
+            lines[index] += f" — source-proven operations: {'; '.join(operations)}"
+            represented.add(target)
+    for source in source_calls:
+        if source.target_service in represented:
+            continue
+        operation = " ".join(part for part in (source.method, source.path) if part)
+        suffix = f": {operation}" if operation else ""
+        lines.append(f"- **{source.target_service}** (http (unresolved), source-proven){suffix}")
+    return lines
 
 
 def _fmt_messages(messages: list[sqlite3.Row]) -> list[str]:
@@ -126,7 +151,6 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
                 headers = flows_repo.list_static_api_headers_for_route(conn, svc["id"], a["method"], a["path"])
                 source_calls = route_declared_http_calls(
                     navigator, a["method"], a["path"],
-                    (call["to_service_name"] for call in api_calls),
                 )
 
                 api_lines = [f"# {a['method']} {a['path']}", "", api_row["description"] or "", "", "## Response"]
@@ -135,11 +159,7 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
                     names = [header["name"] for header in headers if header["direction"] == direction]
                     if names:
                         api_lines += ["", f"## {direction.title()} headers", *(f"- `{name}`" for name in names)]
-                call_lines = _fmt_calls(api_calls) if api_calls else []
-                for call in source_calls.calls:
-                    operation = " ".join(part for part in (call.method, call.path) if part)
-                    suffix = f": {operation}" if operation else ""
-                    call_lines.append(f"- **{call.target_service}** (http (unresolved), source-proven){suffix}")
+                call_lines = _fmt_api_calls(api_calls, source_calls.calls)
                 if source_calls.status is RouteCallStatus.LIMITED:
                     call_lines.append("- (static flow limited; other calls may exist)")
                 elif source_calls.status is RouteCallStatus.UNASSESSED:

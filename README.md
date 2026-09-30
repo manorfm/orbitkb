@@ -287,10 +287,12 @@ They also list source-proven request and response header names for that exact
 method and path; header values are not captured or exported.
 When a route's bounded static flow reaches an HTTP client, its API page lists
 the declared operation even without a model-generated call. The target remains
-marked unresolved; an already indexed call for that target takes precedence.
+marked unresolved. When an indexed HTTP call has the same target, its reason
+and the source-proven operations appear together on one line.
 If traversal reaches its limit, the page says that other calls may exist.
-`describe_api` exposes the same supplemental calls in `source_calls`, separate
-from generated `calls`. `source_calls_status` distinguishes `unassessed` (no
+`describe_api` exposes source-proven operations in `source_calls`, separate
+from generated `calls`, including when they share a target.
+`source_calls_status` distinguishes `unassessed` (no
 matching source flow), `assessed` (bounded traversal ran), and `limited`
 (traversal cap reached). Markdown shows unknown calls when the source flow is
 unavailable. A declared target is not a confirmed runtime address.

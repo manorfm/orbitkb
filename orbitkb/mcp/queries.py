@@ -464,7 +464,7 @@ def describe_api(conn: sqlite3.Connection, service: str, method: str, path: str,
     snapshot = canonical_snapshots_repo.read_snapshot(conn, row["id"])
     source_calls = route_declared_http_calls(
         KnowledgeNavigator(snapshot) if snapshot is not None else None,
-        api["method"], api["path"], (call["to_service_name"] for call in calls),
+        api["method"], api["path"],
     )
     validations = apis_repo.list_validations_for_api(conn, api["id"])
     response_shape = json.loads(api["response_shape"] or "[]")

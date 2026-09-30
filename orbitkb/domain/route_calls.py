@@ -1,6 +1,5 @@
 """Source-proven outbound HTTP calls in one bounded API flow."""
 
-from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -32,15 +31,14 @@ class RouteHttpCalls:
 
 
 def route_declared_http_calls(
-    navigator: KnowledgeNavigator | None, method: str, path: str, represented_targets: Iterable[str],
+    navigator: KnowledgeNavigator | None, method: str, path: str,
 ) -> RouteHttpCalls:
-    """Reach confirmed HTTP calls, omitting targets already represented by indexed calls."""
+    """Reach confirmed HTTP operations independently of indexed calls."""
     if navigator is None:
         return RouteHttpCalls((), RouteCallStatus.UNASSESSED)
     entrypoints = route_entrypoints(navigator.snapshot, method, path)
     if not entrypoints:
         return RouteHttpCalls((), RouteCallStatus.UNASSESSED)
-    represented = set(represented_targets)
     calls: set[DeclaredHttpCall] = set()
     truncated = False
     for entrypoint in entrypoints:
@@ -50,7 +48,7 @@ def route_declared_http_calls(
             target = fact.attributes.get("target_service")
             if (fact.kind != "service_call" or fact.status is not FactStatus.CONFIRMED
                     or fact.attributes.get("protocol") != "http" or not isinstance(target, str)
-                    or not target or target in represented):
+                    or not target):
                 continue
             calls.add(DeclaredHttpCall(
                 target, fact.attributes.get("target_method"), fact.attributes.get("target_path"),
