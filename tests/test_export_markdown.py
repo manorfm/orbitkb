@@ -255,3 +255,33 @@ def test_markdown_does_not_repeat_mongo_access_when_entity_engine_is_known(tmp_p
     section = markdown.split("## Persistence\n", 1)[1].split("\n## Messaging", 1)[0]
     assert "**orders** (document)" in section
     assert "collection unresolved" not in section
+
+
+def test_markdown_marks_indexed_call_unresolved_in_service_and_api_docs(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "menu-service", "/tmp/menu", "jvm-spring")
+    api_id = apis_repo.upsert_api(conn, service_id, "GET", "/menus", "s", "d", [], [])
+    service_calls_repo.replace_calls_for_api(
+        conn, service_id, api_id,
+        [{"to_service_name": "RestaurantClient", "call_kind": "http", "reason": "lookup",
+          "data_needed": [], "purpose_kind": "data_fetch", "confidence": 0.6,
+          "target_kind": "unknown"}], [],
+    )
+
+    export_markdown(conn, tmp_path / "docs")
+
+    service_doc = (tmp_path / "docs/menu-service/index.md").read_text(encoding="utf-8")
+    api_doc = next((tmp_path / "docs/menu-service/apis").glob("*.md")).read_text(encoding="utf-8")
+    mermaid = generate_topology_diagram(conn)
+    assert "**RestaurantClient** (http (unresolved), data_fetch)" in service_doc
+    assert "**RestaurantClient** (http (unresolved), data_fetch)" in api_doc
+    assert 'svc_menu_service -.->|http (unresolved)| ext_restaurantclient' in mermaid
+
+    services_repo.ensure_service(conn, "RestaurantClient", "/tmp/restaurant", "jvm-spring")
+    service_calls_repo.reconcile_service_call_targets(conn)
+    export_markdown(conn, tmp_path / "docs")
+    service_doc = (tmp_path / "docs/menu-service/index.md").read_text(encoding="utf-8")
+    api_doc = next((tmp_path / "docs/menu-service/apis").glob("*.md")).read_text(encoding="utf-8")
+    assert "**RestaurantClient** (http, data_fetch)" in service_doc
+    assert "**RestaurantClient** (http, data_fetch)" in api_doc
+    assert "RestaurantClient** (http (unresolved)" not in service_doc + api_doc

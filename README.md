@@ -283,6 +283,8 @@ detected API (response shape, calls it makes, validations/constraints).
 The service dependency list also includes source-proven HTTP client targets
 when no indexed call represents them, labeled `unresolved` rather than treated
 as a confirmed destination.
+Indexed calls with an unresolved target carry the same label in service and API
+Markdown pages and in the topology diagram.
 The Messaging section also reports a source-confirmed Redis Pub/Sub publisher;
 its channel remains unresolved when static analysis did not identify it.
 The Persistence section likewise reports confirmed MongoDB template access

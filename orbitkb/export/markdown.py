@@ -25,7 +25,8 @@ def _fmt_calls(calls: list[sqlite3.Row]) -> list[str]:
     lines = []
     for c in calls:
         data_needed = ", ".join(json.loads(c["data_needed"] or "[]"))
-        line = f"- **{c['to_service_name']}** ({c['call_kind']}, {c['purpose_kind']}): {c['reason']}"
+        call_kind = c["call_kind"] + (" (unresolved)" if c["target_kind"] == "unknown" else "")
+        line = f"- **{c['to_service_name']}** ({call_kind}, {c['purpose_kind']}): {c['reason']}"
         if data_needed:
             line += f" — needs: {data_needed}"
         lines.append(line)
