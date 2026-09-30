@@ -1,8 +1,4 @@
-"""Measure renderer eligibility on repository-owned fixtures without a paid model.
-
-Mock output is only a schema-shaped comparison target. Differences are not a
-semantic quality score and must not be used alone to enable zero-call generation.
-"""
+"""Measure deterministic endpoint usage on repository-owned fixtures without a paid model."""
 
 from __future__ import annotations
 
@@ -33,7 +29,6 @@ DIRECT_SOURCES = (
 def summarize_routes(results: Sequence[tuple[str, IndexResult]]) -> dict:
     """Aggregate only non-sensitive counts from one fresh indexing run."""
     statuses: Counter[str] = Counter()
-    fields: Counter[str] = Counter()
     by_stack: dict[str, dict[str, int]] = {}
     route_count = 0
     eligible_count = 0
@@ -46,13 +41,11 @@ def summarize_routes(results: Sequence[tuple[str, IndexResult]]) -> dict:
             if detail.render_status != "ineligible":
                 eligible_count += 1
                 stack_count["eligible_routes"] += 1
-            fields.update(detail.differing_fields)
     return {
         "services": len(results),
         "regenerated_routes": route_count,
         "eligible_routes": eligible_count,
         "render_statuses": dict(sorted(statuses.items())),
-        "differing_fields": dict(sorted(fields.items())),
         "by_stack": dict(sorted(by_stack.items())),
         "llm_calls": sum(result.llm_calls for _, result in results),
         "backend": "mock",

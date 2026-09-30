@@ -568,9 +568,8 @@ only unrelated flow facts does not hide a confirmed authorization rule.
 Endpoint generation now adds compact, route-reachable HTTP call evidence from the
 canonical snapshot to its existing source excerpts and outbound hints. It labels
 limited navigation or omitted calls instead of treating missing evidence as no call.
-The endpoint indexer also assesses canonical evidence by documentation dimension
-in shadow mode. `IndexResult.sufficiency_shadow` counts assessed statuses for
-regenerated endpoints; this does not skip generation or change LLM call counts.
+The endpoint indexer assesses canonical evidence by documentation dimension.
+`IndexResult.sufficiency_shadow` counts assessed statuses for regenerated endpoints.
 The assessment distinguishes a source-proven integration target from its business
 purpose and exchanged data. A Feign destination alone leaves
 `integration_purpose` ambiguous, so it cannot authorize zero-call generation.
@@ -584,27 +583,25 @@ remain missing; other incomplete dimensions still require generation.
 The same assessment treats a bodyless OpenAPI operation as having a known empty
 request payload. An optional or unresolved body still needs payload evidence.
 If source code declares a body while OpenAPI declares none, the request shape is
-ambiguous. An internal renderer can produce schema-valid API details for a direct
+ambiguous. A deterministic renderer produces schema-valid API details for a direct
 public GET with an explicit OpenAPI summary and description, a typed response,
 an exact public HTTP route rule, and a complete route flow without calls.
 Computed security matchers are retained as unknown rules in declaration order;
 a public wildcard rule alone does not qualify a route for deterministic output.
-For regenerated routes, the indexer now
-compares this candidate with the LLM result in shadow mode. Route details report
-`render_status` (`ineligible`, `matches`, `differs`, or `generation_failed`) and
-the names of differing fields, without storing the candidate text. This is an
-exact field comparison, not a measure of semantic quality. LLM generation and
-its persisted result remain unchanged, so call counts do not fall yet.
+For regenerated routes, the indexer uses this document without an endpoint LLM
+call when all conditions hold. Other routes keep the existing LLM path. Route
+details report `render_status` as `used` or `ineligible`. Two source-reviewed
+synthetic goldens verify all six API detail fields for Kotlin and Java examples.
 Run `PYTHONPATH=. .venv/bin/python scripts/report_shadow_eligibility.py` to
 measure eligibility on the repository-owned synthetic corpus with the free mock
-backend. The report contains counts by stack, renderer status and differing
-field name. In the current corpus, 2 of 21 regenerated routes are eligible:
+backend. The report contains counts by stack and renderer status. In the
+current corpus, 2 of 21 regenerated routes use deterministic output:
 one Kotlin route and one Java route, both with a confirmed public HTTP filter
 rule. A restricted Java filter rule and a standalone method-level
-`@PreAuthorize("permitAll()")` remain ineligible. The 49 reported `llm_calls`
-are mock generation slots, not paid requests.
-`quality_evaluated: false` is intentional: a difference from canned mock text
-does not establish a quality regression or approve zero-call generation.
+`@PreAuthorize("permitAll()")` remain ineligible. The 47 reported `llm_calls`
+are mock backend generations, not paid requests; two endpoint calls were avoided.
+`quality_evaluated: false` means this synthetic report does not measure quality
+on a real project.
 Use `orbitkb index <path> --sufficiency-details` or
 `orbitkb update <service> --sufficiency-details` to print one JSON line per
 regenerated route with each dimension's status, reason and evidence IDs. An

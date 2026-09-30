@@ -9,7 +9,7 @@ def test_summary_counts_eligible_routes_without_treating_mock_diffs_as_quality()
         ("jvm-spring", IndexResult(
             service_name="status", service_id=1, files_changed=2, llm_calls=3, status="ok",
             sufficiency_details=(
-                RouteSufficiency("GET", "/status", None, "differs", ("summary", "description")),
+                RouteSufficiency("GET", "/status", None, "used"),
                 RouteSufficiency("POST", "/items", None),
             ),
         )),
@@ -25,8 +25,7 @@ def test_summary_counts_eligible_routes_without_treating_mock_diffs_as_quality()
         "services": 2,
         "regenerated_routes": 3,
         "eligible_routes": 1,
-        "render_statuses": {"differs": 1, "ineligible": 2},
-        "differing_fields": {"description": 1, "summary": 1},
+        "render_statuses": {"ineligible": 2, "used": 1},
         "by_stack": {
             "go": {"regenerated_routes": 1, "eligible_routes": 0},
             "jvm-spring": {"regenerated_routes": 2, "eligible_routes": 1},
@@ -44,6 +43,6 @@ def test_repo_corpus_report_includes_direct_jvm_fixtures(tmp_path: Path):
     assert report["regenerated_routes"] == 21
     assert report["eligible_routes"] == 2
     assert report["render_statuses"]["ineligible"] == 19
-    assert report["render_statuses"]["differs"] == 2
+    assert report["render_statuses"]["used"] == 2
     assert report["by_stack"]["jvm-spring"]["eligible_routes"] == 2
     assert report["quality_evaluated"] is False

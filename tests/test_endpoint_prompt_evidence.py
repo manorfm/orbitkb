@@ -1,8 +1,11 @@
+import json
 from pathlib import Path
 
 from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.engine import StaticAnalysisEngine
 from orbitkb.db.connection import open_db
+from orbitkb.db.repositories import apis as apis_repo
+from orbitkb.db.repositories import index_runs as index_runs_repo
 from orbitkb.discovery.base import (
     CodeExcerpt,
     EndpointHint,
@@ -11,13 +14,14 @@ from orbitkb.discovery.base import (
 )
 from orbitkb.discovery.registry import detector_by_id
 from orbitkb.domain.canonical import ServiceKey
-from orbitkb.generation.backend_base import GenerationOutcome
 from orbitkb.generation.mock_backend import MockBackend, kind_for_schema
 from orbitkb.generation.orchestrator import _render_api_detail_prompt, index_service
 from orbitkb.generation.route_evidence import route_outbound_hints
 
 CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/menu-kotlin-service"
 STATUS_CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/status-kotlin-service"
+JAVA_STATUS_CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/status-java-service"
+GOLDENS = Path(__file__).resolve().parents[1] / "verify/quality_goldens"
 
 
 class RecordingBackend(MockBackend):
@@ -28,23 +32,6 @@ class RecordingBackend(MockBackend):
         if kind_for_schema(schema) == "api_detail":
             self.endpoint_prompts.append(prompt)
         return super().generate(prompt, schema, cwd)
-
-
-class MatchingBackend(RecordingBackend):
-    def generate(self, prompt, schema, cwd):
-        if kind_for_schema(schema) != "api_detail":
-            return super().generate(prompt, schema, cwd)
-        self.endpoint_prompts.append(prompt)
-        return GenerationOutcome(structured={
-            "summary": "Get service status",
-            "description": "Returns the current service status.",
-            "response_shape": [{"field": "value", "type_desc": "String"}],
-            "request_shape": [],
-            "calls": [],
-            "validations": [{
-                "kind": "authorization", "description": "Public access is permitted.",
-            }],
-        })
 
 
 def test_endpoint_prompt_uses_route_proven_feign_evidence_without_another_model_call(tmp_path):
@@ -74,32 +61,47 @@ def test_endpoint_prompt_uses_route_proven_feign_evidence_without_another_model_
     assert all(item.render_status == "ineligible" for item in result.sufficiency_details)
 
 
-def test_simple_route_shadow_compares_fields_without_skipping_model_call(tmp_path):
+def test_simple_route_uses_deterministic_document_without_endpoint_model_call(tmp_path):
     backend = RecordingBackend()
     conn = open_db(tmp_path / "index.db")
 
     result = index_service(conn, "status", STATUS_CORPUS, detector_by_id("jvm-spring"), backend)
 
     assert result.status == "ok"
-    assert len(backend.endpoint_prompts) == 1
-    assert result.llm_invocations >= 1
+    assert backend.endpoint_prompts == []
+    assert result.llm_calls == result.llm_invocations == 2
     assert result.sufficiency_shadow == {"enough": 1}
     detail = result.sufficiency_details[0]
-    assert detail.render_status == "differs"
-    assert detail.differing_fields == ("description", "response_shape", "summary", "validations")
+    assert detail.render_status == "used"
     assert detail.status == "enough"
+    golden = json.loads((GOLDENS / "status-kotlin.json").read_text(encoding="utf-8"))
+    api = apis_repo.get_api_by_key(conn, result.service_id, "GET", "/status")
+    assert api is not None
+    assert api["summary"] == golden["summary"]
+    assert api["description"] == golden["description"]
+    assert json.loads(api["response_shape"]) == golden["response_shape"]
+    run = index_runs_repo.recent_index_runs(conn, result.service_id)[0]
+    endpoint_usage = next(row for row in index_runs_repo.list_unit_usage(conn, run["id"])
+                          if row["unit_kind"] == "endpoint")
+    assert endpoint_usage["generated_units"] == 1
+    assert endpoint_usage["llm_invocations"] == 0
 
 
-def test_simple_route_shadow_reports_matching_fields(tmp_path):
-    backend = MatchingBackend()
+def test_java_simple_route_uses_deterministic_document_without_endpoint_model_call(tmp_path):
+    backend = RecordingBackend()
     conn = open_db(tmp_path / "index.db")
 
-    result = index_service(conn, "status", STATUS_CORPUS, detector_by_id("jvm-spring"), backend)
+    result = index_service(conn, "status-java", JAVA_STATUS_CORPUS, detector_by_id("jvm-spring"), backend)
 
     assert result.status == "ok"
-    assert len(backend.endpoint_prompts) == 1
-    assert result.sufficiency_details[0].render_status == "matches"
-    assert result.sufficiency_details[0].differing_fields == ()
+    assert backend.endpoint_prompts == []
+    assert result.sufficiency_details[0].render_status == "used"
+    api = apis_repo.get_api_by_key(conn, result.service_id, "GET", "/health")
+    golden = json.loads((GOLDENS / "status-java.json").read_text(encoding="utf-8"))
+    assert api is not None
+    assert api["summary"] == golden["summary"]
+    assert api["description"] == golden["description"]
+    assert json.loads(api["response_shape"]) == golden["response_shape"]
 
 
 def test_limited_route_evidence_reports_omitted_calls_instead_of_claiming_none():

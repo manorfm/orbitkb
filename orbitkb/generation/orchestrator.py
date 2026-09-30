@@ -98,7 +98,6 @@ class RouteSufficiency:
     path: str
     assessment: SufficiencyResult | None
     render_status: str = "ineligible"
-    differing_fields: tuple[str, ...] = ()
 
     @property
     def status(self) -> str:
@@ -303,11 +302,14 @@ class UnitOutcome:
     usage: LLMUsage = field(default_factory=LLMUsage)
     backend_duration_ms: float = 0.0
     units: list[IndexUnit] = field(default_factory=list)
+    generated_units: int = 0
 
     def add(self, unit: IndexUnit) -> None:
         self.units.append(unit)
         if unit.status == "success":
-            self.llm_calls += 1
+            self.generated_units += 1
+            if unit.llm_invocations:
+                self.llm_calls += 1
         self.had_failure = self.had_failure or unit.status == "failed"
         self.usage = self.usage + unit.usage
         self.backend_duration_ms += unit.backend_duration_ms
@@ -381,45 +383,40 @@ class EndpointGenerator:
             capsule = route_capsule(snapshot, endpoint.method, endpoint.path) if snapshot else None
             sufficiency = DeterministicSufficiencyEvaluator().evaluate(capsule) if capsule else None
             static_doc = render_simple_endpoint(capsule, sufficiency) if capsule and sufficiency else None
-            detail = RouteSufficiency(endpoint.method, endpoint.path, sufficiency)
+            detail = RouteSufficiency(
+                endpoint.method, endpoint.path, sufficiency,
+                render_status="used" if static_doc is not None else "ineligible",
+            )
             ctx.sufficiency_details.append(detail)
             shadow_status = detail.status
             ctx.sufficiency_shadow[shadow_status] = ctx.sufficiency_shadow.get(shadow_status, 0) + 1
             source = EvidenceSource.from_excerpts(
                 [endpoint.excerpt, *endpoint.extra_excerpts], MAX_EXCERPT_CHARS,
             )
-            outbound_evidence = (
-                route_outbound_hints(snapshot, endpoint.method, endpoint.path) if snapshot else None
-            )
-            prompt = _render_api_detail_prompt(
-                ctx.name, ctx.detector.id, endpoint, ctx.hints, source,
-                outbound_evidence=outbound_evidence,
-            )
-            generation = generate_with_retry(
-                ctx.backend, prompt, load_schema("api_detail"), ctx.root, ctx.failures_root,
-                f"{ctx.name}-{endpoint.method}-{endpoint.path}",
-                on_attempt=lambda unit=unit: ctx.record_llm_invocation(unit),
-                on_usage=unit.record_usage,
-                on_duration_ms=unit.record_duration,
-            )
-            if not generation:
-                if static_doc is not None:
-                    ctx.sufficiency_details[-1] = replace(detail, render_status="generation_failed")
-                unit.status = "failed"
-                outcome.add(unit)
-                outcome.failed_files |= dep_files
-                ctx.progress.unit_finished(ctx.name, label, "failed")
-                continue
-            result = generation.structured
-            if static_doc is not None:
-                differing_fields = tuple(sorted(
-                    key for key, value in static_doc.items() if result.get(key) != value
-                ))
-                ctx.sufficiency_details[-1] = replace(
-                    detail,
-                    render_status="differs" if differing_fields else "matches",
-                    differing_fields=differing_fields,
+            if static_doc is None:
+                outbound_evidence = (
+                    route_outbound_hints(snapshot, endpoint.method, endpoint.path) if snapshot else None
                 )
+                prompt = _render_api_detail_prompt(
+                    ctx.name, ctx.detector.id, endpoint, ctx.hints, source,
+                    outbound_evidence=outbound_evidence,
+                )
+                generation = generate_with_retry(
+                    ctx.backend, prompt, load_schema("api_detail"), ctx.root, ctx.failures_root,
+                    f"{ctx.name}-{endpoint.method}-{endpoint.path}",
+                    on_attempt=lambda unit=unit: ctx.record_llm_invocation(unit),
+                    on_usage=unit.record_usage,
+                    on_duration_ms=unit.record_duration,
+                )
+                if not generation:
+                    unit.status = "failed"
+                    outcome.add(unit)
+                    outcome.failed_files |= dep_files
+                    ctx.progress.unit_finished(ctx.name, label, "failed")
+                    continue
+                result = generation.structured
+            else:
+                result = static_doc
             evidence = source.pointers
             ctx.knowledge_writer.save_endpoint(
                 ctx.service_id,
@@ -753,7 +750,7 @@ def _index_service_unlocked(
                 unit.usage.cost_usd, unit.backend_duration_ms, unit.usage.cached_input_tokens,
             )
         index_runs_repo.record_unit_usage(
-            conn, run_id, generator.kind, outcome.llm_calls,
+            conn, run_id, generator.kind, outcome.generated_units,
             ctx.llm_invocations - invocations_before, outcome.had_failure,
             outcome.usage.input_tokens, outcome.usage.output_tokens, outcome.usage.cost_usd,
             outcome.backend_duration_ms,
