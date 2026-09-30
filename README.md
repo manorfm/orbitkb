@@ -696,6 +696,8 @@ new service and file change checks.
 Endpoint, persistence and messaging evidence pointers include only excerpts
 that fit in their rendered prompt sections. Main code and configuration have
 separate excerpt budgets; text is redacted before it reaches the backend.
+Consecutive excerpts from the same file share one prompt block while each
+included excerpt keeps its own evidence pointer.
 
 Architecture rules have fact-mutation tests for cycles and fan-out (both at
 service level and their intra-service component analog), shared storage,

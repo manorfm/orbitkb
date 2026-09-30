@@ -101,6 +101,9 @@ def test_complex_kotlin_route_prompt_includes_reachable_use_case_and_mediator(tm
     assert "FetchItemMediator.kt" in prompt
     assert "BillOrderService.kt" in prompt
     assert "MenuProvider.kt" in prompt
+    assert "ItemIn.kt (lines 17-18)" in prompt
+    assert "fun Jwt.getUserId()" in prompt
+    assert "fun IngredientIn.toDTO()" in prompt
 
 
 def test_simple_route_uses_deterministic_document_without_endpoint_model_call(tmp_path):

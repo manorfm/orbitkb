@@ -26,21 +26,36 @@ class EvidenceSource:
         parts: list[str] = []
         pointers: list[dict] = []
         total = 0
+        last_file: str | None = None
+        last_start = last_end = 0
+        last_text = ""
         for excerpt in excerpts:
-            block = (
-                f"--- {excerpt.file_path} (lines {excerpt.start_line}-{excerpt.end_line}) ---\n"
-                f"{redact_sensitive_values(excerpt.text)}\n"
+            safe_text = redact_sensitive_values(excerpt.text)
+            adjacent = (
+                bool(parts) and excerpt.file_path == last_file
+                and excerpt.start_line == last_end + 1
             )
-            if total + len(block) > max_chars:
+            block_text = f"{last_text}\n{safe_text}" if adjacent else safe_text
+            block_start = last_start if adjacent else excerpt.start_line
+            block = f"--- {excerpt.file_path} (lines {block_start}-{excerpt.end_line}) ---\n{block_text}\n"
+            added_chars = len(block) - len(parts[-1]) if adjacent else len(block)
+            if total + added_chars > max_chars:
                 parts.append("... (truncated, excerpt budget reached)")
                 break
-            parts.append(block)
+            if adjacent:
+                parts[-1] = block
+            else:
+                parts.append(block)
             pointers.append({
                 "file": excerpt.file_path,
                 "start_line": excerpt.start_line,
                 "end_line": excerpt.end_line,
             })
-            total += len(block)
+            total += added_chars
+            last_file = excerpt.file_path
+            last_start = block_start
+            last_end = excerpt.end_line
+            last_text = block_text
         return cls("\n".join(parts) if parts else "(no excerpts found)", pointers)
 
 

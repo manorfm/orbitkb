@@ -20,6 +20,36 @@ def test_evidence_source_keeps_empty_fallback_and_no_pointers():
     assert source.pointers == []
 
 
+def test_evidence_source_packs_consecutive_lines_without_losing_text_or_pointers():
+    first = CodeExcerpt("api.kt", 10, 10, "fun first() = 1")
+    second = CodeExcerpt("api.kt", 11, 12, "fun second() = 2\nfun third() = 3")
+    other = CodeExcerpt("other.kt", 1, 1, "fun other() = 4")
+
+    source = EvidenceSource.from_excerpts([first, second, other], max_chars=500)
+
+    assert source.prompt_text.count("--- api.kt") == 1
+    assert "--- api.kt (lines 10-12) ---\nfun first() = 1\nfun second() = 2\nfun third() = 3" in source.prompt_text
+    assert "--- other.kt (lines 1-1) ---" in source.prompt_text
+    assert source.pointers == [
+        {"file": "api.kt", "start_line": 10, "end_line": 10},
+        {"file": "api.kt", "start_line": 11, "end_line": 12},
+        {"file": "other.kt", "start_line": 1, "end_line": 1},
+    ]
+
+
+def test_evidence_source_packs_only_when_both_excerpts_fit_the_budget():
+    first = CodeExcerpt("api.kt", 10, 10, "fun first() = 1")
+    second = CodeExcerpt("api.kt", 11, 11, "fun second() = 2")
+    budget = len("--- api.kt (lines 10-10) ---\nfun first() = 1\n")
+
+    source = EvidenceSource.from_excerpts([first, second], max_chars=budget)
+
+    assert "fun first() = 1" in source.prompt_text
+    assert "fun second() = 2" not in source.prompt_text
+    assert "... (truncated, excerpt budget reached)" in source.prompt_text
+    assert source.pointers == [{"file": "api.kt", "start_line": 10, "end_line": 10}]
+
+
 def test_aggregate_evidence_uses_separate_budgets_and_preserves_pointer_order():
     primary = CodeExcerpt("entity.py", 1, 2, "entity")
     config = CodeExcerpt("config.yml", 3, 4, "broker")
