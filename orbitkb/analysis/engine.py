@@ -13,7 +13,7 @@ import logging
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Mapping
 from urllib.parse import urlparse
 
 import tree_sitter_go
@@ -36,6 +36,7 @@ from orbitkb.analysis.cloud_taxonomy import (
     AWS_SERVICE_RESOURCE_TYPE,
 )
 from orbitkb.analysis.depth import DepthProvider, NoopDepthProvider
+from orbitkb.analysis.frontends import AnalyzerFrontend, LanguageFrontend
 from orbitkb.analysis.go_imports import parse_go_import_declarations
 from orbitkb.analysis.jvm_grpc_analyzer import (
     jvm_grpc_client_bindings,
@@ -3099,13 +3100,16 @@ def _nest_direct_decorator(
 class StaticAnalysisEngine:
     """Facade selecting an AST analyzer for the supported service stack."""
 
-    def __init__(self, depth_provider: DepthProvider | None = None) -> None:
+    def __init__(
+        self, depth_provider: DepthProvider | None = None,
+        frontends: Mapping[str, LanguageFrontend] | None = None,
+    ) -> None:
         # Deferred: jvm_spring_analyzer imports this module for its shared Spring
         # helpers, so importing it back at module load time would be circular.
         from orbitkb.analysis.jvm_spring_analyzer import JvmSpringAnalyzer
 
         self._depth_provider = depth_provider or NoopDepthProvider()
-        self._analyzers = {
+        analyzers = {
             "go": (_GoAnalyzer(Language(tree_sitter_go.language())), ("*.go",)),
             "jvm-spring": (JvmSpringAnalyzer(), ("*.java", "*.kt")),
             "node-ts": (
@@ -3115,27 +3119,31 @@ class StaticAnalysisEngine:
             "node-js": (_NodeGraphqlAnalyzer(Language(tree_sitter_javascript.language())), ("*.js", "*.jsx", "*.graphql", "*.gql", "*.prisma")),
             "python": (_PythonCliAnalyzer(), ("*.py",)),
         }
+        self._frontends: dict[str, LanguageFrontend] = {
+            stack: AnalyzerFrontend(patterns, analyzer.analyze)
+            for stack, (analyzer, patterns) in analyzers.items()
+        }
+        if frontends:
+            self._frontends.update(frontends)
 
     def list_files(self, root: Path, stack: str) -> list[Path]:
         """The file listing alone -- a plain `rglob`, no parsing (see `analyze_files`)."""
-        configured = self._analyzers.get(stack)
-        if configured is None:
+        frontend = self._frontends.get(stack)
+        if frontend is None:
             return []
-        _analyzer, patterns = configured
-        return self._source_files(root, patterns)
+        return self._source_files(root, frontend.file_patterns)
 
     def analyze_files(self, paths: list[Path], root: Path, stack: str) -> AnalysisResult:
         """Just the per-file AST pass, over exactly the given `paths` (a subset of
         `list_files`'s result is fine) -- no cross-file enrichment (see `enrich`).
         """
-        configured = self._analyzers.get(stack)
-        if configured is None:
+        frontend = self._frontends.get(stack)
+        if frontend is None:
             return AnalysisResult()
-        analyzer, _patterns = configured
         result = AnalysisResult()
         for path in paths:
             logger.debug("analyzing file: %s", path)
-            result.extend(analyzer.analyze(path, root))
+            result.extend(frontend.analyze_file(path, root))
         return result
 
     def enrich(self, result: AnalysisResult, files: list[Path], root: Path, stack: str) -> AnalysisResult:
@@ -3190,12 +3198,11 @@ class StaticAnalysisEngine:
 
     def input_digest(self, root: Path, stack: str) -> str | None:
         """Return a versioned digest of every local artifact this analyzer reads."""
-        configured = self._analyzers.get(stack)
-        if configured is None:
+        frontend = self._frontends.get(stack)
+        if frontend is None:
             return None
-        _analyzer, patterns = configured
         files = {
-            *self._source_files(root, patterns),
+            *self._source_files(root, frontend.file_patterns),
             *_openapi_files(root),
             *_protobuf_files(root),
             *_migration_files(root),
