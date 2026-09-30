@@ -596,6 +596,9 @@ Incremental indexing tracks OpenAPI and HTTP security files referenced by a
 route. A contract or authorization change refreshes that endpoint and its
 component and overview, even when the controller is untouched. An unrelated
 operation or comment in a shared OpenAPI file does not regenerate the route.
+Removing the contract or public rule sends the route back through LLM generation.
+Removing a controller prunes its endpoint and refreshes the service overview;
+files that merely leave the indexing scope are not counted as deleted files.
 Failed endpoint generation is retried on the next run without another file edit.
 Run `PYTHONPATH=. .venv/bin/python scripts/report_shadow_eligibility.py` to
 measure eligibility on the repository-owned synthetic corpus with the free mock

@@ -235,6 +235,69 @@ def test_openapi_comment_does_not_regenerate_unchanged_route(tmp_path):
     assert second.llm_calls == 0
 
 
+def test_removed_openapi_contract_replaces_deterministic_endpoint_with_model_output(tmp_path):
+    root = tmp_path / "service"
+    copytree(STATUS_CORPUS, root)
+    backend = RecordingBackend()
+    conn = open_db(tmp_path / "index.db")
+    detector = detector_by_id("jvm-spring")
+    first = index_service(conn, "status", root, detector, backend)
+    assert first.status == "ok"
+    (root / "openapi.yaml").unlink()
+
+    second = index_service(conn, "status", root, detector, backend)
+
+    assert second.status == "ok"
+    assert second.files_changed == 1
+    assert second.llm_calls == 3
+    assert second.sufficiency_details[0].render_status == "ineligible"
+    assert len(backend.endpoint_prompts) == 1
+    api = apis_repo.get_api_by_key(conn, second.service_id, "GET", "/status")
+    assert api is not None and api["summary"] == "Mock summary."
+
+
+def test_removed_public_security_rule_replaces_deterministic_endpoint_with_model_output(tmp_path):
+    root = tmp_path / "service"
+    copytree(STATUS_CORPUS, root)
+    backend = RecordingBackend()
+    conn = open_db(tmp_path / "index.db")
+    detector = detector_by_id("jvm-spring")
+    first = index_service(conn, "status", root, detector, backend)
+    assert first.status == "ok"
+    (root / "SecurityConfig.kt").unlink()
+
+    second = index_service(conn, "status", root, detector, backend)
+
+    assert second.status == "ok"
+    assert second.files_changed == 1
+    assert second.llm_calls == 3
+    assert second.sufficiency_details[0].render_status == "ineligible"
+    assert len(backend.endpoint_prompts) == 1
+    api = apis_repo.get_api_by_key(conn, second.service_id, "GET", "/status")
+    assert api is not None and api["summary"] == "Mock summary."
+
+
+def test_removed_controller_prunes_endpoint_and_refreshes_overview(tmp_path):
+    root = tmp_path / "service"
+    copytree(STATUS_CORPUS, root)
+    backend = RecordingBackend()
+    conn = open_db(tmp_path / "index.db")
+    detector = detector_by_id("jvm-spring")
+    first = index_service(conn, "status", root, detector, backend)
+    assert first.status == "ok"
+    (root / "StatusController.kt").unlink()
+
+    second = index_service(conn, "status", root, detector, backend)
+
+    assert second.status == "ok"
+    assert second.files_changed == 1
+    assert second.llm_calls == 1
+    assert apis_repo.get_api_by_key(conn, second.service_id, "GET", "/status") is None
+    unchanged = index_service(conn, "status", root, detector, backend)
+    assert unchanged.status == "ok"
+    assert unchanged.files_changed == unchanged.llm_calls == 0
+
+
 def test_failed_regeneration_after_security_change_retries_without_another_file_edit(tmp_path):
     root = tmp_path / "service"
     copytree(JAVA_STATUS_CORPUS, root)

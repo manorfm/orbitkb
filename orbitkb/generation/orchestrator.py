@@ -323,8 +323,7 @@ class UnitOutcome:
 @dataclass
 class IndexContext:
     """Shared state one index_service call passes through every UnitGenerator.
-    regenerated_endpoints/any_component_regenerated are written by the endpoint/
-    component generators and read by OverviewGenerator (composed last, see above)."""
+    Endpoint and component change flags are read by OverviewGenerator (composed last)."""
 
     conn: sqlite3.Connection
     name: str
@@ -347,6 +346,7 @@ class IndexContext:
     previous_snapshot: CanonicalSnapshot | None
     embedding_backend: EmbeddingBackend | None = None
     regenerated_endpoints: set[tuple[str, str]] = field(default_factory=set)
+    endpoint_inventory_changed: bool = False
     any_component_regenerated: bool = False
     llm_invocations: int = 0
     sufficiency_shadow: dict[str, int] = field(default_factory=dict)
@@ -447,6 +447,7 @@ class EndpointGenerator:
             ctx.regenerated_endpoints.add(key)
             ctx.progress.unit_finished(ctx.name, label, "ok")
 
+        ctx.endpoint_inventory_changed = bool(existing_keys - keep_api_keys)
         ctx.knowledge_writer.prune_endpoints(ctx.service_id, keep_api_keys)
         return outcome
 
@@ -620,7 +621,7 @@ class OverviewGenerator:
         needs_overview = (
             ctx.force or ctx.is_new or bool(ctx.changed & entry_files)
             or not (ctx.existing and ctx.existing["short_desc"])
-            or ctx.regenerated_endpoints or ctx.any_component_regenerated
+            or ctx.regenerated_endpoints or ctx.endpoint_inventory_changed or ctx.any_component_regenerated
         )
         if not needs_overview:
             outcome.add(unit)
@@ -754,7 +755,8 @@ def _index_service_unlocked(
         new_hashes[rel] = h
         if force or old_hashes.get(rel) != h:
             changed.add(rel)
-    removed = set(old_hashes) - set(new_hashes)
+    stale_hashes = set(old_hashes) - set(new_hashes)
+    removed = {rel for rel in stale_hashes if not (root / rel).is_file()}
 
     index_runs_repo.recover_unfinished_runs(conn, service_id)
     run_id = index_runs_repo.start_index_run(conn, service_id, backend.name)
@@ -808,8 +810,8 @@ def _index_service_unlocked(
             "persistence" if rel in persistence_files else ("messaging" if rel in messaging_files else "other")
         )
         indexed_files_repo.set_indexed_file_hash(conn, service_id, rel, h, category)
-    if removed:
-        indexed_files_repo.remove_indexed_files(conn, service_id, removed)
+    if stale_hashes:
+        indexed_files_repo.remove_indexed_files(conn, service_id, stale_hashes)
     conn.commit()
 
     services_repo.set_service_last_commit(conn, service_id, git_head_commit(root))
