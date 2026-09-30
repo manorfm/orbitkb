@@ -863,6 +863,7 @@ CREATE TABLE IF NOT EXISTS index_run_units (
     cached_input_tokens INTEGER,
     cost_usd            REAL,
     backend_duration_ms REAL NOT NULL CHECK (backend_duration_ms >= 0),
+    prompt_chars        INTEGER CHECK (prompt_chars >= 0),
     PRIMARY KEY (run_id, unit_kind, unit_key)
 );
 

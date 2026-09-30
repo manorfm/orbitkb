@@ -131,14 +131,16 @@ def record_run_unit(
     conn: sqlite3.Connection, run_id: int, service_id: int, kind: str, identity: tuple[str, ...],
     status: str, llm_invocations: int, input_tokens: int | None, output_tokens: int | None,
     cost_usd: float | None, backend_duration_ms: float, cached_input_tokens: int | None = None,
+    prompt_chars: int | None = None,
 ) -> None:
     conn.execute(
         """INSERT INTO index_run_units
            (run_id, unit_kind, unit_key, status, llm_invocations, input_tokens,
-            output_tokens, cached_input_tokens, cost_usd, backend_duration_ms)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            output_tokens, cached_input_tokens, cost_usd, backend_duration_ms, prompt_chars)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (run_id, kind, _opaque_unit_key(conn, service_id, kind, identity), status,
-         llm_invocations, input_tokens, output_tokens, cached_input_tokens, cost_usd, backend_duration_ms),
+         llm_invocations, input_tokens, output_tokens, cached_input_tokens, cost_usd, backend_duration_ms,
+         prompt_chars),
     )
 
 

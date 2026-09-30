@@ -438,6 +438,7 @@ class EndpointGenerator:
                     on_attempt=lambda unit=unit: ctx.record_llm_invocation(unit),
                     on_usage=unit.record_usage,
                     on_duration_ms=unit.record_duration,
+                    on_prompt=unit.record_prompt,
                 )
                 if not generation:
                     unit.status = "failed"
@@ -532,6 +533,7 @@ class ComponentGenerator:
                 on_attempt=lambda unit=unit: ctx.record_llm_invocation(unit),
                 on_usage=unit.record_usage,
                 on_duration_ms=unit.record_duration,
+                on_prompt=unit.record_prompt,
             )
             if not generation:
                 unit.status = "failed"
@@ -586,6 +588,7 @@ class PersistenceGenerator:
             on_attempt=lambda: ctx.record_llm_invocation(unit),
             on_usage=unit.record_usage,
             on_duration_ms=unit.record_duration,
+            on_prompt=unit.record_prompt,
         )
         if generation:
             result = generation.structured
@@ -633,6 +636,7 @@ class MessagingGenerator:
             on_attempt=lambda: ctx.record_llm_invocation(unit),
             on_usage=unit.record_usage,
             on_duration_ms=unit.record_duration,
+            on_prompt=unit.record_prompt,
         )
         if generation:
             result = generation.structured
@@ -681,6 +685,7 @@ class OverviewGenerator:
             on_attempt=lambda: ctx.record_llm_invocation(unit),
             on_usage=unit.record_usage,
             on_duration_ms=unit.record_duration,
+            on_prompt=unit.record_prompt,
         )
         if generation:
             result = generation.structured
@@ -851,6 +856,7 @@ def _index_service_unlocked(
                 conn, run_id, service_id, unit.kind, unit.identity, unit.status,
                 unit.llm_invocations, unit.usage.input_tokens, unit.usage.output_tokens,
                 unit.usage.cost_usd, unit.backend_duration_ms, unit.usage.cached_input_tokens,
+                unit.prompt_chars,
             )
         index_runs_repo.record_unit_usage(
             conn, run_id, generator.kind, outcome.generated_units,

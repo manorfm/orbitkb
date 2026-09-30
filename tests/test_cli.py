@@ -282,7 +282,8 @@ def test_status_units_shows_opaque_per_unit_results_on_request(tmp_path: Path, c
     unit_lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("      unit ")]
     assert unit_lines
     assert any(re.search(r"unit endpoint key=[0-9a-f]{64} status=success attempts=1", line) for line in unit_lines)
-    assert all("/orders" not in line and "prompt" not in line for line in unit_lines)
+    assert all(re.search(r"prompt_chars=\d+", line) for line in unit_lines)
+    assert all("/orders" not in line and "Source excerpts" not in line for line in unit_lines)
 
 
 def test_status_command_global(tmp_path: Path, capsys):

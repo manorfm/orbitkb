@@ -37,6 +37,27 @@ def test_schema_adds_shared_source_unit_digests_to_existing_database(tmp_path: P
     assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()[0] == SCHEMA_VERSION
 
 
+def test_schema_adds_prompt_size_without_guessing_historical_measurement(tmp_path: Path):
+    path = tmp_path / "older-unit-prompts.db"
+    conn = open_db(path)
+    conn.execute("INSERT INTO index_runs (id, started_at) VALUES (1, 'before-prompt-size')")
+    conn.execute(
+        """INSERT INTO index_run_units
+           (run_id, unit_kind, unit_key, status, llm_invocations, backend_duration_ms)
+           VALUES (1, 'endpoint', 'opaque', 'success', 1, 10)"""
+    )
+    conn.execute("ALTER TABLE index_run_units DROP COLUMN prompt_chars")
+    conn.execute("UPDATE schema_meta SET value = '49' WHERE key = 'schema_version'")
+    conn.commit()
+    conn.close()
+
+    upgraded = open_db(path)
+
+    row = upgraded.execute("SELECT prompt_chars FROM index_run_units").fetchone()
+    assert row["prompt_chars"] is None
+    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()[0] == SCHEMA_VERSION
+
+
 def test_schema_adds_invocation_count_without_rewriting_older_runs(tmp_path: Path):
     path = tmp_path / "legacy-index-runs.db"
     conn = open_db(path)

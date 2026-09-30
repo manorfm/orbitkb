@@ -47,6 +47,7 @@ def generate_with_retry(
     on_attempt: Callable[[], None] | None = None,
     on_usage: Callable[[LLMUsage], None] | None = None,
     on_duration_ms: Callable[[float], None] | None = None,
+    on_prompt: Callable[[str], None] | None = None,
 ) -> GenerationOutcome | None:
     last_error: Exception | None = None
     safe_prompt = redact_sensitive_values(prompt)
@@ -54,6 +55,8 @@ def generate_with_retry(
     total_usage = LLMUsage()
     for _attempt in range(2):
         try:
+            if on_prompt is not None:
+                on_prompt(current_prompt)
             if on_attempt is not None:
                 on_attempt()
             started_at = time.perf_counter()

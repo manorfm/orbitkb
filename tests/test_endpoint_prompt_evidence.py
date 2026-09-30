@@ -127,6 +127,9 @@ def test_simple_route_uses_deterministic_document_without_endpoint_model_call(tm
                           if row["unit_kind"] == "endpoint")
     assert endpoint_usage["generated_units"] == 1
     assert endpoint_usage["llm_invocations"] == 0
+    endpoint_unit = next(row for row in index_runs_repo.list_run_units(conn, run["id"])
+                         if row["unit_kind"] == "endpoint")
+    assert endpoint_unit["prompt_chars"] == 0
 
 
 def test_java_simple_route_uses_deterministic_document_without_endpoint_model_call(tmp_path):
@@ -503,6 +506,10 @@ def test_failed_regeneration_after_security_change_retries_without_another_file_
     )
     assert failed.status == "partial"
     assert len(backend.endpoint_prompts) == 2
+    failed_run = index_runs_repo.recent_index_runs(conn, failed.service_id)[0]
+    failed_endpoint = next(row for row in index_runs_repo.list_run_units(conn, failed_run["id"])
+                           if row["unit_kind"] == "endpoint")
+    assert failed_endpoint["prompt_chars"] == sum(map(len, backend.endpoint_prompts[-2:]))
     backend.fail_endpoint = False
 
     retried = index_service(conn, "status-java", root, detector, backend)

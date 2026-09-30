@@ -656,6 +656,10 @@ Use `orbitkb status <service> --units` to inspect each unit's `skipped`,
 `success` or `failed` state, backend attempts, reported usage and duration.
 Reported cache-read input tokens are shown per unit when available; historical
 rows retain an unknown value.
+The same view shows `prompt_chars`, the total characters in redacted prompts
+submitted to the backend for that unit, including retries. Deterministic and skipped units
+show zero; historical rows show `None`. This is a size measure, not a token or
+cost estimate, and the prompt text is not stored in telemetry.
 Unit keys are database-local HMAC values, stable across runs in that database;
 the telemetry table contains no route, file, symbol, prompt or source text.
 Runs recorded before per-unit telemetry have no unit rows.

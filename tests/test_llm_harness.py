@@ -103,6 +103,25 @@ def test_invocation_observer_counts_failed_backend_attempts(tmp_path: Path):
     assert len(attempts) == backend.calls == 2
 
 
+def test_prompt_observer_receives_each_redacted_attempt_including_retry(tmp_path: Path):
+    secret = "production-secret-value"
+    backend = ScriptedBackend([
+        GenerationError("first"), GenerationOutcome(structured={"summary": "ok"}),
+    ])
+    observed: list[str] = []
+
+    result = generate_with_retry(
+        backend, f"API_TOKEN={secret}", SCHEMA, tmp_path, tmp_path / "failures", "label",
+        on_prompt=observed.append,
+    )
+
+    assert result is not None
+    assert observed == backend.prompts
+    assert len(observed) == 2
+    assert secret not in "".join(observed)
+    assert len(observed[1]) > len(observed[0])
+
+
 def test_backend_duration_observer_includes_failed_retry(tmp_path: Path, monkeypatch):
     backend = ScriptedBackend([GenerationError("first"), GenerationOutcome(structured={"summary": "ok"})])
     ticks = iter([10.0, 10.25, 11.0, 11.5])
