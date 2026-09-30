@@ -391,6 +391,30 @@ def test_generate_topology_diagram_highlights_cycle_services(tmp_path: Path):
     assert "cycle" in diagram.lower()
 
 
+def test_topology_highlights_only_the_repository_with_a_cycle(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    for repository in ("alpha", "beta"):
+        repo_id = repositories_repo.ensure_repository(conn, repository, f"/tmp/{repository}")
+        a_id = services_repo.ensure_service(conn, "a", f"/tmp/{repository}/a", "python", repository_id=repo_id)
+        b_id = services_repo.ensure_service(conn, "b", f"/tmp/{repository}/b", "python", repository_id=repo_id)
+        if repository == "alpha":
+            for source_id, target_name in ((a_id, "b"), (b_id, "a")):
+                api_id = apis_repo.upsert_api(conn, source_id, "GET", "/check", "s", "d", [], EVIDENCE)
+                service_calls_repo.replace_calls_for_api(conn, source_id, api_id, [
+                    {"to_service_name": target_name, "call_kind": "http", "reason": "lookup",
+                     "data_needed": [], "purpose_kind": "data_fetch", "confidence": 0.9,
+                     "target_kind": "unknown"},
+                ], EVIDENCE)
+    recompute_architecture_view(conn)
+
+    diagram = generate_topology_diagram(conn)
+
+    assert 'svc_a["a (alpha)"]' in diagram
+    assert 'svc_a_2["a (beta)"]' in diagram
+    assert "  class svc_a,svc_b cycle;" in diagram
+    assert "svc_a_2,svc_b_2 cycle" not in diagram
+
+
 def test_generate_entrypoint_sequence_renders_calls_reads_and_writes_and_publishes():
     edges = [
         {"from_symbol": "OrdersController.create", "to_symbol": "OrdersService.create", "kind": "invokes"},

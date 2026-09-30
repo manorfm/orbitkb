@@ -41,15 +41,15 @@ def _sanitize_ident(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_]+", "_", text or "").strip("_") or "field"
 
 
-def _cycle_service_names(conn: sqlite3.Connection) -> set[str]:
+def _cycle_service_ids(conn: sqlite3.Connection) -> set[int]:
     run_id = architecture_repo.latest_run_id(conn)
     if run_id is None:
         return set()
-    names: set[str] = set()
+    service_ids: set[int] = set()
     for finding in architecture_repo.list_findings(conn, run_id):
         if finding["kind"] == "cycle":
-            names.update(json.loads(finding["services_json"]))
-    return names
+            service_ids.update(json.loads(finding["detail_json"]).get("service_ids", []))
+    return service_ids
 
 
 def _neighbor_service_ids(conn: sqlite3.Connection, service_id: int) -> set[int]:
@@ -102,7 +102,7 @@ def generate_topology_diagram(
     structural facts. Cycle styling and DB nodes are scoped the same way: a service
     filtered out of the subgraph never contributes its own persistence nodes either.
     """
-    cycle_names = _cycle_service_names(conn)
+    cycle_service_ids = _cycle_service_ids(conn)
     services = services_repo.list_services(conn)
     name_counts = Counter(svc["name"] for svc in services)
     included = _reachable_service_ids(conn, root_service_ids, hops) if root_service_ids is not None else None
@@ -216,13 +216,13 @@ def generate_topology_diagram(
             lines.append(f'  {node_id}[("{engine}")]')
             lines.append(f"  {from_id} -.->|persists| {node_id}")
 
-    if cycle_names:
-        lines.append("  classDef cycle fill:#f88,stroke:#900,stroke-width:2px;")
+    if cycle_service_ids:
         cycle_node_ids = ",".join(
             service_ids[svc["id"]] for svc in services
-            if svc["name"] in cycle_names and svc["id"] in service_ids
+            if svc["id"] in cycle_service_ids and svc["id"] in service_ids
         )
         if cycle_node_ids:
+            lines.append("  classDef cycle fill:#f88,stroke:#900,stroke-width:2px;")
             lines.append(f"  class {cycle_node_ids} cycle;")
 
     return "\n".join(lines)

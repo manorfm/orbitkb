@@ -128,7 +128,7 @@ def find_cycles(conn: sqlite3.Connection) -> list[dict]:
                 f"{' -> '.join(cycle_names)} -> {cycle_names[0]} form a circular dependency: "
                 "each one reaches the next, and the chain closes back on itself."
             ),
-            "detail": {},
+            "detail": {"service_ids": sorted(component)},
         })
     return findings
 

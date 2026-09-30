@@ -315,6 +315,7 @@ Node identifiers remain distinct when different names normalize to the same
 Mermaid slug.
 Services with the same name in different repositories are labeled with their
 repository; calls and scoped topology queries retain their separate identities.
+Cycle highlighting follows the same service identities.
 When source analysis confirms a Spring Redis Pub/Sub publication, topology shows
 a Redis node for that producer. It does not assign an unknown channel, consumer
 or shared Redis instance.
