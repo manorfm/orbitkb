@@ -427,7 +427,7 @@ def list_all_static_cloud_facts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     cloud edge set (export/mermaid.py), same posture as service_calls'
     list_external_edges."""
     return conn.execute(
-        """SELECT DISTINCT s.name AS from_name, scf.provider, scf.resource_type,
+        """SELECT DISTINCT s.id AS from_id, s.name AS from_name, scf.provider, scf.resource_type,
                   scf.service_name, scf.target_name
            FROM static_cloud_facts scf
            JOIN services s ON s.id = scf.service_id

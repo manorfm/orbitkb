@@ -2,6 +2,7 @@ from pathlib import Path
 
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import apis as apis_repo
+from orbitkb.db.repositories import repositories as repositories_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.mcp import queries
@@ -39,3 +40,25 @@ def test_describe_service_topology_reports_an_error_for_an_unknown_service(tmp_p
     result = queries.describe_service_topology(conn, "does-not-exist")
 
     assert "error" in result
+
+
+def test_describe_service_topology_scopes_same_named_services_by_repository(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    for repository in ("alpha", "beta"):
+        repo_id = repositories_repo.ensure_repository(conn, repository, f"/tmp/{repository}")
+        orders_id = services_repo.ensure_service(
+            conn, "orders", f"/tmp/{repository}/orders", "python", repository_id=repo_id,
+        )
+        api_id = apis_repo.upsert_api(conn, orders_id, "POST", "/orders", "s", "d", [], EVIDENCE)
+        service_calls_repo.replace_calls_for_api(conn, orders_id, api_id, [
+            {"to_service_name": f"vendor-{repository}", "call_kind": "http", "reason": "notify",
+             "data_needed": [], "purpose_kind": "other", "confidence": 0.9,
+             "target_kind": "external", "resource_type": "saas"},
+        ], EVIDENCE)
+
+    diagram = queries.describe_service_topology(conn, "orders", repository="alpha", hops=0)["mermaid"]
+
+    assert '["orders (alpha)"]' in diagram
+    assert "orders (beta)" not in diagram
+    assert "vendor-alpha" in diagram
+    assert "vendor-beta" not in diagram

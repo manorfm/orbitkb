@@ -366,7 +366,7 @@ def describe_service_topology(
     row, service_error = _resolve_service(conn, service, repository)
     if service_error:
         return service_error
-    mermaid = generate_topology_diagram(conn, root_services={row["name"]}, hops=hops)
+    mermaid = generate_topology_diagram(conn, root_service_ids={row["id"]}, hops=hops)
     return {
         "service": row["name"],
         "repository": row["repository_name"],

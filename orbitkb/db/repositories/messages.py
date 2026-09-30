@@ -46,7 +46,8 @@ def list_all_message_links(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     constrained in SQL (m1 = publishes, m2 = consumes) so a pair never appears twice."""
     return conn.execute(
         """
-        SELECT DISTINCT m1.channel AS channel, s1.name AS publisher, s2.name AS consumer
+        SELECT DISTINCT m1.channel AS channel, s1.id AS publisher_id, s2.id AS consumer_id,
+                        s1.name AS publisher, s2.name AS consumer
         FROM messages m1
         JOIN messages m2 ON m2.channel = m1.channel AND m2.service_id != m1.service_id
                          AND m1.direction = 'publishes' AND m2.direction = 'consumes'
@@ -66,7 +67,8 @@ def list_unmatched_message_channels(conn: sqlite3.Connection) -> list[sqlite3.Ro
     external target, no second service required)."""
     return conn.execute(
         """
-        SELECT s.name AS service, m1.direction AS direction, m1.channel AS channel, m1.provider AS provider
+        SELECT s.id AS service_id, s.name AS service, m1.direction AS direction,
+               m1.channel AS channel, m1.provider AS provider
         FROM messages m1
         JOIN services s ON s.id = m1.service_id
         WHERE NOT EXISTS (
@@ -87,7 +89,8 @@ def list_message_links(conn: sqlite3.Connection, service_id: int) -> list[sqlite
     """
     return conn.execute(
         """
-        SELECT m1.direction AS local_direction, m1.channel AS channel, s2.name AS other_service
+        SELECT m1.direction AS local_direction, m1.channel AS channel,
+               s2.id AS other_service_id, s2.name AS other_service
         FROM messages m1
         JOIN messages m2 ON m2.channel = m1.channel AND m2.service_id != m1.service_id
                          AND m2.direction != m1.direction

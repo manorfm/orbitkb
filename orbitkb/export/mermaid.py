@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from collections import Counter
 from pathlib import Path
 
 from orbitkb.db.repositories import architecture as architecture_repo
@@ -51,33 +52,32 @@ def _cycle_service_names(conn: sqlite3.Connection) -> set[str]:
     return names
 
 
-def _neighbor_service_names(conn: sqlite3.Connection, service_id: int) -> set[str]:
+def _neighbor_service_ids(conn: sqlite3.Connection, service_id: int) -> set[int]:
     """Other services directly connected to this one, in either direction, by a
     resolved service_call or a matching publish/consume channel — external targets
     (unresolved to_service_id, or non-service message channels) never grow the
     reachable set, since they aren't a service to keep expanding from.
     """
-    names = {
-        row["to_service_name"] for row in service_calls_repo.list_calls_for_service(conn, service_id)
+    ids = {
+        row["to_service_id"] for row in service_calls_repo.list_calls_for_service(conn, service_id)
         if row["to_service_id"] is not None
     }
-    names |= {row["from_service_name"] for row in service_calls_repo.list_inbound_calls(conn, service_id)}
-    names |= {row["other_service"] for row in messages_repo.list_message_links(conn, service_id)}
-    return names
+    ids |= {row["from_service_id"] for row in service_calls_repo.list_inbound_calls(conn, service_id)}
+    ids |= {row["other_service_id"] for row in messages_repo.list_message_links(conn, service_id)}
+    return ids
 
 
-def _reachable_service_names(conn: sqlite3.Connection, roots: set[str], hops: int) -> set[str]:
-    """Every service within `hops` steps of `roots`, in either direction — a scoped
+def _reachable_service_ids(conn: sqlite3.Connection, roots: set[int], hops: int) -> set[int]:
+    """Every service ID within `hops` steps of `roots`, in either direction — a scoped
     subgraph for one service's neighborhood, so a caller isn't handed the whole
     system's topology when it only asked about one service's own context.
     """
-    name_to_id = {svc["name"]: svc["id"] for svc in services_repo.list_services(conn)}
-    reached = {name for name in roots if name in name_to_id}
+    reached = set(roots)
     frontier = set(reached)
     for _ in range(max(hops, 0)):
-        next_frontier: set[str] = set()
-        for name in frontier:
-            next_frontier |= _neighbor_service_names(conn, name_to_id[name]) - reached
+        next_frontier: set[int] = set()
+        for service_id in frontier:
+            next_frontier |= _neighbor_service_ids(conn, service_id) - reached
         if not next_frontier:
             break
         reached |= next_frontier
@@ -86,9 +86,9 @@ def _reachable_service_names(conn: sqlite3.Connection, roots: set[str], hops: in
 
 
 def generate_topology_diagram(
-    conn: sqlite3.Connection, root_services: set[str] | None = None, hops: int = 1,
+    conn: sqlite3.Connection, root_service_ids: set[int] | None = None, hops: int = 1,
 ) -> str:
-    """`graph TD` over every indexed service (or, with `root_services`, only the
+    """`graph TD` over every indexed service (or, with `root_service_ids`, only the
     subgraph reachable within `hops` steps of them): each as a node, external
     vendors as rounded nodes, service_calls as solid edges, message links as dashed
     edges. Source-proven HTTP calls without a reconciled destination retain a
@@ -103,18 +103,22 @@ def generate_topology_diagram(
     filtered out of the subgraph never contributes its own persistence nodes either.
     """
     cycle_names = _cycle_service_names(conn)
-    included = _reachable_service_names(conn, root_services, hops) if root_services is not None else None
-    lines = ["graph TD"]
     services = services_repo.list_services(conn)
+    name_counts = Counter(svc["name"] for svc in services)
+    included = _reachable_service_ids(conn, root_service_ids, hops) if root_service_ids is not None else None
+    lines = ["graph TD"]
     used_node_ids: set[str] = set()
 
-    service_ids: dict[str, str] = {}
+    service_ids: dict[int, str] = {}
     for svc in services:
-        if included is not None and svc["name"] not in included:
+        if included is not None and svc["id"] not in included:
             continue
         node_id = _unique_node_id(f"svc_{_slug(svc['name'])}", used_node_ids)
-        service_ids[svc["name"]] = node_id
-        lines.append(f'  {node_id}["{svc["name"]}"]')
+        service_ids[svc["id"]] = node_id
+        label = svc["name"]
+        if name_counts[label] > 1:
+            label += f" ({svc['repository_name'] or 'unscoped'})"
+        lines.append(f'  {node_id}["{label}"]')
 
     external_ids: dict[str, str] = {}
 
@@ -125,46 +129,46 @@ def generate_topology_diagram(
             lines.append(f'  {node_id}(("{name}"))')
         return external_ids[name]
 
-    rendered_targets: set[tuple[str, str]] = set()
+    rendered_targets: set[tuple[int, str]] = set()
     for edge in service_calls_repo.list_internal_edges(conn):
-        from_id = service_ids.get(edge["from_name"])
-        to_id = service_ids.get(edge["to_name"])
+        from_id = service_ids.get(edge["from_id"])
+        to_id = service_ids.get(edge["to_id"])
         if from_id is None or to_id is None:
             continue
         lines.append(f"  {from_id} -->|{edge['call_kind']}| {to_id}")
-        rendered_targets.add((edge["from_name"], edge["to_name"]))
+        rendered_targets.add((edge["from_id"], edge["to_name"]))
 
     for edge in service_calls_repo.list_external_edges(conn):
-        from_id = service_ids.get(edge["from_name"])
+        from_id = service_ids.get(edge["from_id"])
         if from_id is None:
             continue
         target_id = external_node(edge["to_service_name"])
         label = edge["resource_type"] or "external"
         lines.append(f"  {from_id} -.->|{label}| {target_id}")
-        rendered_targets.add((edge["from_name"], edge["to_service_name"]))
+        rendered_targets.add((edge["from_id"], edge["to_service_name"]))
 
     for edge in service_calls_repo.list_unresolved_edges(conn):
-        from_id = service_ids.get(edge["from_name"])
+        from_id = service_ids.get(edge["from_id"])
         if from_id is None:
             continue
         target_id = external_node(edge["to_service_name"])
         lines.append(f"  {from_id} -.->|{edge['call_kind']} (unresolved)| {target_id}")
-        rendered_targets.add((edge["from_name"], edge["to_service_name"]))
+        rendered_targets.add((edge["from_id"], edge["to_service_name"]))
 
     for svc in services:
-        from_id = service_ids.get(svc["name"])
+        from_id = service_ids.get(svc["id"])
         if from_id is None:
             continue
         for target in unresolved_declared_http_targets(
             flows_repo.list_static_service_calls(conn, svc["id"]),
-            (name for source, name in rendered_targets if source == svc["name"]),
+            (name for source, name in rendered_targets if source == svc["id"]),
         ):
             target_id = external_node(f"{target} (declared target)")
             lines.append(f"  {from_id} -.->|http (unresolved)| {target_id}")
-            rendered_targets.add((svc["name"], target))
+            rendered_targets.add((svc["id"], target))
 
     for fact in flows_repo.list_all_static_cloud_facts(conn):
-        from_id = service_ids.get(fact["from_name"])
+        from_id = service_ids.get(fact["from_id"])
         if from_id is None:
             continue
         cloud_name = f"{fact['provider']}:{fact['service_name']}" + (
@@ -174,14 +178,14 @@ def generate_topology_diagram(
         lines.append(f"  {from_id} -.->|{fact['resource_type']}| {target_id}")
 
     for link in messages_repo.list_all_message_links(conn):
-        publisher_id = service_ids.get(link["publisher"])
-        consumer_id = service_ids.get(link["consumer"])
+        publisher_id = service_ids.get(link["publisher_id"])
+        consumer_id = service_ids.get(link["consumer_id"])
         if publisher_id is None or consumer_id is None:
             continue
         lines.append(f'  {publisher_id} ==>|{link["channel"]}| {consumer_id}')
 
     for row in messages_repo.list_unmatched_message_channels(conn):
-        from_id = service_ids.get(row["service"])
+        from_id = service_ids.get(row["service_id"])
         if from_id is None:
             continue
         broker_id = external_node(f"{row['provider']}: {row['channel']}")
@@ -191,7 +195,7 @@ def generate_topology_diagram(
             lines.append(f"  {broker_id} -.->|{row['channel']}| {from_id}")
 
     for svc in services:
-        from_id = service_ids.get(svc["name"])
+        from_id = service_ids.get(svc["id"])
         if from_id is None:
             continue
         service_slug = from_id.removeprefix("svc_")
@@ -214,7 +218,10 @@ def generate_topology_diagram(
 
     if cycle_names:
         lines.append("  classDef cycle fill:#f88,stroke:#900,stroke-width:2px;")
-        cycle_node_ids = ",".join(service_ids[name] for name in sorted(cycle_names) if name in service_ids)
+        cycle_node_ids = ",".join(
+            service_ids[svc["id"]] for svc in services
+            if svc["name"] in cycle_names and svc["id"] in service_ids
+        )
         if cycle_node_ids:
             lines.append(f"  class {cycle_node_ids} cycle;")
 

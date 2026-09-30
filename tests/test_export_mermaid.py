@@ -13,6 +13,7 @@ from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import flows as flows_repo
 from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import persistence as persistence_repo
+from orbitkb.db.repositories import repositories as repositories_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.export.mermaid import (
@@ -93,6 +94,64 @@ def test_topology_keeps_distinct_names_with_the_same_mermaid_slug(tmp_path: Path
     assert 'db_billing_a_2_postgres[("postgres")]' in diagram
 
 
+def test_topology_keeps_same_named_services_in_separate_repositories(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    for repository in ("alpha", "beta"):
+        repo_id = repositories_repo.ensure_repository(conn, repository, f"/tmp/{repository}")
+        orders_id = services_repo.ensure_service(
+            conn, "orders", f"/tmp/{repository}/orders", "python", repository_id=repo_id,
+        )
+        payments_id = services_repo.ensure_service(
+            conn, "payments", f"/tmp/{repository}/payments", "python", repository_id=repo_id,
+        )
+        api_id = apis_repo.upsert_api(conn, orders_id, "POST", "/orders", "s", "d", [], EVIDENCE)
+        service_calls_repo.replace_calls_for_api(conn, orders_id, api_id, [
+            {"to_service_name": "payments", "call_kind": "http", "reason": "charge",
+             "data_needed": [], "purpose_kind": "data_fetch", "confidence": 0.9,
+             "target_kind": "unknown"},
+            {"to_service_name": f"vendor-{repository}", "call_kind": "http", "reason": "notify",
+             "data_needed": [], "purpose_kind": "other", "confidence": 0.9,
+             "target_kind": "external", "resource_type": "saas"},
+        ], EVIDENCE)
+        persistence_repo.replace_persistence_entities(
+            conn, orders_id, [{"name": "orders", "kind": "sql_table", "engine": "postgres",
+                              "schema_json": []}], EVIDENCE,
+        )
+        messages_repo.replace_messages(conn, orders_id, [
+            {"direction": "publishes", "channel": f"orders-{repository}", "description": "created"},
+        ], EVIDENCE)
+        messages_repo.replace_messages(conn, payments_id, [
+            {"direction": "consumes", "channel": f"orders-{repository}", "description": "received"},
+        ], EVIDENCE)
+        flows_repo.replace_analysis(conn, orders_id, AnalysisResult(
+            static_service_calls=[StaticServiceCall(
+                "Orders.lookup", f"declared-{repository}", "http", "GET", "/items",
+                Evidence("Orders.py", 1, 1),
+            )],
+            cloud_facts=[CloudFact(
+                "aws", "queue", "sqs", "SendMessage", "publish", "aws-sdk", repository,
+                Evidence("Orders.py", 2, 2),
+            )],
+        ))
+
+    diagram = generate_topology_diagram(conn)
+
+    assert 'svc_orders["orders (alpha)"]' in diagram
+    assert 'svc_orders_2["orders (beta)"]' in diagram
+    assert 'svc_orders -->|http| svc_payments' in diagram
+    assert 'svc_orders_2 -->|http| svc_payments_2' in diagram
+    assert 'svc_orders -.->|saas| ext_vendor_alpha' in diagram
+    assert 'svc_orders_2 -.->|saas| ext_vendor_beta' in diagram
+    assert 'svc_orders -.->|persists| db_orders_postgres' in diagram
+    assert 'svc_orders_2 -.->|persists| db_orders_2_postgres' in diagram
+    assert 'svc_orders ==>|orders-alpha| svc_payments' in diagram
+    assert 'svc_orders_2 ==>|orders-beta| svc_payments_2' in diagram
+    assert 'svc_orders -.->|http (unresolved)| ext_declared_alpha_declared_target' in diagram
+    assert 'svc_orders_2 -.->|http (unresolved)| ext_declared_beta_declared_target' in diagram
+    assert 'svc_orders -.->|queue| ext_aws_sqs_alpha' in diagram
+    assert 'svc_orders_2 -.->|queue| ext_aws_sqs_beta' in diagram
+
+
 def test_generate_topology_diagram_includes_cloud_nodes(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     orders_id, _payments_id, _notif_id = _seed_topology(conn)
@@ -128,10 +187,10 @@ def test_topology_shows_only_confirmed_redis_publishers_without_a_channel(tmp_pa
     assert "redis.convertAndSend" not in diagram
     assert "unknown" not in diagram
 
-    scoped = generate_topology_diagram(conn, root_services={"maybe-service"})
+    scoped = generate_topology_diagram(conn, root_service_ids={inferred_id})
     assert "broker_orders_service_redis" not in scoped
     assert "broker_orders_service_redis" in generate_topology_diagram(
-        conn, root_services={"orders-service"}, hops=0,
+        conn, root_service_ids={proven_id}, hops=0,
     )
 
     flows_repo.replace_analysis(conn, proven_id, AnalysisResult())
@@ -192,7 +251,7 @@ def test_topology_does_not_duplicate_existing_mongo_engine(tmp_path: Path):
 def test_topology_shows_static_http_target_without_claiming_a_resolved_service(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     caller_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
-    services_repo.ensure_service(conn, "catalog-service", "/tmp/catalog", "jvm-spring")
+    catalog_id = services_repo.ensure_service(conn, "catalog-service", "/tmp/catalog", "jvm-spring")
     flows_repo.replace_analysis(conn, caller_id, AnalysisResult(static_service_calls=[
         StaticServiceCall("MenuClient.getItem", "catalog-service", "http", "GET", "/items/{id}",
                           Evidence("MenuClient.kt", 8, 9)),
@@ -206,7 +265,7 @@ def test_topology_shows_static_http_target_without_claiming_a_resolved_service(t
     assert diagram.count('svc_orders_service -.->|http (unresolved)| ext_catalog_service_declared_target') == 1
     assert "svc_orders_service -->|http| svc_catalog_service" not in diagram
     assert "ext_catalog_service_declared_target" not in generate_topology_diagram(
-        conn, root_services={"catalog-service"}, hops=0,
+        conn, root_service_ids={catalog_id}, hops=0,
     )
 
     flows_repo.replace_analysis(conn, caller_id, AnalysisResult())
@@ -243,7 +302,7 @@ def test_generate_topology_diagram_keeps_unresolved_indexed_calls(tmp_path: Path
           "target_kind": "unknown"}], EVIDENCE,
     )
 
-    diagram = generate_topology_diagram(conn, root_services={"menu-service"})
+    diagram = generate_topology_diagram(conn, root_service_ids={service_id})
 
     assert 'ext_restaurantclient(("RestaurantClient"))' in diagram
     assert 'svc_menu_service -.->|http (unresolved)| ext_restaurantclient' in diagram
@@ -278,15 +337,15 @@ def test_generate_topology_diagram_shows_unmatched_messaging_and_persistence(tmp
 
 
 def test_generate_topology_diagram_scoped_to_one_service_excludes_unrelated_ones(tmp_path: Path):
-    """`root_services` + `hops` narrows the graph to one service's own neighborhood
+    """`root_service_ids` + `hops` narrows the graph to one service's own neighborhood
     -- notification-service (1 hop via the order_created message link) is included,
     but a fourth, unrelated service must not leak into the scoped subgraph.
     """
     conn = open_db(tmp_path / "test.db")
-    _seed_topology(conn)
+    orders_id, _payments_id, _notif_id = _seed_topology(conn)
     services_repo.ensure_service(conn, "unrelated-service", "/tmp/unrelated", "python")
 
-    diagram = generate_topology_diagram(conn, root_services={"orders-service"}, hops=1)
+    diagram = generate_topology_diagram(conn, root_service_ids={orders_id}, hops=1)
 
     assert "orders-service" in diagram
     assert "payments-service" in diagram  # 1 hop via the http service_call
@@ -296,9 +355,9 @@ def test_generate_topology_diagram_scoped_to_one_service_excludes_unrelated_ones
 
 def test_generate_topology_diagram_scoped_with_zero_hops_shows_only_the_root(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
-    _seed_topology(conn)
+    orders_id, _payments_id, _notif_id = _seed_topology(conn)
 
-    diagram = generate_topology_diagram(conn, root_services={"orders-service"}, hops=0)
+    diagram = generate_topology_diagram(conn, root_service_ids={orders_id}, hops=0)
 
     assert "orders-service" in diagram
     assert "payments-service" not in diagram

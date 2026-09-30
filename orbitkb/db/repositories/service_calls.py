@@ -204,7 +204,7 @@ def list_inbound_calls(conn: sqlite3.Connection, service_id: int) -> list[sqlite
     an unindexed service can't be attributed to a from_service row here.
     """
     return conn.execute(
-        """SELECT s.name AS from_service_name, sc.call_kind, sc.reason, sc.data_needed,
+        """SELECT s.id AS from_service_id, s.name AS from_service_name, sc.call_kind, sc.reason, sc.data_needed,
                   sc.purpose_kind, sc.confidence, sc.target_kind, sc.evidence_json
            FROM service_calls sc JOIN services s ON s.id = sc.from_service_id
            WHERE sc.to_service_id = ? ORDER BY s.name""",
@@ -237,7 +237,8 @@ def list_internal_edges(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Every resolved service-to-service edge in the whole system — the topology
     diagram's internal edge set (export/mermaid.py)."""
     return conn.execute(
-        """SELECT DISTINCT s1.name AS from_name, s2.name AS to_name, sc.call_kind, sc.reason
+        """SELECT DISTINCT s1.id AS from_id, s2.id AS to_id,
+                  s1.name AS from_name, s2.name AS to_name, sc.call_kind, sc.reason
            FROM service_calls sc
            JOIN services s1 ON s1.id = sc.from_service_id
            JOIN services s2 ON s2.id = sc.to_service_id
@@ -250,7 +251,7 @@ def list_external_edges(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Every service-to-vendor edge in the whole system — the topology diagram's
     external edge set (export/mermaid.py)."""
     return conn.execute(
-        """SELECT DISTINCT s.name AS from_name, sc.to_service_name, sc.resource_type
+        """SELECT DISTINCT s.id AS from_id, s.name AS from_name, sc.to_service_name, sc.resource_type
            FROM service_calls sc
            JOIN services s ON s.id = sc.from_service_id
            WHERE sc.target_kind = 'external'
@@ -261,7 +262,7 @@ def list_external_edges(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 def list_unresolved_edges(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Indexed calls whose target cannot yet be resolved or classified."""
     return conn.execute(
-        """SELECT DISTINCT s.name AS from_name, sc.to_service_name, sc.call_kind
+        """SELECT DISTINCT s.id AS from_id, s.name AS from_name, sc.to_service_name, sc.call_kind
            FROM service_calls sc
            JOIN services s ON s.id = sc.from_service_id
            WHERE sc.to_service_id IS NULL AND sc.target_kind = 'unknown'
