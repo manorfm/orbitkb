@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -26,6 +27,26 @@ from orbitkb.export.persistence import has_unrepresented_mongo_access
 
 def _slug(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower() or "root"
+
+
+def _api_page_names(apis: list[sqlite3.Row]) -> dict[tuple[str, str], str]:
+    """Give each route one stable filename, disambiguating normalized collisions."""
+    used: set[str] = set()
+    names: dict[tuple[str, str], str] = {}
+    for api in apis:
+        key = (api["method"], api["path"])
+        base = _slug(f"{key[0]}-{key[1]}")
+        name = base
+        if name.casefold() in used:
+            digest = hashlib.sha256(f"{key[0]}\0{key[1]}".encode("utf-8")).hexdigest()[:10]
+            name = f"{base}--{digest}"
+            suffix = 2
+            while name.casefold() in used:
+                name = f"{base}--{digest}-{suffix}"
+                suffix += 1
+        used.add(name.casefold())
+        names[key] = f"{name}.md"
+    return names
 
 
 def _fmt_calls(calls: list[sqlite3.Row]) -> list[str]:
@@ -83,6 +104,7 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
             (call["to_service_name"] for call in calls),
         )
         apis = apis_repo.list_apis(conn, svc["id"])
+        api_page_names = _api_page_names(apis)
         persistence = persistence_repo.list_persistence(conn, svc["id"])
         snapshot = snapshots_repo.read_snapshot(conn, svc["id"])
         navigator = KnowledgeNavigator(snapshot) if snapshot is not None else None
@@ -108,8 +130,8 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
         ]
         if apis:
             for a in apis:
-                slug = _slug(f"{a['method']}-{a['path']}")
-                lines.append(f"- `{a['method']} {a['path']}` — {a['summary'] or ''} ([detail](apis/{slug}.md))")
+                page_name = api_page_names[(a["method"], a["path"])]
+                lines.append(f"- `{a['method']} {a['path']}` — {a['summary'] or ''} ([detail](apis/{page_name}))")
         else:
             lines.append("- (no API detected)")
 
@@ -181,8 +203,7 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
                 else:
                     api_lines.append("(none detected)")
 
-                slug = _slug(f"{a['method']}-{a['path']}")
-                api_path = apis_dir / f"{slug}.md"
+                api_path = apis_dir / api_page_names[(a["method"], a["path"])]
                 api_path.write_text("\n".join(api_lines) + "\n", encoding="utf-8")
                 written.append(api_path)
 

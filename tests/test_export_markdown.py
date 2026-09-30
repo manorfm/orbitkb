@@ -72,6 +72,28 @@ def test_export_markdown_writes_service_index_and_api_detail(tmp_path: Path):
     assert "authorization" in api_text
 
 
+def test_export_markdown_keeps_distinct_routes_with_the_same_filename_slug(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "catalog-service", "/tmp/catalog", "python")
+    routes = ("/items/id", "/items/{id}")
+    for path in routes:
+        apis_repo.upsert_api(conn, service_id, "GET", path, path, f"Details for {path}", [], [])
+
+    out_dir = tmp_path / "docs"
+    written = export_markdown(conn, out_dir)
+    api_dir = out_dir / "catalog-service" / "apis"
+    pages = list(api_dir.glob("*.md"))
+    index = (out_dir / "catalog-service" / "index.md").read_text(encoding="utf-8")
+
+    assert len(pages) == len(routes)
+    assert set(pages).issubset(set(written))
+    for path in routes:
+        page = next(page for page in pages if page.read_text(encoding="utf-8").startswith(f"# GET {path}\n"))
+        assert f"Details for {path}" in page.read_text(encoding="utf-8")
+        route_line = next(line for line in index.splitlines() if line.startswith(f"- `GET {path}`"))
+        assert f"[detail](apis/{page.name})" in route_line
+
+
 def test_export_markdown_includes_a_cloud_section(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     orders_id = _seed(conn)
