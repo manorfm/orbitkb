@@ -67,6 +67,30 @@ def test_generate_topology_diagram_includes_services_and_edges(tmp_path: Path):
     assert "order_created" in diagram
 
 
+def test_topology_escapes_indexed_names_and_channels(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(
+        conn, 'orders"\n  forged["node', "/tmp/orders", "python",
+    )
+    api_id = apis_repo.upsert_api(conn, service_id, "GET", "/orders", "s", "d", [], EVIDENCE)
+    service_calls_repo.replace_calls_for_api(conn, service_id, api_id, [
+        {"to_service_name": 'vendor"X', "call_kind": "http", "reason": "lookup",
+         "data_needed": [], "purpose_kind": "other", "confidence": 0.9,
+         "target_kind": "external", "resource_type": "saas"},
+    ], EVIDENCE)
+    messages_repo.replace_messages(conn, service_id, [
+        {"direction": "publishes", "channel": "orders|created\n  forged", "provider": "rabbitmq"},
+    ], EVIDENCE)
+
+    diagram = generate_topology_diagram(conn)
+
+    assert 'orders#quot;#10;  forged[#quot;node' in diagram
+    assert "vendor#quot;X" in diagram
+    assert "orders#124;created#10;  forged" in diagram
+    assert '\n  forged["node' not in diagram
+    assert "orders|created\n  forged" not in diagram
+
+
 def test_topology_keeps_distinct_names_with_the_same_mermaid_slug(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     for name in ("billing-a", "billing_a"):

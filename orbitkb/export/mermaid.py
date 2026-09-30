@@ -37,6 +37,15 @@ def _unique_node_id(base: str, used: set[str]) -> str:
     return node_id
 
 
+def _mermaid_label(value: str) -> str:
+    """Keep indexed text inside one Mermaid label, including edge labels."""
+    return "".join(
+        "#quot;" if char == '"' else
+        f"#{ord(char)};" if char in '|<>&#`' or ord(char) < 32 or ord(char) == 127 else char
+        for char in value
+    )
+
+
 def _sanitize_ident(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_]+", "_", text or "").strip("_") or "field"
 
@@ -118,7 +127,7 @@ def generate_topology_diagram(
         label = svc["name"]
         if name_counts[label] > 1:
             label += f" ({svc['repository_name'] or 'unscoped'})"
-        lines.append(f'  {node_id}["{label}"]')
+        lines.append(f'  {node_id}["{_mermaid_label(label)}"]')
 
     external_ids: dict[str, str] = {}
 
@@ -126,7 +135,7 @@ def generate_topology_diagram(
         if name not in external_ids:
             node_id = _unique_node_id(f"ext_{_slug(name)}", used_node_ids)
             external_ids[name] = node_id
-            lines.append(f'  {node_id}(("{name}"))')
+            lines.append(f'  {node_id}(("{_mermaid_label(name)}"))')
         return external_ids[name]
 
     rendered_targets: set[tuple[int, str]] = set()
@@ -135,7 +144,7 @@ def generate_topology_diagram(
         to_id = service_ids.get(edge["to_id"])
         if from_id is None or to_id is None:
             continue
-        lines.append(f"  {from_id} -->|{edge['call_kind']}| {to_id}")
+        lines.append(f"  {from_id} -->|{_mermaid_label(edge['call_kind'])}| {to_id}")
         rendered_targets.add((edge["from_id"], edge["to_name"]))
 
     for edge in service_calls_repo.list_external_edges(conn):
@@ -144,7 +153,7 @@ def generate_topology_diagram(
             continue
         target_id = external_node(edge["to_service_name"])
         label = edge["resource_type"] or "external"
-        lines.append(f"  {from_id} -.->|{label}| {target_id}")
+        lines.append(f"  {from_id} -.->|{_mermaid_label(label)}| {target_id}")
         rendered_targets.add((edge["from_id"], edge["to_service_name"]))
 
     for edge in service_calls_repo.list_unresolved_edges(conn):
@@ -152,7 +161,7 @@ def generate_topology_diagram(
         if from_id is None:
             continue
         target_id = external_node(edge["to_service_name"])
-        lines.append(f"  {from_id} -.->|{edge['call_kind']} (unresolved)| {target_id}")
+        lines.append(f"  {from_id} -.->|{_mermaid_label(edge['call_kind'])} (unresolved)| {target_id}")
         rendered_targets.add((edge["from_id"], edge["to_service_name"]))
 
     for svc in services:
@@ -175,14 +184,14 @@ def generate_topology_diagram(
             f" {fact['target_name']}" if fact["target_name"] else ""
         )
         target_id = external_node(cloud_name)
-        lines.append(f"  {from_id} -.->|{fact['resource_type']}| {target_id}")
+        lines.append(f"  {from_id} -.->|{_mermaid_label(fact['resource_type'])}| {target_id}")
 
     for link in messages_repo.list_all_message_links(conn):
         publisher_id = service_ids.get(link["publisher_id"])
         consumer_id = service_ids.get(link["consumer_id"])
         if publisher_id is None or consumer_id is None:
             continue
-        lines.append(f'  {publisher_id} ==>|{link["channel"]}| {consumer_id}')
+        lines.append(f'  {publisher_id} ==>|{_mermaid_label(link["channel"])}| {consumer_id}')
 
     for row in messages_repo.list_unmatched_message_channels(conn):
         from_id = service_ids.get(row["service_id"])
@@ -190,9 +199,9 @@ def generate_topology_diagram(
             continue
         broker_id = external_node(f"{row['provider']}: {row['channel']}")
         if row["direction"] == "publishes":
-            lines.append(f"  {from_id} -.->|{row['channel']}| {broker_id}")
+            lines.append(f"  {from_id} -.->|{_mermaid_label(row['channel'])}| {broker_id}")
         else:
-            lines.append(f"  {broker_id} -.->|{row['channel']}| {from_id}")
+            lines.append(f"  {broker_id} -.->|{_mermaid_label(row['channel'])}| {from_id}")
 
     for svc in services:
         from_id = service_ids.get(svc["id"])
@@ -213,7 +222,7 @@ def generate_topology_diagram(
             # Never shared across services — a same-named engine on two services isn't
             # evidence they're the same physical database, just the same technology.
             node_id = _unique_node_id(f"db_{service_slug}_{_slug(engine)}", used_node_ids)
-            lines.append(f'  {node_id}[("{engine}")]')
+            lines.append(f'  {node_id}[("{_mermaid_label(engine)}")]')
             lines.append(f"  {from_id} -.->|persists| {node_id}")
 
     if cycle_service_ids:

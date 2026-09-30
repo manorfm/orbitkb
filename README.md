@@ -316,6 +316,8 @@ Mermaid slug.
 Services with the same name in different repositories are labeled with their
 repository; calls and scoped topology queries retain their separate identities.
 Cycle highlighting follows the same service identities.
+Topology labels escape reserved characters from indexed names and channels so
+they remain text within the intended node or edge.
 When source analysis confirms a Spring Redis Pub/Sub publication, topology shows
 a Redis node for that producer. It does not assign an unknown channel, consumer
 or shared Redis instance.
