@@ -321,6 +321,8 @@ is plain text — versionable and diffable in a PR, unlike a generated image.
 Node identifiers remain distinct when different names normalize to the same
 Mermaid slug, including entity names in ER diagrams; relationships still point
 to the intended entity.
+Fields that normalize to the same ER name also remain distinct, and their
+relationship labels match the displayed field names.
 ER relationship labels use the same normalized field names shown in entity
 blocks, so indexed field text cannot add diagram statements.
 Entrypoint sequence diagrams encode indexed participant and message labels,

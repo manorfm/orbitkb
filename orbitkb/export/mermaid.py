@@ -290,13 +290,17 @@ def generate_er_diagram(conn: sqlite3.Connection, service_id: int) -> str | None
         entity_id = entity_ids[entity["name"]]
         lines.append(f"  {entity_id} {{")
         fields = json.loads(entity["schema_json"] or "[]")
-        for field in fields:
+        used_field_names: set[str] = set()
+        named_fields = [
+            (field, _unique_node_id(_sanitize_ident(field.get("field", "field")), used_field_names))
+            for field in fields
+        ]
+        for field, field_name in named_fields:
             type_token = _sanitize_ident((field.get("type_desc") or "string").split(",")[0].strip()) or "string"
-            field_name = _sanitize_ident(field.get("field", "field"))
             lines.append(f"    {type_token} {field_name}")
         lines.append("  }")
 
-        for field in fields:
+        for field, field_name in named_fields:
             reference = field.get("references")
             if not reference:
                 continue
@@ -304,7 +308,6 @@ def generate_er_diagram(conn: sqlite3.Connection, service_id: int) -> str | None
             if target_id is None:
                 continue
             crow_foot = "||--||" if reference.get("unique") else "}o--||"
-            field_name = _sanitize_ident(field.get("field", "field"))
             relationships.append(f'  {entity_id} {crow_foot} {target_id} : "{field_name}"')
 
     if relationships:
