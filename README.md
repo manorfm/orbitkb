@@ -660,6 +660,9 @@ The same view shows `prompt_chars`, the total characters in redacted prompts
 submitted to the backend for that unit, including retries. Deterministic and skipped units
 show zero; historical rows show `None`. This is a size measure, not a token or
 cost estimate, and the prompt text is not stored in telemetry.
+With `--units`, each run also shows the total measured characters and the count
+of historical units without a measurement. Units appear from largest measured
+prompt to smallest, with unknown sizes last, to help locate context-heavy units.
 Unit keys are database-local HMAC values, stable across runs in that database;
 the telemetry table contains no route, file, symbol, prompt or source text.
 Runs recorded before per-unit telemetry have no unit rows.

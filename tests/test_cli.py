@@ -12,6 +12,7 @@ import pytest
 
 from orbitkb import cli
 from orbitkb.db.connection import open_db
+from orbitkb.db.repositories import index_runs as index_runs_repo
 from orbitkb.db.repositories import repositories as repositories_repo
 from orbitkb.db.repositories import services as services_repo
 from tests.test_orchestrator import SAMPLE_ROOT, FakeOrchestratorBackend
@@ -284,6 +285,34 @@ def test_status_units_shows_opaque_per_unit_results_on_request(tmp_path: Path, c
     assert any(re.search(r"unit endpoint key=[0-9a-f]{64} status=success attempts=1", line) for line in unit_lines)
     assert all(re.search(r"prompt_chars=\d+", line) for line in unit_lines)
     assert all("/orders" not in line and "Source excerpts" not in line for line in unit_lines)
+
+
+def test_status_units_ranks_prompt_sizes_and_reports_unmeasured_history(tmp_path: Path, capsys):
+    db_path = tmp_path / "units.db"
+    cli._cmd_index(_parse(["index", str(SAMPLE_ROOT), "--db", str(db_path)]))
+    capsys.readouterr()
+    conn = open_db(db_path)
+    service = services_repo.get_service_by_name(conn, "orders-service")
+    run = index_runs_repo.recent_index_runs(conn, service["id"], limit=1)[0]
+    units = index_runs_repo.list_run_units(conn, run["id"])
+    assert len(units) > 1
+    conn.execute(
+        "UPDATE index_run_units SET prompt_chars = NULL WHERE run_id = ? AND unit_key = ?",
+        (run["id"], units[0]["unit_key"]),
+    )
+    conn.commit()
+    measured = [unit["prompt_chars"] for unit in index_runs_repo.list_run_units(conn, run["id"])
+                if unit["prompt_chars"] is not None]
+
+    assert cli._cmd_status(_parse(["status", "orders-service", "--units", "--db", str(db_path)])) == 0
+
+    out = capsys.readouterr().out
+    unit_lines = [line for line in out.splitlines() if line.startswith("      unit ")]
+    sizes = [int(match.group(1)) for line in unit_lines
+             if (match := re.search(r"prompt_chars=(\d+)", line))]
+    assert sizes == sorted(measured, reverse=True)
+    assert unit_lines[-1].endswith("prompt_chars=None")
+    assert f"prompt size: measured={len(measured)} unknown=1 total_chars={sum(measured)}" in out
 
 
 def test_status_command_global(tmp_path: Path, capsys):

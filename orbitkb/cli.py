@@ -370,7 +370,21 @@ def _cmd_status(args: argparse.Namespace) -> int:
                     f"cost_usd={unit['cost_usd']} backend_duration_ms={unit['backend_duration_ms']}"
                 )
             if args.units:
-                for unit in index_runs_repo.list_run_units(conn, run["id"]):
+                units = index_runs_repo.list_run_units(conn, run["id"])
+                measured_sizes = [unit["prompt_chars"] for unit in units if unit["prompt_chars"] is not None]
+                print(
+                    f"    prompt size: measured={len(measured_sizes)} "
+                    f"unknown={len(units) - len(measured_sizes)} total_chars={sum(measured_sizes)}"
+                )
+                for unit in sorted(
+                    units,
+                    key=lambda unit: (
+                        unit["prompt_chars"] is None,
+                        -(unit["prompt_chars"] or 0),
+                        unit["unit_kind"],
+                        unit["unit_key"],
+                    ),
+                ):
                     print(
                         f"      unit {unit['unit_kind']} key={unit['unit_key']} "
                         f"status={unit['status']} attempts={unit['llm_invocations']} "
