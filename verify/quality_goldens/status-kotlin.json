@@ -1,0 +1,8 @@
+{
+  "summary": "Get service status",
+  "description": "Returns the current service status.",
+  "request_shape": [],
+  "response_shape": [{"field": "value", "type_desc": "String"}],
+  "calls": [],
+  "validations": [{"kind": "authorization", "description": "Public access is permitted."}]
+}

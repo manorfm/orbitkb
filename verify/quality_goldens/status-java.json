@@ -1,0 +1,8 @@
+{
+  "summary": "Read health status",
+  "description": "Returns the service health status.",
+  "request_shape": [],
+  "response_shape": [{"field": "value", "type_desc": "String"}],
+  "calls": [],
+  "validations": [{"kind": "authorization", "description": "Public access is permitted."}]
+}

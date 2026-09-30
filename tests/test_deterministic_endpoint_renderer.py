@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from shutil import copytree
 
@@ -19,6 +20,11 @@ from orbitkb.generation.route_evidence import route_capsule
 
 CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/status-kotlin-service"
 JAVA_CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/status-java-service"
+GOLDENS = Path(__file__).resolve().parents[1] / "verify/quality_goldens"
+
+
+def _golden(name: str) -> dict:
+    return json.loads((GOLDENS / name).read_text(encoding="utf-8"))
 
 
 def test_simple_route_renders_schema_valid_source_backed_documentation():
@@ -27,14 +33,7 @@ def test_simple_route_renders_schema_valid_source_backed_documentation():
     document = render_simple_endpoint(capsule, assessment)
 
     assert assessment.overall == SufficiencyStatus.ENOUGH
-    assert document == {
-        "summary": "Get service status",
-        "description": "Returns the current service status.",
-        "request_shape": [],
-        "response_shape": [{"field": "value", "type_desc": "String"}],
-        "calls": [],
-        "validations": [{"kind": "authorization", "description": "Public access is permitted."}],
-    }
+    assert document == _golden("status-kotlin.json")
     jsonschema.validate(document, load_schema("api_detail"))
 
 
@@ -46,14 +45,9 @@ def test_java_route_uses_the_same_evidence_based_renderer():
     assert capsule is not None
     assessment = DeterministicSufficiencyEvaluator().evaluate(capsule)
 
-    assert render_simple_endpoint(capsule, assessment) == {
-        "summary": "Read health status",
-        "description": "Returns the service health status.",
-        "request_shape": [],
-        "response_shape": [{"field": "value", "type_desc": "String"}],
-        "calls": [],
-        "validations": [{"kind": "authorization", "description": "Public access is permitted."}],
-    }
+    document = render_simple_endpoint(capsule, assessment)
+    assert document == _golden("status-java.json")
+    jsonschema.validate(document, load_schema("api_detail"))
 
 
 def test_java_route_with_restricted_filter_rule_is_not_rendered(tmp_path: Path):
