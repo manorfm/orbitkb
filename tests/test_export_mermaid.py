@@ -66,6 +66,33 @@ def test_generate_topology_diagram_includes_services_and_edges(tmp_path: Path):
     assert "order_created" in diagram
 
 
+def test_topology_keeps_distinct_names_with_the_same_mermaid_slug(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    for name in ("billing-a", "billing_a"):
+        service_id = services_repo.ensure_service(conn, name, f"/tmp/{name}", "python")
+        api_id = apis_repo.upsert_api(conn, service_id, "GET", "/health", "s", "d", [], EVIDENCE)
+        service_calls_repo.replace_calls_for_api(conn, service_id, api_id, [
+            {"to_service_name": f"vendor {name}", "call_kind": "http", "reason": "lookup",
+             "data_needed": [], "purpose_kind": "data_fetch", "confidence": 0.9,
+             "target_kind": "external", "resource_type": "saas"},
+        ], EVIDENCE)
+        persistence_repo.replace_persistence_entities(
+            conn, service_id, [{"name": "records", "kind": "sql_table", "engine": "postgres",
+                                "schema_json": []}], EVIDENCE,
+        )
+
+    diagram = generate_topology_diagram(conn)
+
+    assert 'svc_billing_a["billing-a"]' in diagram
+    assert 'svc_billing_a_2["billing_a"]' in diagram
+    assert 'ext_vendor_billing_a(("vendor billing-a"))' in diagram
+    assert 'ext_vendor_billing_a_2(("vendor billing_a"))' in diagram
+    assert 'svc_billing_a -.->|saas| ext_vendor_billing_a' in diagram
+    assert 'svc_billing_a_2 -.->|saas| ext_vendor_billing_a_2' in diagram
+    assert 'db_billing_a_postgres[("postgres")]' in diagram
+    assert 'db_billing_a_2_postgres[("postgres")]' in diagram
+
+
 def test_generate_topology_diagram_includes_cloud_nodes(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     orders_id, _payments_id, _notif_id = _seed_topology(conn)

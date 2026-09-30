@@ -26,6 +26,16 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]+", "_", text).strip("_").lower() or "node"
 
 
+def _unique_node_id(base: str, used: set[str]) -> str:
+    node_id = base
+    suffix = 2
+    while node_id in used:
+        node_id = f"{base}_{suffix}"
+        suffix += 1
+    used.add(node_id)
+    return node_id
+
+
 def _sanitize_ident(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_]+", "_", text or "").strip("_") or "field"
 
@@ -96,12 +106,13 @@ def generate_topology_diagram(
     included = _reachable_service_names(conn, root_services, hops) if root_services is not None else None
     lines = ["graph TD"]
     services = services_repo.list_services(conn)
+    used_node_ids: set[str] = set()
 
     service_ids: dict[str, str] = {}
     for svc in services:
         if included is not None and svc["name"] not in included:
             continue
-        node_id = f"svc_{_slug(svc['name'])}"
+        node_id = _unique_node_id(f"svc_{_slug(svc['name'])}", used_node_ids)
         service_ids[svc["name"]] = node_id
         lines.append(f'  {node_id}["{svc["name"]}"]')
 
@@ -109,7 +120,7 @@ def generate_topology_diagram(
 
     def external_node(name: str) -> str:
         if name not in external_ids:
-            node_id = f"ext_{_slug(name)}"
+            node_id = _unique_node_id(f"ext_{_slug(name)}", used_node_ids)
             external_ids[name] = node_id
             lines.append(f'  {node_id}(("{name}"))')
         return external_ids[name]
@@ -183,20 +194,21 @@ def generate_topology_diagram(
         from_id = service_ids.get(svc["name"])
         if from_id is None:
             continue
+        service_slug = from_id.removeprefix("svc_")
         snapshot = snapshots_repo.read_snapshot(conn, svc["id"])
         if has_confirmed_redis_publication(snapshot):
-            broker_id = f"broker_{_slug(svc['name'])}_redis"
+            broker_id = _unique_node_id(f"broker_{service_slug}_redis", used_node_ids)
             lines.append(f'  {broker_id}[("Redis Pub/Sub")]')
             lines.append(f"  {from_id} -.->|publish| {broker_id}")
         engines = {entity["engine"] for entity in persistence_repo.list_persistence(conn, svc["id"])}
         if has_unrepresented_mongo_access(snapshot, engines):
-            node_id = f"db_{_slug(svc['name'])}_mongodb"
+            node_id = _unique_node_id(f"db_{service_slug}_mongodb", used_node_ids)
             lines.append(f'  {node_id}[("MongoDB")]')
             lines.append(f"  {from_id} -.->|accesses| {node_id}")
         for engine in sorted(engines):
             # Never shared across services — a same-named engine on two services isn't
             # evidence they're the same physical database, just the same technology.
-            node_id = f"db_{_slug(svc['name'])}_{_slug(engine)}"
+            node_id = _unique_node_id(f"db_{service_slug}_{_slug(engine)}", used_node_ids)
             lines.append(f'  {node_id}[("{engine}")]')
             lines.append(f"  {from_id} -.->|persists| {node_id}")
 
