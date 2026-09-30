@@ -5,6 +5,7 @@ from orbitkb.analysis.models import (
     CloudFact,
     Evidence,
     FlowEdge,
+    Injection,
     StaticServiceCall,
 )
 from orbitkb.db.connection import open_db
@@ -198,3 +199,59 @@ def test_markdown_and_mermaid_agree_on_confirmed_redis_publication(tmp_path: Pat
     flows_repo.replace_analysis(conn, service_id, AnalysisResult())
     markdown, mermaid = publications()
     assert "Redis Pub/Sub" not in markdown + mermaid
+
+
+def test_markdown_and_mermaid_agree_on_source_proven_mongo_access(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    mongo = Injection("Store.mongo", "MongoTemplate", None, Evidence("Store.kt", 2, 2))
+    call = FlowEdge(
+        "Store.save", "mongo.execute", "invokes", Evidence("Store.kt", 4, 4),
+        boundary_kind="persistence",
+    )
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(injections=[mongo], edges=[call]))
+
+    def persistence() -> tuple[str, str]:
+        export_markdown(conn, tmp_path / "docs")
+        markdown = (tmp_path / "docs/orders-service/index.md").read_text(encoding="utf-8")
+        return markdown.split("## Persistence\n", 1)[1].split("\n## Messaging", 1)[0], generate_topology_diagram(conn)
+
+    markdown, mermaid = persistence()
+    assert "MongoDB" in markdown
+    assert "collection unresolved" in markdown
+    assert "none detected" not in markdown
+    assert 'db_orders_service_mongodb[("MongoDB")]' in mermaid
+
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(injections=[mongo], edges=[FlowEdge(
+        "Store.save", "mongo.execute", "invokes", Evidence("Store.kt", 4, 4),
+        confidence="medium", boundary_kind="persistence",
+    )]))
+    markdown, mermaid = persistence()
+    assert "MongoDB" not in markdown + mermaid
+
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult())
+    markdown, mermaid = persistence()
+    assert "MongoDB" not in markdown + mermaid
+
+
+def test_markdown_does_not_repeat_mongo_access_when_entity_engine_is_known(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(
+        injections=[Injection("Store.mongo", "MongoTemplate", None, Evidence("Store.kt", 2, 2))],
+        edges=[FlowEdge(
+            "Store.save", "mongo.save", "writes", Evidence("Store.kt", 4, 4),
+            boundary_kind="persistence",
+        )],
+    ))
+    persistence_repo.replace_persistence_entities(
+        conn, service_id,
+        [{"name": "orders", "kind": "document", "engine": "mongodb", "schema_json": []}], [],
+    )
+
+    export_markdown(conn, tmp_path / "docs")
+
+    markdown = (tmp_path / "docs/orders-service/index.md").read_text(encoding="utf-8")
+    section = markdown.split("## Persistence\n", 1)[1].split("\n## Messaging", 1)[0]
+    assert "**orders** (document)" in section
+    assert "collection unresolved" not in section

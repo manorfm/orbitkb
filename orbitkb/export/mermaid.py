@@ -17,9 +17,9 @@ from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
-from orbitkb.domain.canonical import CanonicalSnapshot, FactStatus
 from orbitkb.export.dependencies import unresolved_declared_http_targets
 from orbitkb.export.messaging import has_confirmed_redis_publication
+from orbitkb.export.persistence import has_unrepresented_mongo_access
 
 
 def _slug(text: str) -> str:
@@ -73,30 +73,6 @@ def _reachable_service_names(conn: sqlite3.Connection, roots: set[str], hops: in
         reached |= next_frontier
         frontier = next_frontier
     return reached
-
-
-def _has_confirmed_mongo_template_call(snapshot: CanonicalSnapshot) -> bool:
-    receivers = {
-        fact.subject.name
-        for fact in snapshot.facts
-        if fact.kind == "injection"
-        and fact.status is FactStatus.CONFIRMED
-        and fact.attributes.get("contract", "").split("<", 1)[0].rsplit(".", 1)[-1]
-        in {"MongoTemplate", "ReactiveMongoTemplate"}
-    }
-    for fact in snapshot.facts:
-        if (fact.kind != "flow_edge" or fact.status is not FactStatus.CONFIRMED
-                or fact.attributes.get("boundary_kind") != "persistence"
-                or fact.attributes.get("relation") not in {"reads", "writes", "invokes"}):
-            continue
-        target = fact.attributes.get("target")
-        if not isinstance(target, str):
-            continue
-        owner, owner_separator, _ = fact.subject.name.rpartition(".")
-        receiver, receiver_separator, _ = target.rpartition(".")
-        if owner_separator and receiver_separator and f"{owner}.{receiver}" in receivers:
-            return True
-    return False
 
 
 def generate_topology_diagram(
@@ -213,8 +189,7 @@ def generate_topology_diagram(
             lines.append(f'  {broker_id}[("Redis Pub/Sub")]')
             lines.append(f"  {from_id} -.->|publish| {broker_id}")
         engines = {entity["engine"] for entity in persistence_repo.list_persistence(conn, svc["id"])}
-        if (snapshot is not None and _has_confirmed_mongo_template_call(snapshot)
-                and not any(_slug(engine) in {"mongo", "mongodb"} for engine in engines)):
+        if has_unrepresented_mongo_access(snapshot, engines):
             node_id = f"db_{_slug(svc['name'])}_mongodb"
             lines.append(f'  {node_id}[("MongoDB")]')
             lines.append(f"  {from_id} -.->|accesses| {node_id}")

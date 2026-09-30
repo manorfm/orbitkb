@@ -285,6 +285,8 @@ when no indexed call represents them, labeled `unresolved` rather than treated
 as a confirmed destination.
 The Messaging section also reports a source-confirmed Redis Pub/Sub publisher;
 its channel remains unresolved when static analysis did not identify it.
+The Persistence section likewise reports confirmed MongoDB template access
+when no MongoDB entity is indexed; its collection remains unresolved.
 
 `export mermaid` writes `docs/topology.mmd` (system-wide service topology —
 dependencies, external/cloud nodes, architecture cycles highlighted) and one

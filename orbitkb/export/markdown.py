@@ -14,6 +14,7 @@ from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.export.dependencies import unresolved_declared_http_targets
 from orbitkb.export.messaging import has_confirmed_redis_publication
+from orbitkb.export.persistence import has_unrepresented_mongo_access
 
 
 def _slug(text: str) -> str:
@@ -52,6 +53,7 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
         )
         apis = apis_repo.list_apis(conn, svc["id"])
         persistence = persistence_repo.list_persistence(conn, svc["id"])
+        snapshot = snapshots_repo.read_snapshot(conn, svc["id"])
         messages = messages_repo.list_messages(conn, svc["id"])
         cloud_facts = flows_repo.list_static_cloud_facts(conn, svc["id"])
 
@@ -78,13 +80,15 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
         else:
             lines.append("- (no API detected)")
 
-        lines += ["", "## Persistence"]
-        lines += [f"- **{p['name']}** ({p['kind']})" for p in persistence] or ["- (none detected)"]
+        persistence_lines = [f"- **{p['name']}** ({p['kind']})" for p in persistence]
+        if has_unrepresented_mongo_access(snapshot, (p["engine"] for p in persistence)):
+            persistence_lines.append("- **MongoDB** (accesses; collection unresolved from static analysis)")
+        lines += ["", "## Persistence", *(persistence_lines or ["- (none detected)"])]
 
         publishes = [m for m in messages if m["direction"] == "publishes"]
         consumes = [m for m in messages if m["direction"] == "consumes"]
         publish_lines = _fmt_messages(publishes) if publishes else []
-        if has_confirmed_redis_publication(snapshots_repo.read_snapshot(conn, svc["id"])):
+        if has_confirmed_redis_publication(snapshot):
             publish_lines.append("- **Redis Pub/Sub** (publishes; channel unresolved from static analysis)")
         lines += [
             "", "## Messaging", "", "### Publishes",
