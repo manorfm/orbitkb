@@ -56,6 +56,7 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
         persistence = persistence_repo.list_persistence(conn, svc["id"])
         snapshot = snapshots_repo.read_snapshot(conn, svc["id"])
         messages = messages_repo.list_messages(conn, svc["id"])
+        security_rules = flows_repo.list_static_security_requirements_in_declaration_order(conn, svc["id"])
         cloud_facts = flows_repo.list_static_cloud_facts(conn, svc["id"])
 
         lines = [
@@ -123,6 +124,13 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
                 api_lines = [f"# {a['method']} {a['path']}", "", api_row["description"] or "", "", "## Response"]
                 api_lines += [f"- `{f['field']}`: {f['type_desc']}" for f in response_shape] or ["(not detected)"]
                 api_lines += ["", "## Calls", *_fmt_calls(api_calls)]
+                security = flows_repo.matching_route_security_requirement(
+                    security_rules, a["method"], a["path"],
+                )
+                if security is not None:
+                    roles = json.loads(security["roles_json"])
+                    role_suffix = f" (roles: {', '.join(roles)})" if roles else ""
+                    api_lines += ["", "## Declared route security", f"- {security['requirement']}{role_suffix}"]
                 api_lines += ["", "## Validations / Constraints"]
                 if validations:
                     api_lines += [f"- [{v['kind']}] {v['description']}" for v in validations]

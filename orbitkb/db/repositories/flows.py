@@ -8,6 +8,7 @@ from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.models import AnalysisResult, EntryPoint
 from orbitkb.db.repositories import canonical_snapshots
 from orbitkb.db.repositories._util import now
+from orbitkb.domain.route_patterns import route_pattern_covers
 
 
 def replace_analysis(conn: sqlite3.Connection, service_id: int, analysis: AnalysisResult) -> None:
@@ -395,6 +396,21 @@ def list_static_security_requirements_in_declaration_order(
            FROM static_security_requirements WHERE service_id = ? ORDER BY id""",
         (service_id,),
     ).fetchall()
+
+
+def matching_route_security_requirement(
+    requirements: list[sqlite3.Row], method: str, path: str,
+) -> sqlite3.Row | None:
+    """First declared route rule covering one API, excluding uncorrelated symbol rules."""
+    for requirement in requirements:
+        pattern = requirement["route_pattern"]
+        if pattern is None:
+            continue
+        if requirement["method"] is not None and requirement["method"] != method:
+            continue
+        if route_pattern_covers(pattern, path):
+            return requirement
+    return None
 
 
 def list_static_cloud_facts(conn: sqlite3.Connection, service_id: int) -> list[sqlite3.Row]:

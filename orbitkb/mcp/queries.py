@@ -47,7 +47,6 @@ from orbitkb.domain.navigation import (
     TraversalPolicy,
     TraversalResult,
 )
-from orbitkb.domain.route_patterns import route_pattern_covers
 from orbitkb.export.mermaid import (
     generate_entrypoint_sequence,
     generate_topology_diagram,
@@ -449,14 +448,8 @@ def _security_shape_for_api(requirements: list[sqlite3.Row], method: str, path: 
     doesn't store the underlying symbol a requirement's own `symbol` would need
     to match against.
     """
-    for req in requirements:
-        if req["route_pattern"] is None:
-            continue
-        if req["method"] is not None and req["method"] != method:
-            continue
-        if route_pattern_covers(req["route_pattern"], path):
-            return {"requirement": req["requirement"], "roles": json.loads(req["roles_json"])}
-    return None
+    rule = flows_repo.matching_route_security_requirement(requirements, method, path)
+    return {"requirement": rule["requirement"], "roles": json.loads(rule["roles_json"])} if rule else None
 
 
 def describe_api(conn: sqlite3.Connection, service: str, method: str, path: str, repository: str | None = None) -> dict:

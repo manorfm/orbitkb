@@ -280,6 +280,9 @@ orbitkb export mermaid --out docs/
 stack, dependencies with the reason and data each call needs, APIs, persistence,
 messaging, cloud integrations) and one `docs/<service>/apis/<method-path>.md` per
 detected API (response shape, calls it makes, validations/constraints).
+API pages show the first source-proven route security rule that matches their
+method and path. Method-level annotations are not correlated to API pages yet,
+so this is a declared route rule, not a complete effective policy.
 The service dependency list also includes source-proven HTTP client targets
 when no indexed call represents them, labeled `unresolved` rather than treated
 as a confirmed destination.

@@ -6,6 +6,7 @@ from orbitkb.analysis.models import (
     Evidence,
     FlowEdge,
     Injection,
+    SecurityRequirement,
     StaticServiceCall,
 )
 from orbitkb.db.connection import open_db
@@ -285,3 +286,28 @@ def test_markdown_marks_indexed_call_unresolved_in_service_and_api_docs(tmp_path
     assert "**RestaurantClient** (http, data_fetch)" in service_doc
     assert "**RestaurantClient** (http, data_fetch)" in api_doc
     assert "RestaurantClient** (http (unresolved)" not in service_doc + api_doc
+
+
+def test_api_markdown_uses_first_source_proven_route_security_rule(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "menu-service", "/tmp/menu", "jvm-spring")
+    for method, path in (("GET", "/health"), ("POST", "/orders"), ("GET", "/orders")):
+        apis_repo.upsert_api(conn, service_id, method, path, "s", "d", [], [])
+    source = Evidence("SecurityConfig.kt", 1, 1)
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(security_requirements=[
+        SecurityRequirement("/health", "GET", None, "permitAll", (), source),
+        SecurityRequirement("/orders", "POST", None, "hasRole", ("ADMIN",), source),
+        SecurityRequirement("**", None, None, "authenticated", (), source),
+        SecurityRequirement(None, None, "OrderController.create", "denyAll", (), source),
+    ]))
+
+    export_markdown(conn, tmp_path / "docs")
+
+    api_dir = tmp_path / "docs/menu-service/apis"
+    get_health = (api_dir / "get-health.md").read_text(encoding="utf-8")
+    post_orders = (api_dir / "post-orders.md").read_text(encoding="utf-8")
+    get_orders = (api_dir / "get-orders.md").read_text(encoding="utf-8")
+    assert "## Declared route security\n- permitAll" in get_health
+    assert "## Declared route security\n- hasRole (roles: ADMIN)" in post_orders
+    assert "## Declared route security\n- authenticated" in get_orders
+    assert "denyAll" not in get_health + post_orders + get_orders

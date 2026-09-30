@@ -7,6 +7,7 @@ from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import flows as flows_repo
 from orbitkb.db.repositories import services as services_repo
+from orbitkb.domain.route_patterns import route_pattern_covers
 from orbitkb.mcp import queries
 
 
@@ -68,24 +69,18 @@ def test_describe_api_classifies_a_health_check_path():
 
 
 def test_route_pattern_covers_matches_a_trailing_double_star():
-    from orbitkb.mcp.queries import route_pattern_covers
-
     assert route_pattern_covers("/restaurants/{id}/**", "/restaurants/{restaurantId}/destinations")
     assert route_pattern_covers("/restaurants/{id}/**", "/restaurants/{id}")
     assert not route_pattern_covers("/restaurants/{id}/**", "/clusters/{id}")
 
 
 def test_route_pattern_covers_requires_equal_length_without_a_double_star():
-    from orbitkb.mcp.queries import route_pattern_covers
-
     assert route_pattern_covers("/orders/{id}/cancel", "/orders/{orderId}/cancel")
     assert not route_pattern_covers("/orders/{id}/cancel", "/orders/{id}/cancel/confirm")
     assert not route_pattern_covers("/orders/{id}", "/orders/{id}/cancel")
 
 
 def test_route_pattern_covers_any_request_wildcard():
-    from orbitkb.mcp.queries import route_pattern_covers
-
     assert route_pattern_covers("**", "/anything/at/all")
     assert route_pattern_covers("**", "/")
 
