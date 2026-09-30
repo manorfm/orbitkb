@@ -604,6 +604,10 @@ When an endpoint's detailed document changes but the ordered route summaries
 used by its component do not, indexing reuses the stored component summary and
 refreshes its evidence without a component or overview model call. A failed
 component generation is retried on the next run even without another edit.
+Component reuse is keyed by a SHA-256 digest of the rendered prompt, response
+schema and configured backend/model identity; only the digest is stored. Changing
+any of these inputs refreshes the component. Backends without an explicit model
+identity skip this reuse, and `--force` still regenerates it.
 Run `PYTHONPATH=. .venv/bin/python scripts/report_shadow_eligibility.py` to
 measure eligibility on the repository-owned synthetic corpus with the free mock
 backend. The report contains counts by stack and renderer status. In the

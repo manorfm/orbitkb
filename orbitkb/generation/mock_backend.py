@@ -51,6 +51,7 @@ def canned_response_for_schema(schema: dict) -> dict:
 
 class MockBackend:
     name = "mock"
+    cache_identity = "mock:v1"
 
     def generate(self, prompt: str, schema: dict, cwd: Path) -> GenerationOutcome:
         return GenerationOutcome(structured=canned_response_for_schema(schema))

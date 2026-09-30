@@ -4,7 +4,7 @@ import sqlite3
 from importlib import resources
 from pathlib import Path
 
-SCHEMA_VERSION = "47"
+SCHEMA_VERSION = "48"
 DEFAULT_DB_PATH = Path.home() / ".orbitkb" / "orbitkb.db"
 
 
@@ -37,6 +37,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "index_runs", "llm_invocations", "INTEGER")
     _add_column_if_missing(conn, "index_run_unit_usage", "backend_duration_ms", "REAL CHECK (backend_duration_ms >= 0)")
     _add_column_if_missing(conn, "index_run_units", "cached_input_tokens", "INTEGER")
+    _add_column_if_missing(conn, "components", "input_digest", "TEXT")
     _add_column_if_missing(conn, "static_message_contracts", "message_version", "TEXT")
     _add_column_if_missing(conn, "service_index_locks", "process_id", "INTEGER")
     _add_column_if_missing(conn, "change_plan_runs", "decision_points_json", "TEXT NOT NULL DEFAULT '[]'")

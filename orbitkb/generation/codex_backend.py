@@ -24,6 +24,10 @@ class CodexBackend:
         self.model = model
         self.api_key = api_key
 
+    @property
+    def cache_identity(self) -> str | None:
+        return f"codex:{self.model}" if self.model else None
+
     def generate(self, prompt: str, schema: dict, cwd: Path) -> GenerationOutcome:
         with tempfile.TemporaryDirectory() as tmp:
             schema_path = Path(tmp) / "schema.json"

@@ -11,6 +11,7 @@ class ComponentSummary:
     name: str
     file_path: str
     summary: str
+    input_digest: str | None = None
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ class ComponentDocumentation:
     file_path: str
     summary: str
     evidence: list[dict]
+    input_digest: str | None = None
 
 
 @dataclass(frozen=True)

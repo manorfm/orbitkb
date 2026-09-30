@@ -46,11 +46,11 @@ from orbitkb.generation.backend_base import LLMBackend, LLMUsage
 from orbitkb.generation.deterministic_endpoint import render_simple_endpoint
 from orbitkb.generation.embeddings import EmbeddingBackend
 from orbitkb.generation.evidence import AggregateEvidenceSource, EvidenceSource
+from orbitkb.generation.input_digest import component_input_digest
 from orbitkb.generation.knowledge import (
     ComponentDocumentation,
     ComponentSummary,
     EndpointDocumentation,
-    EndpointSummary,
     KnowledgeReader,
     KnowledgeWriter,
     MessageDocumentation,
@@ -347,7 +347,6 @@ class IndexContext:
     previous_snapshot: CanonicalSnapshot | None
     embedding_backend: EmbeddingBackend | None = None
     regenerated_endpoints: set[tuple[str, str]] = field(default_factory=set)
-    previous_api_summaries: dict[tuple[str, str], EndpointSummary] = field(default_factory=dict)
     endpoint_inventory_changed: bool = False
     any_component_regenerated: bool = False
     llm_invocations: int = 0
@@ -375,8 +374,6 @@ class EndpointGenerator:
         outcome = UnitOutcome()
         snapshot = canonical_snapshots_repo.read_snapshot(ctx.conn, ctx.service_id)
         existing_keys = ctx.knowledge_reader.endpoint_keys(ctx.service_id)
-        if not ctx.is_new and not ctx.force:
-            ctx.previous_api_summaries = ctx.knowledge_reader.api_summaries(ctx.service_id)
         keep_api_keys: set[tuple[str, str]] = set()
         for endpoint in ctx.hints.endpoints:
             key = (endpoint.method, endpoint.path)
@@ -480,10 +477,20 @@ class ComponentGenerator:
             retry_failed = index_runs_repo.last_run_unit_failed(
                 ctx.conn, ctx.service_id, self.kind, unit.identity,
             )
+            routes = [(endpoint.method, endpoint.path) for endpoint in group]
+            endpoint_context = compose_endpoint_context(routes, api_summaries)
+            prompt = _render_component_prompt(ctx.name, component_name, component_file, endpoint_context.text)
+            schema = load_schema("component")
+            input_digest = component_input_digest(getattr(ctx.backend, "cache_identity", None), prompt, schema)
+            previous_component = previous_components.get((component_name, component_file))
             needs_regen = (
                 ctx.force or ctx.is_new or bool(group_dep_files & ctx.changed)
                 or any((endpoint.method, endpoint.path) in ctx.regenerated_endpoints for endpoint in group)
                 or retry_failed
+                or bool(
+                    input_digest and previous_component and previous_component.input_digest
+                    and previous_component.input_digest != input_digest
+                )
             )
             label = f"component {component_name}"
             if not needs_regen:
@@ -491,26 +498,21 @@ class ComponentGenerator:
                 ctx.progress.unit_finished(ctx.name, label, "skipped")
                 continue
             ctx.progress.unit_started(ctx.name, label)
-            routes = [(endpoint.method, endpoint.path) for endpoint in group]
-            endpoint_context = compose_endpoint_context(
-                routes, api_summaries,
-            )
-            previous_component = previous_components.get((component_name, component_file))
-            if not retry_failed and previous_component is not None and (
-                compose_endpoint_context(routes, ctx.previous_api_summaries).text == endpoint_context.text
+            if not retry_failed and input_digest is not None and previous_component is not None and (
+                previous_component.input_digest == input_digest
             ):
                 ctx.knowledge_writer.save_component(
                     ctx.service_id,
                     ComponentDocumentation(
                         component_name, component_file, previous_component.summary, endpoint_context.evidence,
+                        input_digest,
                     ),
                 )
                 outcome.add(unit)
                 ctx.progress.unit_finished(ctx.name, label, "skipped")
                 continue
-            prompt = _render_component_prompt(ctx.name, component_name, component_file, endpoint_context.text)
             generation = generate_with_retry(
-                ctx.backend, prompt, load_schema("component"), ctx.root, ctx.failures_root,
+                ctx.backend, prompt, schema, ctx.root, ctx.failures_root,
                 f"{ctx.name}-component-{component_name}",
                 on_attempt=lambda unit=unit: ctx.record_llm_invocation(unit),
                 on_usage=unit.record_usage,
@@ -525,7 +527,9 @@ class ComponentGenerator:
             result = generation.structured
             ctx.knowledge_writer.save_component(
                 ctx.service_id,
-                ComponentDocumentation(component_name, component_file, result["summary"], endpoint_context.evidence),
+                ComponentDocumentation(
+                    component_name, component_file, result["summary"], endpoint_context.evidence, input_digest,
+                ),
             )
             unit.status = "success"
             outcome.add(unit)

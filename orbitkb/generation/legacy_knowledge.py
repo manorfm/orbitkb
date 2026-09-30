@@ -38,7 +38,7 @@ class LegacyKnowledgeAdapter:
 
     def component_summaries(self, service_id: int) -> list[ComponentSummary]:
         return [
-            ComponentSummary(row["name"], row["file_path"], row["summary"])
+            ComponentSummary(row["name"], row["file_path"], row["summary"], row["input_digest"])
             for row in components_repo.list_components(self._conn, service_id)
         ]
 
@@ -70,6 +70,7 @@ class LegacyKnowledgeAdapter:
         components_repo.upsert_component(
             self._conn, service_id, documentation.name, documentation.file_path,
             documentation.summary, documentation.evidence,
+            documentation.input_digest,
         )
 
     def prune_components(self, service_id: int, keep_keys: set[tuple[str, str]]) -> None:

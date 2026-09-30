@@ -15,6 +15,7 @@ from orbitkb.discovery.base import (
 )
 from orbitkb.discovery.registry import detector_by_id
 from orbitkb.domain.canonical import ServiceKey
+from orbitkb.generation import orchestrator
 from orbitkb.generation.backend_base import GenerationError
 from orbitkb.generation.mock_backend import MockBackend, kind_for_schema
 from orbitkb.generation.orchestrator import _render_api_detail_prompt, index_service
@@ -170,6 +171,60 @@ def test_description_change_reuses_component_and_overview_when_summary_is_unchan
     assert second.sufficiency_details[0].render_status == "used"
     api = apis_repo.get_api_by_key(conn, second.service_id, "GET", "/status")
     assert api is not None and api["description"] == "Returns the current service health state."
+
+
+def test_component_prompt_change_invalidates_reuse_even_when_route_summary_is_unchanged(tmp_path, monkeypatch):
+    root = tmp_path / "service"
+    copytree(STATUS_CORPUS, root)
+    backend = RecordingBackend()
+    conn = open_db(tmp_path / "index.db")
+    detector = detector_by_id("jvm-spring")
+    first = index_service(conn, "status", root, detector, backend)
+    assert first.status == "ok"
+    original_prompt = orchestrator._render_component_prompt
+    monkeypatch.setattr(orchestrator, "_render_component_prompt", lambda *args: original_prompt(*args) + "\nNew rule")
+
+    second = index_service(conn, "status", root, detector, backend)
+
+    assert second.status == "ok"
+    assert second.files_changed == 0
+    assert second.llm_calls == 2  # component and dependent overview
+
+
+def test_component_model_identity_change_invalidates_reuse(tmp_path):
+    root = tmp_path / "service"
+    copytree(STATUS_CORPUS, root)
+    backend = RecordingBackend()
+    backend.cache_identity = "mock:v1"
+    conn = open_db(tmp_path / "index.db")
+    detector = detector_by_id("jvm-spring")
+    first = index_service(conn, "status", root, detector, backend)
+    assert first.status == "ok"
+    backend.cache_identity = "mock:v2"
+
+    second = index_service(conn, "status", root, detector, backend)
+
+    assert second.status == "ok"
+    assert second.files_changed == 0
+    assert second.llm_calls == 2
+
+
+def test_two_routes_share_component_without_reinferring_unchanged_summary(tmp_path):
+    root = tmp_path / "service"
+    copytree(CORPUS, root)
+    backend = RecordingBackend()
+    conn = open_db(tmp_path / "index.db")
+    detector = detector_by_id("jvm-spring")
+    first = index_service(conn, "menu-manager", root, detector, backend)
+    assert first.status == "ok"
+    controller = root / "src/main/kotlin/example/menu/MenuController.kt"
+    controller.write_text(controller.read_text() + "\n// Documentation-only change\n", encoding="utf-8")
+
+    second = index_service(conn, "menu-manager", root, detector, backend)
+
+    assert second.status == "ok"
+    assert second.llm_calls == 2  # each endpoint, with shared component and overview reused
+    assert len(backend.endpoint_prompts) == 4
 
 
 def test_failed_component_is_retried_even_when_endpoint_summary_is_already_stored(tmp_path):

@@ -420,6 +420,7 @@ CREATE TABLE IF NOT EXISTS components (
     file_path     TEXT NOT NULL,
     summary       TEXT,
     evidence_json TEXT,
+    input_digest  TEXT,
     updated_at    TEXT NOT NULL,
     UNIQUE(service_id, name, file_path)
 );

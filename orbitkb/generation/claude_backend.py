@@ -32,6 +32,10 @@ class ClaudeBackend:
         self.model = model or DEFAULT_MODEL
         self.bare = bare
 
+    @property
+    def cache_identity(self) -> str:
+        return f"claude:{self.model}"
+
     def generate(self, prompt: str, schema: dict, cwd: Path) -> GenerationOutcome:
         cmd = [
             "claude", "-p", prompt,

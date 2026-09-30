@@ -9,6 +9,19 @@ def test_schema_initializes(tmp_path: Path):
     assert row["value"] == SCHEMA_VERSION
 
 
+def test_schema_adds_component_digest_without_inventing_existing_input(tmp_path: Path):
+    path = tmp_path / "older-components.db"
+    conn = open_db(path)
+    conn.execute("ALTER TABLE components DROP COLUMN input_digest")
+    conn.commit()
+    conn.close()
+
+    upgraded = open_db(path)
+
+    assert "input_digest" in {row["name"] for row in upgraded.execute("PRAGMA table_info(components)")}
+    assert upgraded.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()[0] == SCHEMA_VERSION
+
+
 def test_schema_adds_invocation_count_without_rewriting_older_runs(tmp_path: Path):
     path = tmp_path / "legacy-index-runs.db"
     conn = open_db(path)

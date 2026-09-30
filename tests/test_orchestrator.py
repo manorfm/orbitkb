@@ -42,6 +42,7 @@ class FakeOrchestratorBackend:
     """
 
     name = "fake"
+    cache_identity = "fake:v1"
 
     def __init__(self, fail_kind: str | None = None):
         self.fail_kind = fail_kind
