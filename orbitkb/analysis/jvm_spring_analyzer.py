@@ -39,6 +39,10 @@ from orbitkb.analysis.jvm_scanner import (
     split_top_level,
 )
 from orbitkb.analysis.jvm_security_analyzer import method_security_requirement
+from orbitkb.analysis.jvm_spring_syntax import (
+    SPRING_ROUTE_ANNOTATION_TO_METHOD,
+    spring_route_prefix,
+)
 from orbitkb.analysis.models import (
     AnalysisResult,
     ApiHeader,
@@ -50,6 +54,7 @@ from orbitkb.analysis.models import (
     Injection,
     Symbol,
 )
+from orbitkb.analysis.route_paths import join_route
 
 _REQUEST_HEADER_RE = re.compile(r'@RequestHeader\s*\(\s*(?:(?:name|value)\s*=\s*)?"(?P<name>[^"]+)"')
 _HANDLER_MAPPING_RE = re.compile(r"@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\b")
@@ -350,8 +355,8 @@ def _spring_handler_route(modifiers: str, prefix: str | None) -> tuple[str, str]
         literal = re.search(r'(?:^|,)\s*(?:(?:value|path)\s*=\s*)?"([^"]*)"', arguments)
         if literal:
             path = literal.group(1)
-    method = engine.SPRING_ROUTE_ANNOTATION_TO_METHOD[mapping.group(1)]
-    return method, engine._join_route(prefix, path) or "/"
+    method = SPRING_ROUTE_ANNOTATION_TO_METHOD[mapping.group(1)]
+    return method, join_route(prefix, path) or "/"
 
 
 def _boundaries_for_text(symbol: str, text: str, evidence: Evidence) -> list[FlowBoundary]:
@@ -379,7 +384,7 @@ class _KotlinSpringAnalyzer:
             implements = engine._kotlin_supertypes(class_match.header)
             annotations = class_match.annotations
             configuration_prefix = engine._spring_configuration_properties_prefix(annotations)
-            route_prefix = engine._spring_route_prefix(annotations)
+            route_prefix = spring_route_prefix(annotations)
             qualifiers = engine._qualifiers(annotations)
             primary = "@Primary" in annotations
             class_body_text = text[class_match.body_start : class_match.body_end + 1]
@@ -483,7 +488,7 @@ class _JavaSpringAnalyzer:
             implements = engine._java_interfaces(class_match.header)
             annotations = class_match.annotations
             configuration_prefix = engine._spring_configuration_properties_prefix(annotations)
-            route_prefix = engine._spring_route_prefix(annotations)
+            route_prefix = spring_route_prefix(annotations)
             qualifiers = engine._qualifiers(annotations)
             primary = "@Primary" in annotations
             class_body_text = text[class_match.body_start : class_match.body_end + 1]

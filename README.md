@@ -574,6 +574,8 @@ and per-file analysis. Existing parsers use the same contract, and the shared
 enrichment and canonical projection continue after their results are combined.
 Cross-file Spring Security filter-chain rules run through a framework adapter
 in that shared enrichment pass.
+Feign calls and client URL property bindings now come from one Spring Feign
+recognizer in the same pass; route joining remains shared across languages.
 The canonical projection converts entrypoints, symbol declarations, injections,
 flow boundary markers, flow edges, service calls,
 configuration keys, security requirements, error contracts, message contracts,

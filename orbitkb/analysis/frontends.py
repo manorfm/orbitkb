@@ -20,6 +20,15 @@ class FrameworkAdapter(Protocol):
 
 
 @dataclass(frozen=True)
+class CombinedFrameworkAdapter:
+    adapters: tuple[FrameworkAdapter, ...]
+
+    def enrich(self, result: AnalysisResult, files: list[Path], root: Path) -> None:
+        for adapter in self.adapters:
+            adapter.enrich(result, files, root)
+
+
+@dataclass(frozen=True)
 class AnalyzerFrontend:
     """Connect an existing file analyzer to the shared source pipeline."""
 
