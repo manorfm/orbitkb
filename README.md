@@ -283,6 +283,8 @@ detected API (response shape, calls it makes, validations/constraints).
 API pages show the first source-proven route security rule that matches their
 method and path. Method-level annotations are not correlated to API pages yet,
 so this is a declared route rule, not a complete effective policy.
+They also list source-proven request and response header names for that exact
+method and path; header values are not captured or exported.
 The service dependency list also includes source-proven HTTP client targets
 when no indexed call represents them, labeled `unresolved` rather than treated
 as a confirmed destination.

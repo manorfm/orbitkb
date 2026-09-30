@@ -120,9 +120,14 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
                 api_calls = service_calls_repo.list_calls_for_api(conn, api_row["id"])
                 validations = apis_repo.list_validations_for_api(conn, api_row["id"])
                 response_shape = json.loads(api_row["response_shape"] or "[]")
+                headers = flows_repo.list_static_api_headers_for_route(conn, svc["id"], a["method"], a["path"])
 
                 api_lines = [f"# {a['method']} {a['path']}", "", api_row["description"] or "", "", "## Response"]
                 api_lines += [f"- `{f['field']}`: {f['type_desc']}" for f in response_shape] or ["(not detected)"]
+                for direction in ("request", "response"):
+                    names = [header["name"] for header in headers if header["direction"] == direction]
+                    if names:
+                        api_lines += ["", f"## {direction.title()} headers", *(f"- `{name}`" for name in names)]
                 api_lines += ["", "## Calls", *_fmt_calls(api_calls)]
                 security = flows_repo.matching_route_security_requirement(
                     security_rules, a["method"], a["path"],

@@ -2,6 +2,7 @@ from pathlib import Path
 
 from orbitkb.analysis.models import (
     AnalysisResult,
+    ApiHeader,
     CloudFact,
     Evidence,
     FlowEdge,
@@ -311,3 +312,34 @@ def test_api_markdown_uses_first_source_proven_route_security_rule(tmp_path: Pat
     assert "## Declared route security\n- hasRole (roles: ADMIN)" in post_orders
     assert "## Declared route security\n- authenticated" in get_orders
     assert "denyAll" not in get_health + post_orders + get_orders
+
+
+def test_api_markdown_shows_source_proven_headers_for_the_matching_route(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "menu-service", "/tmp/menu", "jvm-spring")
+    for method in ("GET", "POST"):
+        apis_repo.upsert_api(conn, service_id, method, "/menus", "s", "d", [], [])
+    source = Evidence("MenuController.kt", 4, 4)
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(api_headers=[
+        ApiHeader("GET", "/menus", "request", "Accept-Language", source),
+        ApiHeader("GET", "/menus", "response", "ETag", source),
+        ApiHeader("POST", "/menus", "request", "Idempotency-Key", source),
+    ]))
+
+    export_markdown(conn, tmp_path / "docs")
+
+    api_dir = tmp_path / "docs/menu-service/apis"
+    get_doc = (api_dir / "get-menus.md").read_text(encoding="utf-8")
+    post_doc = (api_dir / "post-menus.md").read_text(encoding="utf-8")
+    assert "## Request headers\n- `Accept-Language`" in get_doc
+    assert "## Response headers\n- `ETag`" in get_doc
+    assert "Idempotency-Key" not in get_doc
+    assert "## Request headers\n- `Idempotency-Key`" in post_doc
+    assert "Accept-Language" not in post_doc
+    assert "ETag" not in post_doc
+
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult())
+    export_markdown(conn, tmp_path / "docs")
+    get_doc = (api_dir / "get-menus.md").read_text(encoding="utf-8")
+    assert "## Request headers" not in get_doc
+    assert "## Response headers" not in get_doc
