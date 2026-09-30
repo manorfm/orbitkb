@@ -46,6 +46,15 @@ class FailingEndpointBackend(RecordingBackend):
         return super().generate(prompt, schema, cwd)
 
 
+class FailingComponentBackend(RecordingBackend):
+    fail_component = False
+
+    def generate(self, prompt, schema, cwd):
+        if self.fail_component and kind_for_schema(schema) == "component":
+            raise GenerationError("fixture component failure")
+        return super().generate(prompt, schema, cwd)
+
+
 def test_endpoint_prompt_uses_route_proven_feign_evidence_without_another_model_call(tmp_path):
     backend = RecordingBackend()
     conn = open_db(tmp_path / "index.db")
@@ -138,6 +147,56 @@ def test_openapi_change_refreshes_deterministic_endpoint_without_controller_chan
     assert backend.endpoint_prompts == []
     api = apis_repo.get_api_by_key(conn, second.service_id, "GET", "/status")
     assert api is not None and api["summary"] == "Read current status"
+
+
+def test_description_change_reuses_component_and_overview_when_summary_is_unchanged(tmp_path):
+    root = tmp_path / "service"
+    copytree(STATUS_CORPUS, root)
+    backend = RecordingBackend()
+    conn = open_db(tmp_path / "index.db")
+    detector = detector_by_id("jvm-spring")
+    first = index_service(conn, "status", root, detector, backend)
+    assert first.status == "ok"
+    spec = root / "openapi.yaml"
+    spec.write_text(spec.read_text().replace(
+        "Returns the current service status.", "Returns the current service health state.",
+    ), encoding="utf-8")
+
+    second = index_service(conn, "status", root, detector, backend)
+
+    assert second.status == "ok"
+    assert second.files_changed == 1
+    assert second.llm_calls == 0
+    assert second.sufficiency_details[0].render_status == "used"
+    api = apis_repo.get_api_by_key(conn, second.service_id, "GET", "/status")
+    assert api is not None and api["description"] == "Returns the current service health state."
+
+
+def test_failed_component_is_retried_even_when_endpoint_summary_is_already_stored(tmp_path):
+    root = tmp_path / "service"
+    copytree(STATUS_CORPUS, root)
+    backend = FailingComponentBackend()
+    conn = open_db(tmp_path / "index.db")
+    detector = detector_by_id("jvm-spring")
+    first = index_service(conn, "status", root, detector, backend)
+    assert first.status == "ok"
+    spec = root / "openapi.yaml"
+    spec.write_text(spec.read_text().replace(
+        "Get service status", "Read current status",
+    ), encoding="utf-8")
+    backend.fail_component = True
+
+    failed = index_service(
+        conn, "status", root, detector, backend, failures_root=tmp_path / "failures",
+    )
+    assert failed.status == "partial"
+    backend.fail_component = False
+
+    retried = index_service(conn, "status", root, detector, backend)
+
+    assert retried.status == "ok"
+    assert retried.llm_calls == 2  # component retry and dependent overview
+    assert retried.llm_invocations == 2
 
 
 def test_security_change_replaces_public_document_with_model_output(tmp_path):

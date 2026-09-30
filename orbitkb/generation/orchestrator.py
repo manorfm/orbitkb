@@ -50,6 +50,7 @@ from orbitkb.generation.knowledge import (
     ComponentDocumentation,
     ComponentSummary,
     EndpointDocumentation,
+    EndpointSummary,
     KnowledgeReader,
     KnowledgeWriter,
     MessageDocumentation,
@@ -346,6 +347,7 @@ class IndexContext:
     previous_snapshot: CanonicalSnapshot | None
     embedding_backend: EmbeddingBackend | None = None
     regenerated_endpoints: set[tuple[str, str]] = field(default_factory=set)
+    previous_api_summaries: dict[tuple[str, str], EndpointSummary] = field(default_factory=dict)
     endpoint_inventory_changed: bool = False
     any_component_regenerated: bool = False
     llm_invocations: int = 0
@@ -373,6 +375,8 @@ class EndpointGenerator:
         outcome = UnitOutcome()
         snapshot = canonical_snapshots_repo.read_snapshot(ctx.conn, ctx.service_id)
         existing_keys = ctx.knowledge_reader.endpoint_keys(ctx.service_id)
+        if not ctx.is_new and not ctx.force:
+            ctx.previous_api_summaries = ctx.knowledge_reader.api_summaries(ctx.service_id)
         keep_api_keys: set[tuple[str, str]] = set()
         for endpoint in ctx.hints.endpoints:
             key = (endpoint.method, endpoint.path)
@@ -461,6 +465,10 @@ class ComponentGenerator:
     def run(self, ctx: IndexContext) -> UnitOutcome:
         outcome = UnitOutcome()
         api_summaries = ctx.knowledge_reader.api_summaries(ctx.service_id)
+        previous_components = (
+            {(item.name, item.file_path): item for item in ctx.knowledge_reader.component_summaries(ctx.service_id)}
+            if not ctx.is_new and not ctx.force else {}
+        )
         keep_component_keys: set[tuple[str, str]] = set()
         for component_name, group in ctx.component_groups.items():
             component_file = group[0].excerpt.file_path
@@ -469,9 +477,13 @@ class ComponentGenerator:
             group_dep_files: set[str] = set()
             for endpoint in group:
                 group_dep_files |= endpoint.dependency_files()
+            retry_failed = index_runs_repo.last_run_unit_failed(
+                ctx.conn, ctx.service_id, self.kind, unit.identity,
+            )
             needs_regen = (
                 ctx.force or ctx.is_new or bool(group_dep_files & ctx.changed)
                 or any((endpoint.method, endpoint.path) in ctx.regenerated_endpoints for endpoint in group)
+                or retry_failed
             )
             label = f"component {component_name}"
             if not needs_regen:
@@ -479,9 +491,23 @@ class ComponentGenerator:
                 ctx.progress.unit_finished(ctx.name, label, "skipped")
                 continue
             ctx.progress.unit_started(ctx.name, label)
+            routes = [(endpoint.method, endpoint.path) for endpoint in group]
             endpoint_context = compose_endpoint_context(
-                [(endpoint.method, endpoint.path) for endpoint in group], api_summaries,
+                routes, api_summaries,
             )
+            previous_component = previous_components.get((component_name, component_file))
+            if not retry_failed and previous_component is not None and (
+                compose_endpoint_context(routes, ctx.previous_api_summaries).text == endpoint_context.text
+            ):
+                ctx.knowledge_writer.save_component(
+                    ctx.service_id,
+                    ComponentDocumentation(
+                        component_name, component_file, previous_component.summary, endpoint_context.evidence,
+                    ),
+                )
+                outcome.add(unit)
+                ctx.progress.unit_finished(ctx.name, label, "skipped")
+                continue
             prompt = _render_component_prompt(ctx.name, component_name, component_file, endpoint_context.text)
             generation = generate_with_retry(
                 ctx.backend, prompt, load_schema("component"), ctx.root, ctx.failures_root,
@@ -621,7 +647,7 @@ class OverviewGenerator:
         needs_overview = (
             ctx.force or ctx.is_new or bool(ctx.changed & entry_files)
             or not (ctx.existing and ctx.existing["short_desc"])
-            or ctx.regenerated_endpoints or ctx.endpoint_inventory_changed or ctx.any_component_regenerated
+            or ctx.endpoint_inventory_changed or ctx.any_component_regenerated
         )
         if not needs_overview:
             outcome.add(unit)
