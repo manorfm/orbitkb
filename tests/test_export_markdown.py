@@ -4,6 +4,7 @@ from orbitkb.analysis.models import (
     AnalysisResult,
     CloudFact,
     Evidence,
+    FlowEdge,
     StaticServiceCall,
 )
 from orbitkb.db.connection import open_db
@@ -14,6 +15,7 @@ from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.export.markdown import export_markdown
+from orbitkb.export.mermaid import generate_topology_diagram
 
 
 def _seed(conn):
@@ -163,3 +165,36 @@ def test_markdown_does_not_repeat_a_source_target_already_in_indexed_calls(tmp_p
     dependencies = text.split("## Depends on\n", 1)[1].split("\n## APIs", 1)[0]
     assert dependencies.count("payments-service") == 1
     assert "charge the customer" in dependencies
+
+
+def test_markdown_and_mermaid_agree_on_confirmed_redis_publication(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    publication = FlowEdge(
+        "Events.publish", "redis.convertAndSend", "publishes",
+        Evidence("Events.kt", 12, 12), boundary_kind="redis_pubsub",
+    )
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(edges=[publication]))
+
+    def publications() -> tuple[str, str]:
+        export_markdown(conn, tmp_path / "docs")
+        markdown = (tmp_path / "docs/orders-service/index.md").read_text(encoding="utf-8")
+        return markdown.split("### Publishes\n", 1)[1].split("\n### Consumes", 1)[0], generate_topology_diagram(conn)
+
+    markdown, mermaid = publications()
+    assert "Redis Pub/Sub" in markdown
+    assert "channel unresolved" in markdown
+    assert "none detected" not in markdown
+    assert "Redis Pub/Sub" in mermaid
+    assert "events:table" not in markdown + mermaid
+
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(edges=[FlowEdge(
+        "Events.publish", "redis.convertAndSend", "publishes",
+        Evidence("Events.kt", 12, 12), confidence="medium", boundary_kind="redis_pubsub",
+    )]))
+    markdown, mermaid = publications()
+    assert "Redis Pub/Sub" not in markdown + mermaid
+
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult())
+    markdown, mermaid = publications()
+    assert "Redis Pub/Sub" not in markdown + mermaid

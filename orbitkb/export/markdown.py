@@ -6,12 +6,14 @@ import sqlite3
 from pathlib import Path
 
 from orbitkb.db.repositories import apis as apis_repo
+from orbitkb.db.repositories import canonical_snapshots as snapshots_repo
 from orbitkb.db.repositories import flows as flows_repo
 from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.export.dependencies import unresolved_declared_http_targets
+from orbitkb.export.messaging import has_confirmed_redis_publication
 
 
 def _slug(text: str) -> str:
@@ -81,7 +83,14 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
 
         publishes = [m for m in messages if m["direction"] == "publishes"]
         consumes = [m for m in messages if m["direction"] == "consumes"]
-        lines += ["", "## Messaging", "", "### Publishes", *_fmt_messages(publishes), "", "### Consumes", *_fmt_messages(consumes)]
+        publish_lines = _fmt_messages(publishes) if publishes else []
+        if has_confirmed_redis_publication(snapshots_repo.read_snapshot(conn, svc["id"])):
+            publish_lines.append("- **Redis Pub/Sub** (publishes; channel unresolved from static analysis)")
+        lines += [
+            "", "## Messaging", "", "### Publishes",
+            *(publish_lines or ["- (none detected)"]),
+            "", "### Consumes", *_fmt_messages(consumes),
+        ]
 
         lines += ["", "## Cloud"]
         if cloud_facts:

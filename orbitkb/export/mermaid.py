@@ -19,6 +19,7 @@ from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.domain.canonical import CanonicalSnapshot, FactStatus
 from orbitkb.export.dependencies import unresolved_declared_http_targets
+from orbitkb.export.messaging import has_confirmed_redis_publication
 
 
 def _slug(text: str) -> str:
@@ -207,13 +208,7 @@ def generate_topology_diagram(
         if from_id is None:
             continue
         snapshot = snapshots_repo.read_snapshot(conn, svc["id"])
-        if snapshot is not None and any(
-            fact.kind == "flow_edge"
-            and fact.status is FactStatus.CONFIRMED
-            and fact.attributes.get("relation") == "publishes"
-            and fact.attributes.get("boundary_kind") == "redis_pubsub"
-            for fact in snapshot.facts
-        ):
+        if has_confirmed_redis_publication(snapshot):
             broker_id = f"broker_{_slug(svc['name'])}_redis"
             lines.append(f'  {broker_id}[("Redis Pub/Sub")]')
             lines.append(f"  {from_id} -.->|publish| {broker_id}")
