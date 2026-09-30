@@ -281,6 +281,9 @@ stack, dependencies with the reason and data each call needs, APIs, persistence,
 messaging, cloud integrations) and one `docs/<service>/apis/<method-path>.md` per
 detected API (response shape, calls it makes, validations/constraints).
 API paths that normalize to the same filename receive distinct pages and links.
+On reexport, a hidden manifest in each `apis/` directory removes obsolete pages
+only when they still match OrbitKB's generated content. Edited and unrelated
+files remain; a conflicting user page gets a different generated filename.
 When service names repeat across repositories, both Markdown and Mermaid use
 `docs/<repository>--<service>/` for those services. Unsafe or colliding directory
 names receive a safe, unique suffix. `--service` selects every matching service.

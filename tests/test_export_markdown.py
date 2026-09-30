@@ -1,3 +1,5 @@
+import hashlib
+import json
 from pathlib import Path
 
 from orbitkb.analysis.engine import StaticAnalysisEngine
@@ -92,6 +94,71 @@ def test_export_markdown_keeps_distinct_routes_with_the_same_filename_slug(tmp_p
         assert f"Details for {path}" in page.read_text(encoding="utf-8")
         route_line = next(line for line in index.splitlines() if line.startswith(f"- `GET {path}`"))
         assert f"[detail](apis/{page.name})" in route_line
+
+
+def test_reexport_removes_only_unchanged_generated_api_pages(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "catalog-service", "/tmp/catalog", "python")
+    for path in ("/old", "/edited", "/current"):
+        apis_repo.upsert_api(conn, service_id, "GET", path, path, path, [], [])
+    out_dir = tmp_path / "docs"
+    export_markdown(conn, out_dir)
+    api_dir = out_dir / "catalog-service" / "apis"
+    custom = api_dir / "notes.md"
+    custom.write_text("my notes", encoding="utf-8")
+    edited = api_dir / "get-edited.md"
+    edited.write_text("my edited page", encoding="utf-8")
+
+    apis_repo.prune_apis_not_in(conn, service_id, {("GET", "/current")})
+    export_markdown(conn, out_dir)
+
+    assert not (api_dir / "get-old.md").exists()
+    assert edited.read_text(encoding="utf-8") == "my edited page"
+    assert custom.read_text(encoding="utf-8") == "my notes"
+    assert (api_dir / "get-current.md").exists()
+    index = (out_dir / "catalog-service" / "index.md").read_text(encoding="utf-8")
+    assert "GET /old" not in index
+    assert "GET /current" in index
+
+
+def test_export_preserves_an_existing_user_page_with_a_generated_filename(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "catalog-service", "/tmp/catalog", "python")
+    apis_repo.upsert_api(conn, service_id, "GET", "/items", "s", "d", [], [])
+    api_dir = tmp_path / "docs/catalog-service/apis"
+    api_dir.mkdir(parents=True)
+    user_page = api_dir / "get-items.md"
+    user_page.write_text("user content", encoding="utf-8")
+
+    export_markdown(conn, tmp_path / "docs")
+
+    pages = list(api_dir.glob("*.md"))
+    generated = next(page for page in pages if page != user_page)
+    assert user_page.read_text(encoding="utf-8") == "user content"
+    assert generated.read_text(encoding="utf-8").startswith("# GET /items\n")
+    index = (tmp_path / "docs/catalog-service/index.md").read_text(encoding="utf-8")
+    assert f"[detail](apis/{generated.name})" in index
+
+
+def test_reexport_ignores_manifest_paths_outside_the_api_directory(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "catalog-service", "/tmp/catalog", "python")
+    apis_repo.upsert_api(conn, service_id, "GET", "/items", "s", "d", [], [])
+    out_dir = tmp_path / "docs"
+    export_markdown(conn, out_dir)
+    service_dir = out_dir / "catalog-service"
+    outside = service_dir / "private.md"
+    outside.write_text("private", encoding="utf-8")
+    manifest = service_dir / "apis/.orbitkb-pages.json"
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["pages"]["../private.md"] = hashlib.sha256(outside.read_bytes()).hexdigest()
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    apis_repo.prune_apis_not_in(conn, service_id, set())
+    export_markdown(conn, out_dir)
+
+    assert outside.read_text(encoding="utf-8") == "private"
+    assert not (service_dir / "apis/get-items.md").exists()
 
 
 def test_export_markdown_includes_a_cloud_section(tmp_path: Path):

@@ -21,6 +21,12 @@ from orbitkb.domain.route_calls import (
 )
 from orbitkb.export.dependencies import unresolved_declared_http_targets
 from orbitkb.export.messaging import has_confirmed_redis_publication
+from orbitkb.export.page_manifest import (
+    MANIFEST_NAME,
+    owned_pages,
+    page_digest,
+    save_owned_pages,
+)
 from orbitkb.export.paths import service_output_dirs
 from orbitkb.export.persistence import has_unrepresented_mongo_access
 
@@ -29,22 +35,22 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower() or "root"
 
 
-def _api_page_names(apis: list[sqlite3.Row]) -> dict[tuple[str, str], str]:
+def _api_page_names(apis: list[sqlite3.Row], unavailable: set[str] | None = None) -> dict[tuple[str, str], str]:
     """Give each route one stable filename, disambiguating normalized collisions."""
-    used: set[str] = set()
+    used: set[str] = set(unavailable or ())
     names: dict[tuple[str, str], str] = {}
     for api in apis:
         key = (api["method"], api["path"])
         base = _slug(f"{key[0]}-{key[1]}")
         name = base
-        if name.casefold() in used:
+        if f"{name}.md".casefold() in used:
             digest = hashlib.sha256(f"{key[0]}\0{key[1]}".encode("utf-8")).hexdigest()[:10]
             name = f"{base}--{digest}"
             suffix = 2
-            while name.casefold() in used:
+            while f"{name}.md".casefold() in used:
                 name = f"{base}--{digest}-{suffix}"
                 suffix += 1
-        used.add(name.casefold())
+        used.add(f"{name}.md".casefold())
         names[key] = f"{name}.md"
     return names
 
@@ -96,6 +102,8 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
             continue
         service_row = services_repo.get_service_by_id(conn, svc["id"])
         service_dir = output_dirs[svc["id"]]
+        if service_dir.is_symlink():
+            raise ValueError(f"service export directory must not be a symlink: {service_dir}")
         service_dir.mkdir(parents=True, exist_ok=True)
 
         calls = service_calls_repo.list_calls_for_service(conn, svc["id"])
@@ -104,7 +112,20 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
             (call["to_service_name"] for call in calls),
         )
         apis = apis_repo.list_apis(conn, svc["id"])
-        api_page_names = _api_page_names(apis)
+        apis_dir = service_dir / "apis"
+        if apis_dir.is_symlink():
+            raise ValueError(f"API export directory must not be a symlink: {apis_dir}")
+        if apis or apis_dir.exists():
+            apis_dir.mkdir(parents=True, exist_ok=True)
+            previous_pages = owned_pages(apis_dir)
+            unavailable = {
+                path.name.casefold() for path in apis_dir.iterdir()
+                if path.name not in previous_pages and path.name != MANIFEST_NAME
+            }
+        else:
+            previous_pages = {}
+            unavailable = set()
+        api_page_names = _api_page_names(apis, unavailable)
         persistence = persistence_repo.list_persistence(conn, svc["id"])
         snapshot = snapshots_repo.read_snapshot(conn, svc["id"])
         navigator = KnowledgeNavigator(snapshot) if snapshot is not None else None
@@ -165,9 +186,8 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
         index_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         written.append(index_path)
 
+        current_pages: dict[str, str] = {}
         if apis:
-            apis_dir = service_dir / "apis"
-            apis_dir.mkdir(parents=True, exist_ok=True)
             for a in apis:
                 api_row = apis_repo.get_api_by_key(conn, svc["id"], a["method"], a["path"])
                 api_calls = service_calls_repo.list_calls_for_api(conn, api_row["id"])
@@ -204,7 +224,11 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
                     api_lines.append("(none detected)")
 
                 api_path = apis_dir / api_page_names[(a["method"], a["path"])]
-                api_path.write_text("\n".join(api_lines) + "\n", encoding="utf-8")
+                data = ("\n".join(api_lines) + "\n").encode("utf-8")
+                api_path.write_bytes(data)
+                current_pages[api_path.name] = page_digest(data)
                 written.append(api_path)
+        if apis_dir.exists():
+            save_owned_pages(apis_dir, previous_pages, current_pages)
 
     return written
