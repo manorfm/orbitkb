@@ -302,11 +302,10 @@ def _render_messaging_prompt(
 
 @dataclass
 class UnitOutcome:
-    """Generator totals plus files to retry after a failed unit."""
+    """Generator totals and per-unit results for incremental retry."""
 
     llm_calls: int = 0
     had_failure: bool = False
-    failed_files: set[str] = field(default_factory=set)
     usage: LLMUsage = field(default_factory=LLMUsage)
     backend_duration_ms: float = 0.0
     units: list[IndexUnit] = field(default_factory=list)
@@ -350,6 +349,8 @@ class IndexContext:
     source_units_by_route: dict[tuple[str, str], tuple[SourceUnit, ...]] = field(default_factory=dict)
     changed_source_unit_keys: set[str] = field(default_factory=set)
     embedding_backend: EmbeddingBackend | None = None
+    max_llm_invocations: int | None = None
+    budget_exhausted: bool = False
     regenerated_endpoints: set[tuple[str, str]] = field(default_factory=set)
     endpoint_inventory_changed: bool = False
     any_component_regenerated: bool = False
@@ -357,9 +358,13 @@ class IndexContext:
     sufficiency_shadow: dict[str, int] = field(default_factory=dict)
     sufficiency_details: list[RouteSufficiency] = field(default_factory=list)
 
-    def record_llm_invocation(self, unit: IndexUnit) -> None:
+    def record_llm_invocation(self, unit: IndexUnit) -> bool:
+        if self.max_llm_invocations is not None and self.llm_invocations >= self.max_llm_invocations:
+            self.budget_exhausted = True
+            return False
         self.llm_invocations += 1
         unit.record_attempt()
+        return True
 
 
 class UnitGenerator(Protocol):
@@ -443,7 +448,6 @@ class EndpointGenerator:
                 if not generation:
                     unit.status = "failed"
                     outcome.add(unit)
-                    outcome.failed_files |= dep_files | {unit.excerpt.file_path for unit in source_units}
                     ctx.progress.unit_finished(ctx.name, label, "failed")
                     continue
                 result = generation.structured
@@ -538,7 +542,6 @@ class ComponentGenerator:
             if not generation:
                 unit.status = "failed"
                 outcome.add(unit)
-                outcome.failed_files |= group_dep_files
                 ctx.progress.unit_finished(ctx.name, label, "failed")
                 continue
             result = generation.structured
@@ -568,7 +571,10 @@ class PersistenceGenerator:
             return outcome
 
         unit = IndexUnit(self.kind, ())
-        if not ctx.generation_policy.should_regenerate_aggregate(persistence_files):
+        if not (
+            ctx.generation_policy.should_regenerate_aggregate(persistence_files)
+            or index_runs_repo.last_run_unit_failed(ctx.conn, ctx.service_id, self.kind, unit.identity)
+        ):
             outcome.add(unit)
             ctx.progress.unit_finished(ctx.name, "persistence", "skipped")
             return outcome
@@ -604,7 +610,6 @@ class PersistenceGenerator:
         else:
             unit.status = "failed"
             outcome.add(unit)
-            outcome.failed_files |= persistence_files
             ctx.progress.unit_finished(ctx.name, "persistence", "failed")
         return outcome
 
@@ -620,7 +625,10 @@ class MessagingGenerator:
             return outcome
 
         unit = IndexUnit(self.kind, ())
-        if not ctx.generation_policy.should_regenerate_aggregate(messaging_files):
+        if not (
+            ctx.generation_policy.should_regenerate_aggregate(messaging_files)
+            or index_runs_repo.last_run_unit_failed(ctx.conn, ctx.service_id, self.kind, unit.identity)
+        ):
             outcome.add(unit)
             ctx.progress.unit_finished(ctx.name, "messaging", "skipped")
             return outcome
@@ -652,7 +660,6 @@ class MessagingGenerator:
         else:
             unit.status = "failed"
             outcome.add(unit)
-            outcome.failed_files |= messaging_files
             ctx.progress.unit_finished(ctx.name, "messaging", "failed")
         return outcome
 
@@ -671,6 +678,7 @@ class OverviewGenerator:
             ctx.force or ctx.is_new or bool(ctx.changed & entry_files)
             or not (ctx.existing and ctx.existing["short_desc"])
             or ctx.endpoint_inventory_changed or ctx.any_component_regenerated
+            or index_runs_repo.last_run_unit_failed(ctx.conn, ctx.service_id, self.kind, unit.identity)
         )
         if not needs_overview:
             outcome.add(unit)
@@ -699,7 +707,6 @@ class OverviewGenerator:
         else:
             unit.status = "failed"
             outcome.add(unit)
-            outcome.failed_files |= entry_files
             ctx.progress.unit_finished(ctx.name, "overview", "failed")
         return outcome
 
@@ -735,6 +742,7 @@ def _index_service_unlocked(
     depth_provider: DepthProvider | None = None,
     knowledge_reader: KnowledgeReader | None = None,
     knowledge_writer: KnowledgeWriter | None = None,
+    max_llm_invocations: int | None = None,
 ) -> IndexResult:
     failures_root = failures_root or (Path.home() / ".orbitkb" / "failures")
     progress = progress or NullProgressReporter()
@@ -839,14 +847,11 @@ def _index_service_unlocked(
         source_units_by_route=source_units_by_route,
         changed_source_unit_keys=changed_source_unit_keys,
         embedding_backend=embedding_backend,
+        max_llm_invocations=max_llm_invocations,
     )
 
     llm_calls = 0
     had_failure = False
-    # Files whose derived unit failed to generate this run. Their hash is deliberately
-    # NOT persisted to indexed_files below, so next run sees them as "changed" again
-    # and retries instead of silently skipping a permanently-broken unit forever.
-    failed_files: set[str] = set()
     total_usage = LLMUsage()
     for generator in UNIT_GENERATORS:
         invocations_before = ctx.llm_invocations
@@ -866,15 +871,12 @@ def _index_service_unlocked(
         )
         llm_calls += outcome.llm_calls
         had_failure = had_failure or outcome.had_failure
-        failed_files |= outcome.failed_files
         total_usage = total_usage + outcome.usage
 
     route_files = {e.excerpt.file_path for e in hints.endpoints}
     persistence_files = {p.excerpt.file_path for p in hints.persistence}
     messaging_files = {m.excerpt.file_path for m in hints.messaging}
     for rel, h in new_hashes.items():
-        if rel in failed_files:
-            continue  # retry these next run instead of locking in a broken generation forever
         category = "route" if rel in route_files else (
             "persistence" if rel in persistence_files else ("messaging" if rel in messaging_files else "other")
         )
@@ -890,7 +892,10 @@ def _index_service_unlocked(
     recompute_architecture_view(conn)
 
     status = "partial" if had_failure else "ok"
-    run_error = "some units failed, see failures dir" if had_failure else None
+    run_error = (
+        "LLM invocation budget exhausted; pending units will retry on the next run"
+        if ctx.budget_exhausted else "some units failed, see failures dir" if had_failure else None
+    )
     index_runs_repo.finish_index_run(
         conn, run_id, status, len(changed) + len(removed), llm_calls,
         run_error,
@@ -916,8 +921,11 @@ def index_service(
     depth_provider: DepthProvider | None = None,
     knowledge_reader: KnowledgeReader | None = None,
     knowledge_writer: KnowledgeWriter | None = None,
+    max_llm_invocations: int | None = None,
 ) -> IndexResult:
     """Serialize one service identity while retaining independent-service parallelism."""
+    if max_llm_invocations is not None and max_llm_invocations < 0:
+        raise ValueError("max_llm_invocations must be nonnegative")
     lock_key = f"{repository_id if repository_id is not None else 'standalone'}:{name}"
     if not index_runs_repo.acquire_service_lock(conn, lock_key):
         raise RuntimeError(f"index already in progress for service {name!r}")
@@ -925,6 +933,7 @@ def index_service(
         return _index_service_unlocked(
             conn, name, root, detector, backend, force, failures_root, progress,
             repository_id, embedding_backend, depth_provider, knowledge_reader, knowledge_writer,
+            max_llm_invocations,
         )
     finally:
         index_runs_repo.release_service_lock(conn, lock_key)
@@ -945,6 +954,7 @@ def index_path(
     embedding_backend: EmbeddingBackend | None = None,
     stack_override: str | None = None,
     depth_provider: DepthProvider | None = None,
+    max_llm_invocations: int | None = None,
 ) -> list[IndexResult]:
     if stack_override is not None:
         # Explicit "I already know what this is" escape hatch (see `orbitkb index
@@ -979,6 +989,7 @@ def index_path(
         index_service(
             conn, c.name, c.path, c.detector, backend, force=force, progress=progress,
             repository_id=repository_id, embedding_backend=embedding_backend, depth_provider=depth_provider,
+            max_llm_invocations=max_llm_invocations,
         )
         for c in candidates
     ]

@@ -315,6 +315,40 @@ def test_status_units_ranks_prompt_sizes_and_reports_unmeasured_history(tmp_path
     assert f"prompt size: measured={len(measured)} unknown=1 total_chars={sum(measured)}" in out
 
 
+def test_index_accepts_a_per_service_llm_invocation_budget(tmp_path: Path, capsys):
+    db_path = tmp_path / "budget.db"
+
+    exit_code = cli._cmd_index(_parse([
+        "index", str(SAMPLE_ROOT / "orders-service"), "--db", str(db_path),
+        "--max-llm-invocations", "0",
+    ]))
+
+    assert exit_code == 1
+    assert "status=partial" in capsys.readouterr().out
+    conn = open_db(db_path)
+    run = index_runs_repo.recent_index_runs(conn, limit=1)[0]
+    assert run["llm_invocations"] == 0
+    assert "invocation budget exhausted" in run["notes"]
+
+
+def test_update_accepts_a_per_service_llm_invocation_budget(tmp_path: Path, capsys):
+    db_path = tmp_path / "budget.db"
+    assert cli._cmd_index(_parse(["index", str(SAMPLE_ROOT / "orders-service"), "--db", str(db_path)])) == 0
+    capsys.readouterr()
+
+    exit_code = cli._cmd_update(_parse([
+        "update", "orders-service", "--force", "--db", str(db_path),
+        "--max-llm-invocations", "0",
+    ]))
+
+    assert exit_code == 1
+    assert "status=partial" in capsys.readouterr().out
+    conn = open_db(db_path)
+    run = index_runs_repo.recent_index_runs(conn, limit=1)[0]
+    assert run["llm_invocations"] == 0
+    assert "invocation budget exhausted" in run["notes"]
+
+
 def test_status_command_global(tmp_path: Path, capsys):
     db_path = tmp_path / "test.db"
     cli._cmd_index(_parse(["index", str(SAMPLE_ROOT), "--db", str(db_path)]))

@@ -122,6 +122,41 @@ def test_prompt_observer_receives_each_redacted_attempt_including_retry(tmp_path
     assert len(observed[1]) > len(observed[0])
 
 
+def test_attempt_gate_stops_before_backend_and_prompt_observer(tmp_path: Path):
+    backend = ScriptedBackend([GenerationOutcome(structured={"summary": "unexpected"})])
+    observed: list[str] = []
+    failures_dir = tmp_path / "failures"
+
+    result = generate_with_retry(
+        backend, "prompt", SCHEMA, tmp_path, failures_dir, "label",
+        on_attempt=lambda: False, on_prompt=observed.append,
+    )
+
+    assert result is None
+    assert backend.calls == 0
+    assert observed == []
+    assert not failures_dir.exists()
+
+
+def test_attempt_gate_also_stops_a_retry_after_the_first_backend_failure(tmp_path: Path):
+    backend = ScriptedBackend([GenerationError("first")])
+    attempts = 0
+
+    def allow_attempt() -> bool:
+        nonlocal attempts
+        attempts += 1
+        return attempts == 1
+
+    result = generate_with_retry(
+        backend, "prompt", SCHEMA, tmp_path, tmp_path / "failures", "label",
+        on_attempt=allow_attempt,
+    )
+
+    assert result is None
+    assert backend.calls == 1
+    assert not (tmp_path / "failures").exists()
+
+
 def test_backend_duration_observer_includes_failed_retry(tmp_path: Path, monkeypatch):
     backend = ScriptedBackend([GenerationError("first"), GenerationOutcome(structured={"summary": "ok"})])
     ticks = iter([10.0, 10.25, 11.0, 11.5])

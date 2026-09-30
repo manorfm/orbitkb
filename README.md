@@ -241,6 +241,11 @@ repository to service-scoped tools. This avoids silently mixing two services nam
 Re-index a single service with `orbitkb update <name>`, or every service in a
 repository at once with `orbitkb update --repository <name>` — a service whose
 root path no longer exists is reported and skipped, without aborting the rest.
+To cap model attempts, pass `--max-llm-invocations N` to `index` or `update`.
+The nonnegative limit applies separately to each service and counts retries;
+`0` runs only deterministic work. When reached, indexing reports `partial`
+and exits with an error code. A later run retries pending units while reusing
+completed ones. This bounds calls, not tokens or the cost of an individual call.
 
 Re-indexing is authoritative for detected service boundaries. Removed services are
 removed from the knowledge base; moved services keep their identity by name, while a

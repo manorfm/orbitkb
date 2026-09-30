@@ -44,7 +44,7 @@ def load_schema(name: str) -> dict:
 
 def generate_with_retry(
     backend: LLMBackend, prompt: str, schema: dict, cwd: Path, failures_dir: Path, label: str,
-    on_attempt: Callable[[], None] | None = None,
+    on_attempt: Callable[[], bool | None] | None = None,
     on_usage: Callable[[LLMUsage], None] | None = None,
     on_duration_ms: Callable[[float], None] | None = None,
     on_prompt: Callable[[str], None] | None = None,
@@ -55,10 +55,10 @@ def generate_with_retry(
     total_usage = LLMUsage()
     for _attempt in range(2):
         try:
+            if on_attempt is not None and on_attempt() is False:
+                return None
             if on_prompt is not None:
                 on_prompt(current_prompt)
-            if on_attempt is not None:
-                on_attempt()
             started_at = time.perf_counter()
             try:
                 outcome = backend.generate(current_prompt, schema, cwd)

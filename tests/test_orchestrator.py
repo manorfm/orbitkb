@@ -971,6 +971,44 @@ def test_per_unit_usage_preserves_reported_cache_tokens(tmp_path: Path):
     assert all(unit["cached_input_tokens"] is None for unit in units if unit["status"] == "skipped")
 
 
+def test_invocation_budget_stops_paid_attempts_and_retries_pending_units_next_run(tmp_path: Path):
+    conn = open_db(tmp_path / "budget.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+    backend = FakeOrchestratorBackend()
+
+    limited = index_service(
+        conn, orders.name, orders.path, orders.detector, backend,
+        max_llm_invocations=1, failures_root=tmp_path / "failures",
+    )
+
+    run = index_runs_repo.recent_index_runs(conn, limited.service_id, limit=1)[0]
+    units = index_runs_repo.list_run_units(conn, run["id"])
+    assert limited.status == run["status"] == "partial"
+    assert limited.llm_invocations == backend.calls == 1
+    assert "invocation budget exhausted" in run["notes"]
+    assert sum(unit["llm_invocations"] for unit in units) == 1
+    assert sum(unit["status"] == "failed" for unit in units) > 0
+    assert not (tmp_path / "failures").exists()
+
+    resumed = index_service(conn, orders.name, orders.path, orders.detector, FakeOrchestratorBackend())
+    resumed_run = index_runs_repo.recent_index_runs(conn, resumed.service_id, limit=1)[0]
+    resumed_units = index_runs_repo.list_run_units(conn, resumed_run["id"])
+    assert resumed.status == "ok"
+    assert any(unit["status"] == "skipped" for unit in resumed_units)
+    assert all(unit["status"] != "failed" for unit in resumed_units)
+
+
+def test_invocation_budget_rejects_negative_values_before_indexing(tmp_path: Path):
+    conn = open_db(tmp_path / "budget.db")
+    orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
+
+    with pytest.raises(ValueError, match="max_llm_invocations"):
+        index_service(conn, orders.name, orders.path, orders.detector, FakeOrchestratorBackend(),
+                      max_llm_invocations=-1)
+
+    assert index_runs_repo.recent_index_runs(conn) == []
+
+
 def test_failed_unit_keeps_retry_count_and_unknown_cost(tmp_path: Path):
     conn = open_db(tmp_path / "failed-units.db")
     orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")
