@@ -2166,7 +2166,8 @@ def _express_route_prefixes(source: str) -> dict[str, str]:
     construction and ambiguous router mounts remain unresolved.
     """
     imported = re.search(
-        r"(?:import\s+(?:\*\s+as\s+)?express\s+from\s*|(?:const|let)\s+express\s*=\s*require\s*\()"
+        r"(?:import\s+(?:\*\s+as\s+)?express(?:\s*,\s*\{[^}]*\})?\s+from\s*|"
+        r"(?:const|let)\s+express\s*=\s*require\s*\()"
         r"[\"']express[\"']",
         source,
     )

@@ -1,6 +1,9 @@
 from pathlib import Path
 
 from orbitkb.analysis.engine import StaticAnalysisEngine
+from orbitkb.discovery.node_ts import NodeTsDetector
+
+INVENTORY_TS_SAMPLE = Path(__file__).resolve().parents[1] / "verify/language_corpus/inventory-typescript-service"
 
 
 def test_kotlin_local_constructor_is_not_an_invocation_but_unknown_call_remains(tmp_path: Path):
@@ -774,6 +777,16 @@ channel.consume("billing.created", async (message: BillingCreated) => {
     assert "idempotency" not in result.contracts["message.consume:billing.created"]
     assert result.contracts["message.consume:orders.created"]["timeout"] == "detected"
     assert "timeout" not in result.contracts["message.consume:billing.created"]
+
+
+def test_node_analyzer_matches_discovered_routes_with_express_default_and_named_type_imports():
+    hints = NodeTsDetector().collect_hints(INVENTORY_TS_SAMPLE)
+    analysis = StaticAnalysisEngine().analyze(INVENTORY_TS_SAMPLE, "node-ts")
+
+    expected = {(hint.method, hint.path) for hint in hints.endpoints}
+    actual = {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"}
+    assert expected == {("GET", "/items/:id"), ("POST", "/items")}
+    assert actual == expected
 
 
 def test_node_analyzer_exposes_literal_express_route_and_named_handler_flow(tmp_path: Path):
