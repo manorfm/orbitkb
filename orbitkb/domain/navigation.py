@@ -35,6 +35,10 @@ class TraversalBoundary:
     reason: str
     edge_id: str
 
+    @property
+    def limits_flow(self) -> bool:
+        return self.reason in {"unresolved", "known_boundary", "depth_limit", "node_limit", "edge_limit"}
+
 
 @dataclass(frozen=True)
 class FactPath:

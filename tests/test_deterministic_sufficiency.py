@@ -214,6 +214,7 @@ def test_known_boundary_cannot_prove_empty_integrations():
 
     assert result.status("integrations") == SufficiencyStatus.AMBIGUOUS
     assert result.status("integration_purpose") == SufficiencyStatus.AMBIGUOUS
+    assert result.status("flow") == SufficiencyStatus.AMBIGUOUS
 
 
 def test_openapi_body_absence_cannot_override_source_request_type_without_fields():

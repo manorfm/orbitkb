@@ -40,10 +40,10 @@ def route_declared_http_calls(
     if not entrypoints:
         return RouteHttpCalls((), RouteCallStatus.UNASSESSED)
     calls: set[DeclaredHttpCall] = set()
-    truncated = False
+    limited = False
     for entrypoint in entrypoints:
         reached = navigator.reachable(entrypoint, TraversalPolicy())
-        truncated |= reached.truncated
+        limited |= reached.truncated or any(boundary.limits_flow for boundary in reached.boundaries)
         for fact in reached.facts:
             target = fact.attributes.get("target_service")
             if (fact.kind != "service_call" or fact.status is not FactStatus.CONFIRMED
@@ -55,4 +55,4 @@ def route_declared_http_calls(
             ))
     return RouteHttpCalls(tuple(sorted(calls, key=lambda call: (
         call.target_service, call.method or "", call.path or "",
-    ))), RouteCallStatus.LIMITED if truncated else RouteCallStatus.ASSESSED)
+    ))), RouteCallStatus.LIMITED if limited else RouteCallStatus.ASSESSED)

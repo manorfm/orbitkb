@@ -121,7 +121,7 @@ class DeterministicSufficiencyEvaluator:
         )
         request_conflict = any(_has_conflicting_request_declarations(contract) for contract in contracts)
         flow_incomplete = capsule.truncated or any(
-            boundary.reason in {"unresolved", "depth_limit", "node_limit", "edge_limit"}
+            boundary.limits_flow
             for boundary in capsule.boundaries
         )
         no_outbound_proven = (

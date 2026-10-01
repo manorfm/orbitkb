@@ -177,7 +177,7 @@ def test_describe_api_exposes_route_reachable_source_calls_separately(tmp_path: 
         ("catalog-service", "GET", "/venues/{restaurantId}/ingredients/{ingredientId}"),
     }
     assert all(call["destination_status"] == "unresolved" for call in order["source_calls"])
-    assert order["source_calls_status"] == "assessed"
+    assert order["source_calls_status"] == "limited"
     assert health["source_calls"] == []
     assert health["source_calls_status"] == "unassessed"
 
@@ -224,3 +224,23 @@ def test_api_call_status_distinguishes_absent_complete_and_limited_flow(tmp_path
     ))
     limited = queries.describe_api(conn, "menu-service", "GET", "/slow")
     assert limited["source_calls_status"] == "limited"
+
+
+def test_unresolved_flow_cannot_prove_an_api_has_no_dependencies(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "menu-service", "/tmp/menu", "jvm-spring")
+    apis_repo.upsert_api(conn, service_id, "GET", "/menus", "menus", "Lists menus.", [], [])
+    source = Evidence("MenuController.kt", 1, 1)
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(
+        entrypoints=[EntryPoint("http", "GET", "/menus", "MenuController.list", source)],
+        edges=[FlowEdge("MenuController.list", "dynamicCall", "invokes", source)],
+    ))
+
+    detail = queries.describe_api(conn, "menu-service", "GET", "/menus")
+    export_markdown(conn, tmp_path / "docs")
+    markdown = (tmp_path / "docs/menu-service/apis/get-menus.md").read_text(encoding="utf-8")
+
+    assert detail["source_calls"] == []
+    assert detail["source_calls_status"] == "limited"
+    assert "static flow limited; other calls may exist" in markdown
+    assert "no dependency detected" not in markdown
