@@ -20,7 +20,10 @@ from orbitkb.domain.route_calls import (
     route_declared_http_calls,
 )
 from orbitkb.export.dependencies import unresolved_declared_http_targets
-from orbitkb.export.messaging import has_confirmed_redis_publication
+from orbitkb.export.messaging import (
+    has_confirmed_redis_publication,
+    messaging_analysis_status,
+)
 from orbitkb.export.page_manifest import (
     MANIFEST_NAME,
     owned_pages,
@@ -89,8 +92,7 @@ def _fmt_api_calls(calls: list[sqlite3.Row], source_calls: tuple[DeclaredHttpCal
 
 
 def _fmt_messages(messages: list[sqlite3.Row]) -> list[str]:
-    lines = [f"- **{m['channel']}** ({m['direction']}): {m['description'] or ''}" for m in messages]
-    return lines or ["- (none detected)"]
+    return [f"- **{m['channel']}** ({m['direction']}): {m['description'] or ''}" for m in messages]
 
 
 def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str | None = None) -> list[Path]:
@@ -163,13 +165,15 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
 
         publishes = [m for m in messages if m["direction"] == "publishes"]
         consumes = [m for m in messages if m["direction"] == "consumes"]
-        publish_lines = _fmt_messages(publishes) if publishes else []
+        status = messaging_analysis_status(snapshot)
+        empty_message = "- (none detected)" if status == "supported" else "- (not assessed)"
+        publish_lines = _fmt_messages(publishes)
         if has_confirmed_redis_publication(snapshot):
             publish_lines.append("- **Redis Pub/Sub** (publishes; channel unresolved from static analysis)")
         lines += [
-            "", "## Messaging", "", "### Publishes",
-            *(publish_lines or ["- (none detected)"]),
-            "", "### Consumes", *_fmt_messages(consumes),
+            "", "## Messaging", "", f"**Static analysis:** {status}", "", "### Publishes",
+            *(publish_lines or [empty_message]),
+            "", "### Consumes", *(_fmt_messages(consumes) or [empty_message]),
         ]
 
         lines += ["", "## Cloud"]

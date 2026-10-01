@@ -41,7 +41,7 @@ from orbitkb.db.repositories import security_findings as security_findings_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.discovery.hashing import git_working_changed_files_with_status
-from orbitkb.domain.canonical import EntrypointKey, FactStatus, SymbolKey
+from orbitkb.domain.canonical import EntrypointKey, SymbolKey
 from orbitkb.domain.navigation import (
     KnowledgeNavigator,
     TraversalPolicy,
@@ -52,6 +52,7 @@ from orbitkb.export.mermaid import (
     generate_entrypoint_sequence,
     generate_topology_diagram,
 )
+from orbitkb.export.messaging import messaging_analysis_status
 from orbitkb.generation import change_surface
 from orbitkb.generation.architecture import diff_architecture_runs
 from orbitkb.generation.backend_base import LLMBackend
@@ -1702,19 +1703,9 @@ def describe_messages(
         return service_error
     messages, page = _paginate(messages_repo.list_messages(conn, row["id"]), limit, offset)
     snapshot = canonical_snapshots_repo.read_snapshot(conn, row["id"])
-    capability = next((
-        fact for fact in snapshot.facts
-        if fact.kind == "analysis_capability" and fact.attributes.get("dimension") == "messaging"
-    ), None) if snapshot is not None else None
-    static_analysis_status = "unknown"
-    if capability is not None:
-        static_analysis_status = {
-            FactStatus.CONFIRMED: "supported",
-            FactStatus.UNSUPPORTED: "unsupported",
-        }.get(capability.status, "unknown")
     return {
         "service": row["name"], "repository": row["repository_name"],
-        "static_analysis_status": static_analysis_status, "messages": [
+        "static_analysis_status": messaging_analysis_status(snapshot), "messages": [
             {
                 "direction": m["direction"],
                 "channel": m["channel"],

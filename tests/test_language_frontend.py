@@ -12,8 +12,9 @@ from orbitkb.analysis.models import (
 )
 from orbitkb.analysis.resolution import BoundedFlowResolver
 from orbitkb.db.connection import open_db
-from orbitkb.db.repositories import canonical_snapshots, services
+from orbitkb.db.repositories import canonical_snapshots, messages, services
 from orbitkb.domain.canonical import ServiceKey
+from orbitkb.export.markdown import export_markdown
 from orbitkb.mcp.queries import describe_messages
 
 
@@ -124,6 +125,24 @@ def test_unsupported_messaging_survives_snapshot_and_is_visible_to_readers(tmp_p
     assert result["static_analysis_status"] == "unsupported"
     assert result["static_contracts"] == []
     assert result["messages"] == []
+
+    export_markdown(conn, tmp_path / "docs")
+    page = (tmp_path / "docs/fixture-service/index.md").read_text(encoding="utf-8")
+    messaging = page.split("## Messaging", 1)[1].split("## Cloud", 1)[0]
+    assert "Static analysis:** unsupported" in messaging
+    assert messaging.count("- (not assessed)") == 2
+    assert "none detected" not in messaging
+
+    messages.replace_messages(conn, service_id, [{
+        "direction": "publishes", "channel": "fixture-events", "provider": "rabbitmq",
+        "shape_json": [], "description": "a documented event",
+    }], [])
+    export_markdown(conn, tmp_path / "docs")
+    page = (tmp_path / "docs/fixture-service/index.md").read_text(encoding="utf-8")
+    messaging = page.split("## Messaging", 1)[1].split("## Cloud", 1)[0]
+    assert "fixture-events" in messaging
+    assert "Static analysis:** unsupported" in messaging
+    assert messaging.count("- (not assessed)") == 1
 
 
 def test_existing_frontend_declares_messaging_analysis_support(tmp_path: Path):

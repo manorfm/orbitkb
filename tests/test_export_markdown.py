@@ -226,6 +226,19 @@ def test_export_markdown_handles_service_with_no_apis(tmp_path: Path):
     assert len(written) == 1
 
 
+def test_export_markdown_marks_messaging_unassessed_without_snapshot(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    services_repo.ensure_service(conn, "empty-service", "/tmp/empty", "python")
+
+    export_markdown(conn, tmp_path / "docs")
+
+    page = (tmp_path / "docs/empty-service/index.md").read_text(encoding="utf-8")
+    messaging = page.split("## Messaging", 1)[1].split("## Cloud", 1)[0]
+    assert "Static analysis:** unknown" in messaging
+    assert messaging.count("- (not assessed)") == 2
+    assert "none detected" not in messaging
+
+
 def test_markdown_reports_source_proven_http_target_without_model_call(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
