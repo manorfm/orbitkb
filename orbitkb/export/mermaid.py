@@ -170,13 +170,17 @@ def generate_topology_diagram(
         lines.append(f"  {from_id} -.->|{_mermaid_label(edge['call_kind'])} (unresolved)| {target_id}")
         rendered_targets.add((edge["from_id"], edge["to_service_name"]))
 
+    snapshots = {}
     for svc in services:
         from_id = service_ids.get(svc["id"])
         if from_id is None:
             continue
+        snapshot = snapshots_repo.read_snapshot(conn, svc["id"])
+        snapshots[svc["id"]] = snapshot
         for target in unresolved_declared_http_targets(
             flows_repo.list_static_service_calls(conn, svc["id"]),
             (name for source, name in rendered_targets if source == svc["id"]),
+            snapshot,
         ):
             target_id = external_node(f"{target} (declared target)")
             lines.append(f"  {from_id} -.->|http (unresolved)| {target_id}")
@@ -214,7 +218,7 @@ def generate_topology_diagram(
         if from_id is None:
             continue
         service_slug = from_id.removeprefix("svc_")
-        snapshot = snapshots_repo.read_snapshot(conn, svc["id"])
+        snapshot = snapshots[svc["id"]]
         if has_confirmed_redis_publication(snapshot):
             broker_id = _unique_node_id(f"broker_{service_slug}_redis", used_node_ids)
             lines.append(f'  {broker_id}[("Redis Pub/Sub")]')

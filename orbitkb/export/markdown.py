@@ -13,7 +13,7 @@ from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
-from orbitkb.domain.canonical import EntrypointKey, FactStatus
+from orbitkb.domain.canonical import EntrypointKey
 from orbitkb.domain.navigation import KnowledgeNavigator
 from orbitkb.domain.route_calls import (
     DeclaredHttpCall,
@@ -143,17 +143,9 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
         persistence = persistence_repo.list_persistence(conn, svc["id"])
         snapshot = snapshots_repo.read_snapshot(conn, svc["id"])
         navigator = KnowledgeNavigator(snapshot) if snapshot is not None else None
-        static_calls = list(flows_repo.list_static_service_calls(conn, svc["id"]))
-        if snapshot is not None:
-            static_calls.extend(
-                fact.attributes for fact in snapshot.facts
-                if fact.kind == "service_call" and fact.status is FactStatus.CONFIRMED
-                and fact.attributes.get("protocol") == "http"
-                and isinstance(fact.attributes.get("target_service"), str)
-                and fact.attributes["target_service"].strip()
-            )
         declared_targets = unresolved_declared_http_targets(
-            static_calls, (call["to_service_name"] for call in calls),
+            flows_repo.list_static_service_calls(conn, svc["id"]),
+            (call["to_service_name"] for call in calls), snapshot,
         )
         messages = messages_repo.list_messages(conn, svc["id"])
         security_rules = flows_repo.list_static_security_requirements_in_declaration_order(conn, svc["id"])

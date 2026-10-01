@@ -342,8 +342,9 @@ they remain text within the intended node or edge.
 When source analysis confirms a Spring Redis Pub/Sub publication, topology shows
 a Redis node for that producer. It does not assign an unknown channel, consumer
 or shared Redis instance.
-Source-proven HTTP calls also appear with their declared target marked
-`unresolved` when no existing service call has established the destination.
+Source-proven HTTP calls from canonical or legacy static facts also appear
+with their declared target marked `unresolved` when no existing service call
+has established the destination.
 Confirmed calls on an injected Spring Mongo template add a per-service MongoDB
 node labeled `accesses`; the diagram does not infer the collection or operation
 direction from `MongoTemplate.execute`.

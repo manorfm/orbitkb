@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.models import (
     AnalysisResult,
     CloudFact,
@@ -10,12 +11,14 @@ from orbitkb.analysis.models import (
 )
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import apis as apis_repo
+from orbitkb.db.repositories import canonical_snapshots as snapshots_repo
 from orbitkb.db.repositories import flows as flows_repo
 from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import repositories as repositories_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
+from orbitkb.domain.canonical import ServiceKey
 from orbitkb.export.mermaid import (
     export_mermaid,
     generate_entrypoint_sequence,
@@ -294,6 +297,26 @@ def test_topology_shows_static_http_target_without_claiming_a_resolved_service(t
 
     flows_repo.replace_analysis(conn, caller_id, AnalysisResult())
     assert "ext_catalog_service_declared_target" not in generate_topology_diagram(conn)
+
+
+def test_topology_shows_canonical_http_target_without_legacy_calls(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    caller_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    catalog_id = services_repo.ensure_service(conn, "catalog-service", "/tmp/catalog", "jvm-spring")
+    snapshot = project_analysis(ServiceKey("orders-service"), AnalysisResult(static_service_calls=[
+        StaticServiceCall("MenuClient.getItem", "catalog-service", "http", "GET", "/items/{id}",
+                          Evidence("MenuClient.kt", 8, 9)),
+    ]))
+    snapshots_repo.replace_snapshot(conn, caller_id, snapshot)
+
+    diagram = generate_topology_diagram(conn)
+
+    assert 'ext_catalog_service_declared_target(("catalog-service (declared target)"))' in diagram
+    assert diagram.count('svc_orders_service -.->|http (unresolved)| ext_catalog_service_declared_target') == 1
+    assert "svc_orders_service -->|http| svc_catalog_service" not in diagram
+    assert "ext_catalog_service_declared_target" not in generate_topology_diagram(
+        conn, root_service_ids={catalog_id}, hops=0,
+    )
 
 
 def test_topology_does_not_duplicate_a_reconciled_http_target(tmp_path: Path):
