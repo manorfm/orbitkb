@@ -12,10 +12,6 @@ from orbitkb.discovery.node_imports import resolve_local_source
 
 _SOURCE_SUFFIXES = (".js", ".ts")
 _FUNCTION_VALUES = frozenset({"arrow_function", "function_expression"})
-_EXPORT_OBJECT_MUTATORS = frozenset({
-    "Object.assign", "Object.defineProperty", "Object.defineProperties",
-    "Reflect.set", "Reflect.deleteProperty", "Reflect.defineProperty",
-})
 
 
 def _text(node: Node, source: bytes) -> str:
@@ -185,7 +181,7 @@ def _commonjs_export_aliases(tree: Node, source: bytes) -> set[str]:
     return aliases
 
 
-def _has_indirect_commonjs_mutation(tree: Node, source: bytes) -> bool:
+def _has_commonjs_export_mutation_or_escape(tree: Node, source: bytes) -> bool:
     aliases = _commonjs_export_aliases(tree, source)
     pending = [tree]
     while pending:
@@ -206,10 +202,14 @@ def _has_indirect_commonjs_mutation(tree: Node, source: bytes) -> bool:
         elif node.type == "call_expression":
             function = node.child_by_field_name("function")
             arguments = node.child_by_field_name("arguments")
-            if function is not None and _text(function, source) in _EXPORT_OBJECT_MUTATORS and arguments is not None:
-                args = arguments.named_children
-                if args and _is_exports_object(args[0], source, aliases):
-                    return True
+            if function is None or arguments is None:
+                continue
+            exported_args = [
+                index for index, argument in enumerate(arguments.named_children)
+                if _is_exports_object(argument, source, aliases)
+            ]
+            if exported_args and (_text(function, source) != "Object.assign" or 0 in exported_args):
+                return True
     return False
 
 
@@ -287,7 +287,7 @@ def _assigned_commonjs_named_exports(
 def _commonjs_named_exports(path: Path) -> dict[str, str]:
     source = path.read_bytes()
     tree = _parse(path, source)
-    if _has_indirect_commonjs_mutation(tree, source):
+    if _has_commonjs_export_mutation_or_escape(tree, source):
         return {}
     values = _commonjs_assignment_values(tree, source)
     local_functions = _local_functions(tree, source)
