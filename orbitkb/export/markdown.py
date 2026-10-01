@@ -99,7 +99,10 @@ def _fmt_messages(messages: list[sqlite3.Row]) -> list[str]:
 def _dependency_coverage_note(navigator: KnowledgeNavigator | None) -> str | None:
     if navigator is None:
         return "- (dependency analysis unavailable)"
-    if service_http_call_status(navigator) is RouteCallStatus.LIMITED:
+    status = service_http_call_status(navigator)
+    if status is RouteCallStatus.UNASSESSED:
+        return "- (HTTP route flow unassessed; other dependencies may exist)"
+    if status is RouteCallStatus.LIMITED:
         return "- (static flow limited; other dependencies may exist)"
     return None
 

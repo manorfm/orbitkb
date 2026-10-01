@@ -294,6 +294,32 @@ def test_service_index_does_not_claim_no_dependencies_when_flow_is_unresolved(tm
     assert "no dependency detected" in complete.split("## Depends on\n", 1)[1].split("\n## APIs", 1)[0]
 
 
+def test_service_index_marks_http_flow_unassessed_without_canonical_routes(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    service = ServiceKey("orders-service")
+    out_dir = tmp_path / "docs"
+    snapshots_repo.replace_snapshot(conn, service_id, project_analysis(service, AnalysisResult()))
+
+    export_markdown(conn, out_dir)
+    page = (out_dir / "orders-service/index.md").read_text(encoding="utf-8")
+    dependencies = page.split("## Depends on\n", 1)[1].split("\n## APIs", 1)[0]
+    assert "HTTP route flow unassessed; other dependencies may exist" in dependencies
+    assert "no dependency detected" not in dependencies
+
+    snapshots_repo.replace_snapshot(conn, service_id, project_analysis(service, AnalysisResult(
+        static_service_calls=[StaticServiceCall(
+            "Orders.fetch", "catalog-service", "http", "GET", "/catalog",
+            Evidence("CatalogClient.kt", 8, 8),
+        )],
+    )))
+    export_markdown(conn, out_dir)
+    page = (out_dir / "orders-service/index.md").read_text(encoding="utf-8")
+    dependencies = page.split("## Depends on\n", 1)[1].split("\n## APIs", 1)[0]
+    assert "**catalog-service** (http (unresolved), declared target)" in dependencies
+    assert "HTTP route flow unassessed; other dependencies may exist" in dependencies
+
+
 def test_service_index_keeps_known_dependency_and_warns_about_limited_flow(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     service_id = _seed(conn)

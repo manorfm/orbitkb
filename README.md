@@ -317,6 +317,8 @@ all known HTTP routes are traversed without limits. An empty target list therefo
 does not by itself mean that the service has no outbound calls.
 When a service has no canonical snapshot, its page reports that dependency
 analysis is unavailable alongside any known targets.
+When a snapshot has no canonical HTTP route, the Markdown dependency section
+marks route flow as unassessed alongside any known targets.
 If a route in the snapshot has unresolved or bounded flow, the dependency list
 warns that other dependencies may exist alongside any known targets.
 Indexed calls with an unresolved target carry the same label in service and API
