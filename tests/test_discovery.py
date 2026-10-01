@@ -515,6 +515,44 @@ app.use("/api", orders);
     }
 
 
+def test_node_route_chain_applies_all_only_to_later_methods(tmp_path: Path):
+    (tmp_path / "orders.js").write_text('''const express = require("express");
+const app = express();
+function requireAuthentication(req, res, next) { next(); }
+function readOrder(req, res) { res.sendStatus(200); }
+function createOrder(req, res) { res.sendStatus(201); }
+app.route("/orders").get(readOrder).all(requireAuthentication).post(createOrder);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    expected = {("GET", "/orders"), ("POST", "/orders")}
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == expected
+    contracts = {entry.method: entry.contract for entry in analysis.entrypoints if entry.kind == "http"}
+    assert contracts == {
+        "GET": None,
+        "POST": {"route_middlewares": [{"symbol": "requireAuthentication"}]},
+    }
+
+
+def test_node_routes_accept_local_function_expression_handlers(tmp_path: Path):
+    (tmp_path / "orders.js").write_text('''const express = require("express");
+const app = express();
+const readOrder = function(req, res) { res.sendStatus(200); };
+const createOrder = function(req, res) { res.sendStatus(201); };
+app.route("/orders").get(readOrder);
+app.post("/orders", createOrder);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    expected = {("GET", "/orders"), ("POST", "/orders")}
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == expected
+    assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
+
+
 def test_node_chained_route_ignores_ambiguous_cross_file_mount(tmp_path: Path):
     (tmp_path / "orders.routes.js").write_text('''const express = require("express");
 const router = express.Router();

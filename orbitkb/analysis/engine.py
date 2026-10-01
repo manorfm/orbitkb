@@ -124,7 +124,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "49"
+STATIC_ANALYSIS_INPUT_VERSION = "50"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -2231,7 +2231,7 @@ def _fastify_error_handler_names(source: str, receivers: frozenset[str]) -> froz
 
 
 def _node_named_functions(tree: Node, source: bytes, module_name: str) -> list[_Function]:
-    """Extract named declaration and arrow handlers with one stable symbol shape."""
+    """Extract local function declarations and assigned functions with stable symbols."""
     functions: list[_Function] = []
     for node in _walk(tree):
         if node.type == "function_declaration":
@@ -2240,7 +2240,7 @@ def _node_named_functions(tree: Node, source: bytes, module_name: str) -> list[_
         elif node.type == "variable_declarator":
             name_node = node.child_by_field_name("name")
             value_node = node.child_by_field_name("value")
-            if value_node is None or value_node.type != "arrow_function":
+            if value_node is None or value_node.type not in {"arrow_function", "function_expression"}:
                 continue
             body = value_node.child_by_field_name("body")
         else:

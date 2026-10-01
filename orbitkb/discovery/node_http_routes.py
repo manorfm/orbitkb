@@ -115,7 +115,7 @@ def _local_handlers(tree: Node, source: bytes) -> frozenset[str]:
             name = node.child_by_field_name("name")
         elif node.type == "variable_declarator":
             value = node.child_by_field_name("value")
-            if value is None or value.type != "arrow_function":
+            if value is None or value.type not in {"arrow_function", "function_expression"}:
                 continue
             name = node.child_by_field_name("name")
         else:
