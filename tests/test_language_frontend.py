@@ -20,7 +20,7 @@ from orbitkb.discovery.base import CodeExcerpt, EndpointHint, ServiceHints
 from orbitkb.domain.canonical import ServiceKey
 from orbitkb.export.markdown import export_markdown
 from orbitkb.generation.mock_backend import MockBackend
-from orbitkb.generation.orchestrator import index_service
+from orbitkb.generation.orchestrator import DiscoveryError, index_path, index_service
 from orbitkb.mcp.queries import (
     describe_api,
     describe_entrypoint,
@@ -228,3 +228,55 @@ def test_custom_analysis_engine_rejects_ambiguous_depth_provider(tmp_path: Path)
             depth_provider=NoopDepthProvider(),
             analysis_engine=StaticAnalysisEngine(frontends={"fixture": FixtureFrontend()}),
         )
+
+
+def test_custom_detector_and_frontend_index_repository_through_public_path(tmp_path: Path):
+    service_root = tmp_path / "sample-service"
+    service_root.mkdir()
+    (service_root / "routes.fixture").write_text("/fixtures\n", encoding="utf-8")
+    conn = open_db(tmp_path / "test.db")
+
+    results = index_path(
+        conn, tmp_path, MockBackend(),
+        detectors=(FixtureDetector(),),
+        analysis_engine=StaticAnalysisEngine(frontends={"fixture": FixtureFrontend()}),
+    )
+
+    assert [(item.service_name, item.status) for item in results] == [("sample-service", "ok")]
+    assert describe_api(conn, "sample-service", "GET", "/fixtures")["summary"] == "Mock summary."
+    assert describe_messages(conn, "sample-service")["static_analysis_status"] == "unsupported"
+    assert [(entry["name"], entry["symbol"]) for entry in list_entrypoints(conn, "sample-service")["entrypoints"]] == [
+        ("/fixtures", "Fixture.list"),
+    ]
+
+
+def test_custom_detector_is_available_to_explicit_stack_override(tmp_path: Path):
+    (tmp_path / "routes.fixture").write_text("/fixtures\n", encoding="utf-8")
+    conn = open_db(tmp_path / "test.db")
+
+    results = index_path(
+        conn, tmp_path, MockBackend(),
+        service_override="named-service", stack_override="fixture",
+        detectors=(FixtureDetector(),),
+        analysis_engine=StaticAnalysisEngine(frontends={"fixture": FixtureFrontend()}),
+    )
+
+    assert [(item.service_name, item.status) for item in results] == [("named-service", "ok")]
+    assert describe_messages(conn, "named-service")["static_analysis_status"] == "unsupported"
+
+
+def test_custom_detector_without_frontend_fails_before_writing_service(tmp_path: Path):
+    (tmp_path / "routes.fixture").write_text("/fixtures\n", encoding="utf-8")
+    conn = open_db(tmp_path / "test.db")
+
+    with pytest.raises(DiscoveryError, match="no analysis frontend"):
+        index_path(conn, tmp_path, MockBackend(), detectors=(FixtureDetector(),))
+
+    assert services.list_services(conn) == []
+
+
+def test_custom_detector_no_match_reports_configured_search(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+
+    with pytest.raises(DiscoveryError, match="checked 1 configured detector"):
+        index_path(conn, tmp_path, MockBackend(), detectors=(FixtureDetector(),))

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,7 +26,7 @@ def slugify(name: str) -> str:
     return slug or "service"
 
 
-def discover_services(root: Path) -> list[ServiceCandidate]:
+def discover_services(root: Path, detectors: Sequence[StackDetector] | None = None) -> list[ServiceCandidate]:
     """Find every microservice under root.
 
     If root itself is a service (single-repo mode), returns just that one.
@@ -35,7 +36,7 @@ def discover_services(root: Path) -> list[ServiceCandidate]:
     """
     logger.debug("detecting stack: %s", root)
     root = root.resolve()
-    detector = detector_for(root)
+    detector = detector_for(root, detectors)
     if detector is not None:
         logger.debug("detected stack: %s (%s)", detector.id, root)
         return [ServiceCandidate(name=slugify(root.name), path=root, detector=detector)]
@@ -46,7 +47,7 @@ def discover_services(root: Path) -> list[ServiceCandidate]:
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
         if current == root:
             continue
-        found = detector_for(current)
+        found = detector_for(current, detectors)
         if found is not None:
             logger.debug("detected stack: %s (%s)", found.id, current)
             candidates.append(ServiceCandidate(name=slugify(current.name), path=current, detector=found))

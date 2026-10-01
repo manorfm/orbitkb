@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
@@ -977,7 +978,11 @@ def index_path(
     max_llm_invocations: int | None = None,
     max_reported_cost_usd: float | None = None,
     max_reported_tokens: int | None = None,
+    detectors: Sequence[StackDetector] | None = None,
+    analysis_engine: StaticAnalysisEngine | None = None,
 ) -> list[IndexResult]:
+    if analysis_engine is not None and depth_provider is not None:
+        raise ValueError("analysis_engine and depth_provider cannot both be supplied")
     if stack_override is not None:
         # Explicit "I already know what this is" escape hatch (see `orbitkb index
         # --stack`): skips discover_services()/matches() entirely, for a folder shape
@@ -988,21 +993,34 @@ def index_path(
         # single-service opt-in rather than a heuristic change.
         if not service_override:
             raise DiscoveryError("--stack requires --service (both must name one explicit service)")
-        detector = detector_by_id(stack_override)
+        detector = detector_by_id(stack_override, detectors)
         if detector is None:
             raise DiscoveryError(f"unknown --stack {stack_override!r}")
         candidates = [ServiceCandidate(name=service_override, path=path.resolve(), detector=detector)]
     else:
-        candidates = discover_services(path)
+        candidates = discover_services(path, detectors)
         if not candidates:
+            searched = (
+                f"checked {len(detectors)} configured detector(s)"
+                if detectors is not None else
+                "looked for Node/TS, Python, JVM/Spring, and Go boundary markers"
+            )
             raise DiscoveryError(
-                f"No supported microservice detected under {path} "
-                "(looked for Node/TS, Python, JVM/Spring, and Go boundary markers)."
+                f"No supported microservice detected under {path} ({searched})."
             )
         if service_override:
             if len(candidates) != 1:
                 raise DiscoveryError("--service can only be used when <path> points at a single service")
             candidates = [replace(candidates[0], name=service_override)]
+
+    if detectors is not None or analysis_engine is not None:
+        engine = analysis_engine or StaticAnalysisEngine()
+        missing_frontends = sorted({
+            candidate.detector.id for candidate in candidates
+            if not engine.supports_stack(candidate.detector.id)
+        })
+        if missing_frontends:
+            raise DiscoveryError(f"no analysis frontend for stack: {', '.join(missing_frontends)}")
 
     resolved_path = path.resolve()
     repository_id = repositories_repo.ensure_repository(conn, repository_name or resolved_path.name, str(resolved_path))
@@ -1014,6 +1032,7 @@ def index_path(
             max_llm_invocations=max_llm_invocations,
             max_reported_cost_usd=max_reported_cost_usd,
             max_reported_tokens=max_reported_tokens,
+            analysis_engine=analysis_engine,
         )
         for c in candidates
     ]

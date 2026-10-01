@@ -2991,6 +2991,9 @@ class StaticAnalysisEngine:
             return []
         return self._source_files(root, frontend.file_patterns)
 
+    def supports_stack(self, stack: str) -> bool:
+        return stack in self._frontends
+
     def analyze_files(self, paths: list[Path], root: Path, stack: str) -> AnalysisResult:
         """Just the per-file AST pass, over exactly the given `paths` (a subset of
         `list_files`'s result is fine) -- no cross-file enrichment (see `enrich`).
