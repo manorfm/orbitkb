@@ -102,6 +102,9 @@ from orbitkb.discovery.node_http import (
     fastify_receivers as fastify_receivers_for_source,
 )
 from orbitkb.discovery.node_http_routes import (
+    literal_express_chained_route as _express_literal_chained_route,
+)
+from orbitkb.discovery.node_http_routes import (
     literal_fastify_route_definition as _fastify_literal_route_definition,
 )
 from orbitkb.discovery.node_imports import parse_node_named_imports
@@ -2198,33 +2201,6 @@ def _express_error_middleware_names(source: str, receivers: frozenset[str]) -> f
         for receiver, handler in re.findall(r"\b(\w+)\.use\s*\(\s*(\w+)\s*\)", source)
         if receiver in receivers
     )
-
-
-def _express_literal_chained_route(
-    callee: Node, source: bytes, route_prefixes: dict[str, str],
-) -> tuple[str, str, str] | None:
-    """Extract a proven ``app.route(path).method(handler)`` Express chain."""
-    if callee.type != "member_expression":
-        return None
-    route_call = callee.child_by_field_name("object")
-    method_node = callee.child_by_field_name("property")
-    if route_call is None or route_call.type != "call_expression" or method_node is None:
-        return None
-    route_callee = route_call.child_by_field_name("function")
-    route_arguments = route_call.child_by_field_name("arguments")
-    if route_callee is None or route_arguments is None:
-        return None
-    route_callee_text = _text(route_callee, source)
-    if "." not in route_callee_text:
-        return None
-    receiver, factory_method = route_callee_text.rsplit(".", 1)
-    if factory_method != "route" or receiver not in route_prefixes:
-        return None
-    args = route_arguments.named_children
-    path = _string(args[0], source) if len(args) == 1 else None
-    if path is None:
-        return None
-    return receiver, _text(method_node, source), path
 
 
 def _express_route_middleware_contract(arguments: list[Node], source: bytes) -> dict | None:

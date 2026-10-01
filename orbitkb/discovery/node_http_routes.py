@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from pathlib import Path
 
 import tree_sitter_javascript
@@ -62,6 +63,33 @@ def literal_fastify_route_definition(args: list[Node], source: bytes) -> tuple[t
     return normalized, path, handler
 
 
+def literal_express_chained_route(
+    callee: Node, source: bytes, receivers: Collection[str],
+) -> tuple[str, str, str] | None:
+    """Extract a literal ``app.route(path).method(handler)`` call."""
+    if callee.type != "member_expression":
+        return None
+    route_call = callee.child_by_field_name("object")
+    method_node = callee.child_by_field_name("property")
+    if route_call is None or route_call.type != "call_expression" or method_node is None:
+        return None
+    route_callee = route_call.child_by_field_name("function")
+    route_arguments = route_call.child_by_field_name("arguments")
+    if route_callee is None or route_arguments is None:
+        return None
+    route_callee_text = _text(route_callee, source)
+    if "." not in route_callee_text:
+        return None
+    receiver, factory_method = route_callee_text.rsplit(".", 1)
+    if factory_method != "route" or receiver not in receivers:
+        return None
+    args = route_arguments.named_children
+    path = _string(args[0], source) if len(args) == 1 else None
+    if path is None:
+        return None
+    return receiver, _text(method_node, source), path
+
+
 def _walk(node: Node):
     yield node
     for child in node.named_children:
@@ -93,9 +121,10 @@ def _local_handler(handler: Node, handlers: frozenset[str], source: bytes) -> bo
 
 def find_literal_node_routes(
     path: Path, direct_receivers: frozenset[str], fastify_receivers: frozenset[str],
+    chained_receivers: frozenset[str],
 ) -> list[tuple[str, str, str, int]]:
-    """Find direct routes and Fastify objects with literal paths and local handlers."""
-    if not direct_receivers and not fastify_receivers:
+    """Find direct, chained and Fastify routes with local handlers."""
+    if not direct_receivers and not fastify_receivers and not chained_receivers:
         return []
     source = path.read_bytes()
     grammar = (
@@ -111,6 +140,13 @@ def find_literal_node_routes(
         callee = node.child_by_field_name("function")
         args = node.child_by_field_name("arguments")
         if callee is None or args is None or callee.type != "member_expression":
+            continue
+        chained = literal_express_chained_route(callee, source, chained_receivers)
+        if chained is not None:
+            receiver_name, method_name, route = chained
+            handler = args.named_children[-1] if args.named_children else None
+            if method_name in _DIRECT_METHODS and handler is not None and _local_handler(handler, handlers, source):
+                routes.append((receiver_name, method_name.upper(), route, node.start_point.row + 1))
             continue
         receiver = callee.child_by_field_name("object")
         method = callee.child_by_field_name("property")

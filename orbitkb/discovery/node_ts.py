@@ -46,9 +46,6 @@ _PRISMA_PROVIDER_TO_ENGINE = {"postgresql": "postgres", "mysql": "mysql", "mongo
 
 EXTENSIONS = (".js", ".ts")
 
-_EXPRESS_ROUTE_CHAIN_RE = re.compile(
-    r"""\b([A-Za-z_]\w*)\.route\s*\(\s*(['"])([^'"]+)\2\s*\)\s*\.\s*(get|post|put|patch|delete)\s*\("""
-)
 _OUTBOUND_RE = re.compile(
     r"\b(axios\.(?:get|post|put|patch|delete)|fetch|got)\s*\(\s*['\"`]?([^'\"`)]*)"
 )
@@ -146,19 +143,11 @@ class NodeTsDetector:
         for path in node_files:
             prefixes = prefixes_for(path)
             for receiver, method, route, line_no in find_literal_node_routes(
-                path, frozenset(prefixes), fastify_by_file[path],
+                path, frozenset(prefixes), fastify_by_file[path], frozenset(local_express_prefixes[path]),
             ):
                 hints.endpoints.append(_endpoint_hint(
                     method, _route_with_prefix(prefixes[receiver], route), path, folder, line_no,
                 ))
-
-        for path, line_no, match in find_matches(folder, EXTENSIONS, _EXPRESS_ROUTE_CHAIN_RE):
-            prefixes_for(path)
-            receiver = match.group(1)
-            if receiver not in local_express_prefixes[path]:
-                continue
-            route = _route_with_prefix(local_express_prefixes[path][receiver], match.group(3))
-            hints.endpoints.append(_endpoint_hint(match.group(4).upper(), route, path, folder, line_no))
 
         for path in node_files:
             if path.suffix != ".ts":

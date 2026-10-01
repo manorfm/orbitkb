@@ -462,13 +462,15 @@ function createOrder(req, res) { res.sendStatus(201); }
 function readOrder(req, res) { res.sendStatus(200); }
 app.route("/orders").post(createOrder);
 app.route("/orders").get(readOrder);
+app.route("/inline").delete((req, res) => res.sendStatus(204));
+app.route("/ghost").get(missingHandler);
 client.route("/fake").get(readOrder);
 ''', encoding="utf-8")
 
     hints = NodeTsDetector().collect_hints(tmp_path)
     analysis = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
 
-    expected = {("POST", "/orders"), ("GET", "/orders")}
+    expected = {("POST", "/orders"), ("GET", "/orders"), ("DELETE", "/inline")}
     assert {(hint.method, hint.path) for hint in hints.endpoints} == expected
     assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
 
