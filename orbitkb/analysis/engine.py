@@ -93,7 +93,9 @@ from orbitkb.discovery.go_imports import (
     has_standard_net_http_import,
     parse_go_import_declarations,
 )
-from orbitkb.discovery.node_http import express_receivers
+from orbitkb.discovery.node_http import (
+    express_route_prefixes as _express_route_prefixes,
+)
 from orbitkb.discovery.node_http import (
     fastify_receivers as fastify_receivers_for_source,
 )
@@ -2164,27 +2166,6 @@ def _node_named_imports(source: str) -> tuple[tuple[str, str], ...]:
         (local_name, f"{module_name}.{original_name}")
         for local_name, module_name, original_name in parse_node_named_imports(source)
     )
-
-
-def _express_route_prefixes(source: str) -> dict[str, str]:
-    """Return locally proven Express receivers and their unambiguous path prefix.
-
-    Route calls on arbitrary objects are too common to treat as HTTP facts. This
-    deliberately accepts direct application receivers and routers mounted exactly
-    once by a literal ``app.use(prefix, router)`` call. Framework wrappers, dynamic
-    construction and ambiguous router mounts remain unresolved.
-    """
-    applications, routers = express_receivers(source)
-    mounts: dict[str, list[str]] = {}
-    for application, _quote, prefix, router in re.findall(
-        r"\b(\w+)\.use\s*\(\s*([\"'])([^\"']+)\2\s*,\s*(\w+)\s*\)", source,
-    ):
-        if application in applications and router in routers:
-            mounts.setdefault(router, []).append(prefix)
-    return {
-        **{application: "" for application in applications},
-        **{router: prefixes[0] for router, prefixes in mounts.items() if len(prefixes) == 1},
-    }
 
 
 def _express_error_middleware_names(source: str, receivers: frozenset[str]) -> frozenset[str]:

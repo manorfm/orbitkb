@@ -22,6 +22,21 @@ def express_receivers(source: str) -> tuple[frozenset[str], frozenset[str]]:
     return applications, routers
 
 
+def express_route_prefixes(source: str) -> dict[str, str]:
+    """Return direct applications and routers mounted once by a literal local app."""
+    applications, routers = express_receivers(source)
+    mounts: dict[str, list[str]] = {}
+    for application, _quote, prefix, router in re.findall(
+        r"\b(\w+)\.use\s*\(\s*([\"'])([^\"']+)\2\s*,\s*(\w+)\s*\)", source,
+    ):
+        if application in applications and router in routers:
+            mounts.setdefault(router, []).append(prefix)
+    return {
+        **{application: "" for application in applications},
+        **{router: prefixes[0] for router, prefixes in mounts.items() if len(prefixes) == 1},
+    }
+
+
 def fastify_receivers(source: str) -> frozenset[str]:
     factories = {
         *re.findall(r"\bimport\s+(\w+)\s+from\s*[\"']fastify[\"']", source),

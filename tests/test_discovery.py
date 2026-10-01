@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 
+from orbitkb.analysis.engine import StaticAnalysisEngine
 from orbitkb.discovery.go_stack import GoDetector
 from orbitkb.discovery.jvm_stack import JvmSpringDetector
 from orbitkb.discovery.node_ts import NodeTsDetector
@@ -373,6 +374,25 @@ app.get("/fake", handler);
     assert {(hint.method, hint.path) for hint in hints.endpoints} == {
         ("GET", "/express"), ("POST", "/router"), ("PUT", "/fastify"),
     }
+
+
+def test_node_route_hints_include_a_literal_local_express_mount_prefix(tmp_path: Path):
+    (tmp_path / "main.ts").write_text('''import express from "express";
+const app = express();
+const router = express.Router();
+app.use("/api", router);
+router.post("/orders", createOrder);
+app.get("/health", health);
+function createOrder(req, res) { res.sendStatus(201); }
+function health(req, res) { res.sendStatus(200); }
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    expected = {("POST", "/api/orders"), ("GET", "/health")}
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == expected
+    assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
 
 
 def test_jvm_spring_detector_matches_and_finds_hints():

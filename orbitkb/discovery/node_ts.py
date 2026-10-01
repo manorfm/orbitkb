@@ -11,7 +11,11 @@ from orbitkb.discovery.base import (
     PersistenceHint,
     ServiceHints,
 )
-from orbitkb.discovery.node_http import express_receivers, fastify_receivers
+from orbitkb.discovery.node_http import (
+    express_receivers,
+    express_route_prefixes,
+    fastify_receivers,
+)
 from orbitkb.discovery.scan_helpers import (
     ENDPOINT_AFTER,
     ENDPOINT_BEFORE,
@@ -113,15 +117,22 @@ class NodeTsDetector:
         if entry:
             hints.entry_excerpt = excerpt_around(entry, folder, 1, context=20)
 
-        route_receivers: dict[Path, frozenset[str]] = {}
+        route_prefixes: dict[Path, dict[str, str]] = {}
         for path, line_no, match in find_matches(folder, EXTENSIONS, _HTTP_METHOD_RE):
-            if path not in route_receivers:
+            if path not in route_prefixes:
                 source = path.read_text(encoding="utf-8", errors="ignore")
                 applications, routers = express_receivers(source)
-                route_receivers[path] = applications | routers | fastify_receivers(source)
-            if match.group(1) not in route_receivers[path]:
+                route_prefixes[path] = {
+                    **{receiver: "" for receiver in applications | routers | fastify_receivers(source)},
+                    **express_route_prefixes(source),
+                }
+            receiver = match.group(1)
+            if receiver not in route_prefixes[path]:
                 continue
             method, route = match.group(2).upper(), match.group(3)
+            prefix = route_prefixes[path][receiver]
+            if prefix:
+                route = f"{prefix.rstrip('/')}/{route.lstrip('/')}"
             hints.endpoints.append(_endpoint_hint(method, route, path, folder, line_no))
 
         for path, line_no, match in find_matches(folder, EXTENSIONS, _NEST_ROUTE_RE):
