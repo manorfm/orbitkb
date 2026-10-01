@@ -67,11 +67,11 @@ def _fmt_calls(calls: list[sqlite3.Row]) -> list[str]:
         if data_needed:
             line += f" — needs: {data_needed}"
         lines.append(line)
-    return lines or ["- (no dependency detected)"]
+    return lines
 
 
 def _fmt_api_calls(calls: list[sqlite3.Row], source_calls: tuple[DeclaredHttpCall, ...]) -> list[str]:
-    lines = _fmt_calls(calls) if calls else []
+    lines = _fmt_calls(calls)
     represented: set[str] = set()
     for index, call in enumerate(calls):
         target = call["to_service_name"]
@@ -134,6 +134,9 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
         messages = messages_repo.list_messages(conn, svc["id"])
         security_rules = flows_repo.list_static_security_requirements_in_declaration_order(conn, svc["id"])
         cloud_facts = flows_repo.list_static_cloud_facts(conn, svc["id"])
+        empty_dependencies = (
+            "- (dependency analysis unavailable)" if snapshot is None else "- (no dependency detected)"
+        )
 
         lines = [
             f"# {svc['name']}",
@@ -145,9 +148,9 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
             f"**Stack:** {svc['stack'] or '?'}",
             "",
             "## Depends on",
-            *(_fmt_calls(calls) if calls else []),
+            *_fmt_calls(calls),
             *(f"- **{target}** (http (unresolved), declared target)" for target in declared_targets),
-            *(["- (no dependency detected)"] if not calls and not declared_targets else []),
+            *([empty_dependencies] if not calls and not declared_targets else []),
             "",
             "## APIs",
         ]

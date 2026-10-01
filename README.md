@@ -307,6 +307,8 @@ A declared target is not a confirmed runtime address.
 The service dependency list also includes source-proven HTTP client targets
 when no indexed call represents them, labeled `unresolved` rather than treated
 as a confirmed destination.
+When a service has no indexed dependency and no canonical snapshot, its page
+reports that dependency analysis is unavailable.
 Indexed calls with an unresolved target carry the same label in service and API
 Markdown pages and in the topology diagram.
 The Messaging section also reports a source-confirmed Redis Pub/Sub publisher;

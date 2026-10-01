@@ -28,7 +28,7 @@
     "exports": {
       "checkout-service/apis/post-checkout.md": "2ae17dfe3591def0d242548a35893f0bc68e69110f75f2b663b3939cc8dd62a4",
       "checkout-service/index.md": "b5c17de0f0b27dba61dc6f698fbb530b5bbc87f8f5dbc81aa4ffa5c71799e5e6",
-      "notification-service/index.md": "9db6b53b0b7f79f9a9801a29574452a4cdc36550fa368ffc1682d0ba00adcc96",
+      "notification-service/index.md": "d8665d5295d7d6025bf0656a143adaca4124c0358773b942081fca4d44c600c8",
       "order-service/apis/post-orders.md": "83894079c230f7cba9cd53d334efeda065463fa23ac8aaabc4b7c6f340a8a979",
       "order-service/index.md": "850e1298ea4cbb1f6282813b288abada737ebfa08ad36a1f5e70ef30178b5382",
       "payments-service/apis/post-charge.md": "db4cf7fa0c4b4816e89f501c3972fc5204ee17d4f6c72589735988c22949a8c6",

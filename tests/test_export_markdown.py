@@ -233,6 +233,9 @@ def test_export_markdown_marks_messaging_unassessed_without_snapshot(tmp_path: P
     export_markdown(conn, tmp_path / "docs")
 
     page = (tmp_path / "docs/empty-service/index.md").read_text(encoding="utf-8")
+    dependencies = page.split("## Depends on\n", 1)[1].split("\n## APIs", 1)[0]
+    assert "dependency analysis unavailable" in dependencies
+    assert "no dependency detected" not in dependencies
     messaging = page.split("## Messaging", 1)[1].split("## Cloud", 1)[0]
     assert "Static analysis:** unknown" in messaging
     assert messaging.count("- (not assessed)") == 2
