@@ -271,6 +271,33 @@ def test_service_index_does_not_claim_no_dependencies_when_flow_is_unresolved(tm
     assert "no dependency detected" in complete.split("## Depends on\n", 1)[1].split("\n## APIs", 1)[0]
 
 
+def test_service_index_keeps_known_dependency_and_warns_about_limited_flow(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = _seed(conn)
+    source = Evidence("OrdersController.kt", 1, 1)
+    entrypoint = EntryPoint("http", "POST", "/orders", "OrdersController.create", source)
+    service = ServiceKey("orders-service")
+    snapshots_repo.replace_snapshot(conn, service_id, project_analysis(service, AnalysisResult(
+        entrypoints=[entrypoint],
+        edges=[FlowEdge("OrdersController.create", "dynamicCall", "invokes", source)],
+    )))
+
+    export_markdown(conn, tmp_path / "docs")
+    page = (tmp_path / "docs/orders-service/index.md").read_text(encoding="utf-8")
+    dependencies = page.split("## Depends on\n", 1)[1].split("\n## APIs", 1)[0]
+
+    assert dependencies.count("payments-service") == 1
+    assert "charge the customer" in dependencies
+    assert "static flow limited; other dependencies may exist" in dependencies
+
+    snapshots_repo.replace_snapshot(conn, service_id, project_analysis(service, AnalysisResult(
+        entrypoints=[entrypoint],
+    )))
+    export_markdown(conn, tmp_path / "docs")
+    complete = (tmp_path / "docs/orders-service/index.md").read_text(encoding="utf-8")
+    assert "static flow limited" not in complete.split("## Depends on\n", 1)[1].split("\n## APIs", 1)[0]
+
+
 def test_markdown_reports_source_proven_http_target_without_model_call(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")

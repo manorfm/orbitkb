@@ -96,9 +96,9 @@ def _fmt_messages(messages: list[sqlite3.Row]) -> list[str]:
     return [f"- **{m['channel']}** ({m['direction']}): {m['description'] or ''}" for m in messages]
 
 
-def _empty_dependencies(navigator: KnowledgeNavigator | None) -> str:
+def _dependency_limit_note(navigator: KnowledgeNavigator | None) -> str | None:
     if navigator is None:
-        return "- (dependency analysis unavailable)"
+        return None
     routes = {
         (fact.subject.method, fact.subject.name)
         for fact in navigator.snapshot.facts
@@ -108,7 +108,7 @@ def _empty_dependencies(navigator: KnowledgeNavigator | None) -> str:
     if any(route_declared_http_calls(navigator, method, path).status is RouteCallStatus.LIMITED
            for method, path in routes):
         return "- (static flow limited; other dependencies may exist)"
-    return "- (no dependency detected)"
+    return None
 
 
 def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str | None = None) -> list[Path]:
@@ -150,6 +150,17 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
         messages = messages_repo.list_messages(conn, svc["id"])
         security_rules = flows_repo.list_static_security_requirements_in_declaration_order(conn, svc["id"])
         cloud_facts = flows_repo.list_static_cloud_facts(conn, svc["id"])
+        dependency_lines = _fmt_calls(calls)
+        dependency_lines.extend(
+            f"- **{target}** (http (unresolved), declared target)" for target in declared_targets
+        )
+        limit_note = _dependency_limit_note(navigator)
+        if limit_note:
+            dependency_lines.append(limit_note)
+        elif not dependency_lines:
+            dependency_lines.append(
+                "- (dependency analysis unavailable)" if navigator is None else "- (no dependency detected)"
+            )
 
         lines = [
             f"# {svc['name']}",
@@ -161,9 +172,7 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
             f"**Stack:** {svc['stack'] or '?'}",
             "",
             "## Depends on",
-            *_fmt_calls(calls),
-            *(f"- **{target}** (http (unresolved), declared target)" for target in declared_targets),
-            *([_empty_dependencies(navigator)] if not calls and not declared_targets else []),
+            *dependency_lines,
             "",
             "## APIs",
         ]

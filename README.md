@@ -309,8 +309,8 @@ when no indexed call represents them, labeled `unresolved` rather than treated
 as a confirmed destination.
 When a service has no indexed dependency and no canonical snapshot, its page
 reports that dependency analysis is unavailable.
-If a route in the snapshot has unresolved or bounded flow, the empty dependency
-list instead warns that other dependencies may exist.
+If a route in the snapshot has unresolved or bounded flow, the dependency list
+warns that other dependencies may exist alongside any known targets.
 Indexed calls with an unresolved target carry the same label in service and API
 Markdown pages and in the topology diagram.
 The Messaging section also reports a source-confirmed Redis Pub/Sub publisher;
