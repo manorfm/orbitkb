@@ -748,6 +748,7 @@ def _index_service_unlocked(
     knowledge_reader: KnowledgeReader | None = None,
     knowledge_writer: KnowledgeWriter | None = None,
     budget: ModelBudget | None = None,
+    analysis_engine: StaticAnalysisEngine | None = None,
 ) -> IndexResult:
     failures_root = failures_root or (Path.home() / ".orbitkb" / "failures")
     progress = progress or NullProgressReporter()
@@ -766,10 +767,12 @@ def _index_service_unlocked(
         existing = services_repo.get_service_by_root_path(conn, str(root), repository_id)
     is_new = existing is None
     service_id = services_repo.ensure_service(conn, name, str(root), detector.id, repository_id=repository_id)
-    static_engine = StaticAnalysisEngine(depth_provider or NoopDepthProvider())
-    static_digest = static_engine.input_digest(root, detector.id)
+    static_engine = analysis_engine or StaticAnalysisEngine(depth_provider or NoopDepthProvider())
+    cacheable_static_analysis = analysis_engine is None and (
+        depth_provider is None or isinstance(depth_provider, NoopDepthProvider)
+    )
+    static_digest = static_engine.input_digest(root, detector.id) if cacheable_static_analysis else None
     snapshot = static_analysis_repo.get_snapshot(conn, service_id)
-    cacheable_static_analysis = depth_provider is None or isinstance(depth_provider, NoopDepthProvider)
     static_analysis_is_current = (
         cacheable_static_analysis and not force and static_digest is not None and snapshot is not None
         and snapshot["input_digest"] == static_digest
@@ -929,8 +932,15 @@ def index_service(
     max_llm_invocations: int | None = None,
     max_reported_cost_usd: float | None = None,
     max_reported_tokens: int | None = None,
+    analysis_engine: StaticAnalysisEngine | None = None,
 ) -> IndexResult:
-    """Serialize one service identity while retaining independent-service parallelism."""
+    """Serialize one service identity while retaining independent-service parallelism.
+
+    An explicit analysis engine is recomputed each run because its frontend
+    implementation is not identified by the default source digest.
+    """
+    if analysis_engine is not None and depth_provider is not None:
+        raise ValueError("analysis_engine and depth_provider cannot both be supplied")
     budget = ModelBudget(
         max_invocations=max_llm_invocations,
         max_reported_cost_usd=max_reported_cost_usd,
@@ -943,7 +953,7 @@ def index_service(
         return _index_service_unlocked(
             conn, name, root, detector, backend, force, failures_root, progress,
             repository_id, embedding_backend, depth_provider, knowledge_reader, knowledge_writer,
-            budget,
+            budget, analysis_engine,
         )
     finally:
         index_runs_repo.release_service_lock(conn, lock_key)

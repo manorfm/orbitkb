@@ -1,7 +1,10 @@
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from orbitkb.analysis.canonical_projection import project_analysis
+from orbitkb.analysis.depth import NoopDepthProvider
 from orbitkb.analysis.engine import StaticAnalysisEngine
 from orbitkb.analysis.models import (
     AnalysisResult,
@@ -13,9 +16,17 @@ from orbitkb.analysis.models import (
 from orbitkb.analysis.resolution import BoundedFlowResolver
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import canonical_snapshots, messages, services
+from orbitkb.discovery.base import CodeExcerpt, EndpointHint, ServiceHints
 from orbitkb.domain.canonical import ServiceKey
 from orbitkb.export.markdown import export_markdown
-from orbitkb.mcp.queries import describe_messages
+from orbitkb.generation.mock_backend import MockBackend
+from orbitkb.generation.orchestrator import index_service
+from orbitkb.mcp.queries import (
+    describe_api,
+    describe_entrypoint,
+    describe_messages,
+    list_entrypoints,
+)
 
 
 class FixtureFrontend:
@@ -50,6 +61,24 @@ class FixtureFlowClassifier:
     def classify(self, result: AnalysisResult, files: list[Path]) -> None:
         assert [path.name for path in files] == ["routes.fixture"]
         result.edges = [replace(edge, kind="reads", boundary_kind="persistence") for edge in result.edges]
+
+
+class FixtureDetector:
+    id = "fixture"
+
+    def matches(self, folder: Path) -> bool:
+        return (folder / "routes.fixture").is_file()
+
+    def collect_hints(self, folder: Path) -> ServiceHints:
+        excerpt = CodeExcerpt("routes.fixture", 1, 1, (folder / "routes.fixture").read_text(encoding="utf-8"))
+        return ServiceHints(
+            endpoints=[EndpointHint("GET", "/fixtures", "Fixture", excerpt)],
+            entry_excerpt=excerpt,
+        )
+
+
+class FixtureSupportedFrontend(FixtureFrontend):
+    supported_capabilities = frozenset({"messaging"})
 
 
 def test_new_language_frontend_uses_existing_analysis_and_canonical_projection(tmp_path: Path):
@@ -158,3 +187,44 @@ def test_existing_frontend_declares_messaging_analysis_support(tmp_path: Path):
     service_id = services.ensure_service(conn, "python-service", str(tmp_path), "python")
     canonical_snapshots.replace_snapshot(conn, service_id, snapshot)
     assert describe_messages(conn, "python-service")["static_analysis_status"] == "supported"
+
+
+def test_custom_frontend_runs_through_indexing_and_public_queries(tmp_path: Path):
+    (tmp_path / "routes.fixture").write_text("/fixtures\n", encoding="utf-8")
+    conn = open_db(tmp_path / "test.db")
+
+    first = index_service(
+        conn, "fixture-service", tmp_path, FixtureDetector(), MockBackend(),
+        analysis_engine=StaticAnalysisEngine(frontends={"fixture": FixtureFrontend()}),
+    )
+
+    assert first.status == "ok"
+    assert [(entry["method"], entry["name"]) for entry in list_entrypoints(conn, "fixture-service")["entrypoints"]] == [
+        ("GET", "/fixtures"),
+    ]
+    assert "error" not in describe_entrypoint(conn, "fixture-service", "http", "GET", "/fixtures")
+    assert describe_api(conn, "fixture-service", "GET", "/fixtures")["summary"] == "Mock summary."
+    assert describe_messages(conn, "fixture-service")["static_analysis_status"] == "unsupported"
+    service_id = services.get_service_by_name(conn, "fixture-service")["id"]
+    assert canonical_snapshots.read_snapshot(conn, service_id) is not None
+    export_markdown(conn, tmp_path / "docs")
+    assert "Static analysis:** unsupported" in (tmp_path / "docs/fixture-service/index.md").read_text()
+
+    second = index_service(
+        conn, "fixture-service", tmp_path, FixtureDetector(), MockBackend(),
+        analysis_engine=StaticAnalysisEngine(frontends={"fixture": FixtureSupportedFrontend()}),
+    )
+
+    assert second.status == "ok"
+    assert describe_messages(conn, "fixture-service")["static_analysis_status"] == "supported"
+
+
+def test_custom_analysis_engine_rejects_ambiguous_depth_provider(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    with pytest.raises(ValueError, match="cannot both be supplied"):
+        index_service(
+            conn, "fixture-service", tmp_path,
+            FixtureDetector(), MockBackend(),
+            depth_provider=NoopDepthProvider(),
+            analysis_engine=StaticAnalysisEngine(frontends={"fixture": FixtureFrontend()}),
+        )

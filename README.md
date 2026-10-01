@@ -572,6 +572,9 @@ analysis bypasses or withholds snapshot reuse, preserving correctness over speed
 Static source parsing now uses a per-language frontend contract for file selection
 and per-file analysis. Existing parsers use the same contract, and the shared
 enrichment and canonical projection continue after their results are combined.
+Callers extending indexing can pass a configured `analysis_engine` to
+`index_service`. Such runs reanalyze static source on each invocation because
+the default cache digest does not identify custom parser implementations.
 Cross-file Spring Security filter-chain rules run through a framework adapter
 in that shared enrichment pass.
 Feign calls and client URL property bindings now come from one Spring Feign
