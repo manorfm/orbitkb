@@ -711,6 +711,77 @@ app.get("/orders/:id", readOrder);
     assert any(edge.source == "readHandler.exports" and edge.target == "orderService.read" for edge in analysis.edges)
 
 
+def test_node_route_resolves_named_commonjs_handlers_from_destructuring(tmp_path: Path):
+    (tmp_path / "handlers.js").write_text('''function createOrder(req, res) {
+  return orderService.create(req.body);
+}
+const readOrder = (req, res) => res.sendStatus(200);
+module.exports = { submitOrder: createOrder, readOrder };
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const { submitOrder: addOrder, readOrder } = require("./handlers");
+const app = express();
+app.post("/orders", addOrder);
+app.get("/orders", readOrder);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == {("POST", "/orders"), ("GET", "/orders")}
+    assert {(entry.method, entry.name, entry.symbol) for entry in analysis.entrypoints if entry.kind == "http"} == {
+        ("POST", "/orders", "handlers.createOrder"), ("GET", "/orders", "handlers.readOrder"),
+    }
+    assert any(edge.source == "handlers.createOrder" and edge.target == "orderService.create" for edge in analysis.edges)
+
+
+def test_node_route_does_not_trust_mutated_commonjs_named_exports(tmp_path: Path):
+    (tmp_path / "handlers.js").write_text('''function createOrder(req, res) { res.sendStatus(201); }
+module.exports = { createOrder };
+module.exports.createOrder = 123;
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const { createOrder } = require("./handlers");
+const app = express();
+app.post("/orders", createOrder);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert hints.endpoints == []
+    assert [entry for entry in analysis.entrypoints if entry.kind == "http"] == []
+
+
+def test_node_route_ignores_dynamic_commonjs_named_exports(tmp_path: Path):
+    (tmp_path / "spread.js").write_text('''function handler(req, res) { res.sendStatus(200); }
+const override = { handler: 123 };
+module.exports = { handler, ...override };
+''', encoding="utf-8")
+    (tmp_path / "computed.js").write_text('''function handler(req, res) { res.sendStatus(200); }
+const key = "handler";
+module.exports = { [key]: handler };
+''', encoding="utf-8")
+    (tmp_path / "duplicate.js").write_text('''function handler(req, res) { res.sendStatus(200); }
+module.exports = { handler, handler: 123 };
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const { handler: spread } = require("./spread");
+const { handler: computed } = require("./computed");
+const { handler: duplicate } = require("./duplicate");
+const app = express();
+app.get("/spread", spread);
+app.get("/computed", computed);
+app.get("/duplicate", duplicate);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert hints.endpoints == []
+    assert [entry for entry in analysis.entrypoints if entry.kind == "http"] == []
+
+
 def test_node_route_ignores_unproven_commonjs_handler_imports(tmp_path: Path):
     (tmp_path / "value.js").write_text('''const value = 123;
 module.exports = value;

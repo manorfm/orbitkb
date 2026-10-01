@@ -124,16 +124,40 @@ def _commonjs_assignment_values(tree: Node, source: bytes) -> list[Node | None]:
             continue
         left = assignment.child_by_field_name("left")
         right = assignment.child_by_field_name("right")
-        if left is None or left.type != "member_expression":
-            continue
-        receiver = left.child_by_field_name("object")
-        property_name = left.child_by_field_name("property")
-        if receiver is None or property_name is None or _text(receiver, source) != "module":
-            continue
-        if _text(property_name, source) != "exports":
+        if left is None or not _is_module_exports(left, source):
             continue
         exports.append(right)
     return exports
+
+
+def _is_module_exports(node: Node, source: bytes) -> bool:
+    if node.type != "member_expression":
+        return False
+    receiver = node.child_by_field_name("object")
+    property_name = node.child_by_field_name("property")
+    return (
+        receiver is not None and receiver.type == "identifier" and _text(receiver, source) == "module"
+        and property_name is not None and _text(property_name, source) == "exports"
+    )
+
+
+def _has_commonjs_property_assignment(tree: Node, source: bytes) -> bool:
+    pending = [tree]
+    while pending:
+        node = pending.pop()
+        pending.extend(node.named_children)
+        if node.type != "assignment_expression":
+            continue
+        left = node.child_by_field_name("left")
+        if left is None or left.type != "member_expression":
+            continue
+        receiver = left.child_by_field_name("object")
+        if receiver is not None and (
+            _is_module_exports(receiver, source)
+            or (receiver.type == "identifier" and _text(receiver, source) == "exports")
+        ):
+            return True
+    return False
 
 
 def anonymous_commonjs_function(tree: Node, source: bytes) -> Node | None:
@@ -157,6 +181,56 @@ def _commonjs_exported_function(path: Path) -> str | None:
     return "exports" if anonymous_commonjs_function(tree, source) is not None else None
 
 
+def _commonjs_named_exports(path: Path) -> dict[str, str]:
+    source = path.read_bytes()
+    tree = _parse(path, source)
+    if _has_commonjs_property_assignment(tree, source):
+        return {}
+    values = _commonjs_assignment_values(tree, source)
+    if len(values) != 1 or values[0] is None or values[0].type != "object":
+        return {}
+    local_functions = _local_functions(tree, source)
+    exports: dict[str, str] = {}
+    seen: set[str] = set()
+    for property_node in values[0].named_children:
+        if property_node.type == "shorthand_property_identifier":
+            exported_name = local_name = _text(property_node, source)
+        elif property_node.type == "pair":
+            key = property_node.child_by_field_name("key")
+            value = property_node.child_by_field_name("value")
+            if key is None or key.type not in {"property_identifier", "string"}:
+                return {}
+            exported_name = _text(key, source).strip("\"'")
+            local_name = _text(value, source) if value is not None and value.type == "identifier" else ""
+        else:
+            return {}
+        if exported_name in seen:
+            return {}
+        seen.add(exported_name)
+        if local_name in local_functions:
+            exports[exported_name] = local_name
+    return exports
+
+
+def _commonjs_destructured_handlers(name: Node, exports: dict[str, str], source: bytes) -> dict[str, str]:
+    handlers: dict[str, str] = {}
+    for property_node in name.named_children:
+        if property_node.type == "shorthand_property_identifier_pattern":
+            exported_name = local_name = _text(property_node, source)
+        elif property_node.type == "pair_pattern":
+            key = property_node.child_by_field_name("key")
+            value = property_node.child_by_field_name("value")
+            if key is None or key.type != "property_identifier" or value is None or value.type != "identifier":
+                continue
+            exported_name = _text(key, source)
+            local_name = _text(value, source)
+        else:
+            continue
+        if exported_name in exports:
+            handlers[local_name] = exports[exported_name]
+    return handlers
+
+
 def _commonjs_handler_imports(tree: Node, source: bytes, path: Path, root: Path) -> dict[str, str]:
     symbols: dict[str, str] = {}
     for statement in tree.named_children:
@@ -167,7 +241,9 @@ def _commonjs_handler_imports(tree: Node, source: bytes, path: Path, root: Path)
                 continue
             name = variable.child_by_field_name("name")
             value = variable.child_by_field_name("value")
-            if name is None or name.type != "identifier" or value is None or value.type != "call_expression":
+            if name is None or name.type not in {"identifier", "object_pattern"}:
+                continue
+            if value is None or value.type != "call_expression":
                 continue
             function = value.child_by_field_name("function")
             arguments = value.child_by_field_name("arguments")
@@ -180,9 +256,14 @@ def _commonjs_handler_imports(tree: Node, source: bytes, path: Path, root: Path)
             imported = resolve_local_source(path, module, root, suffixes=_SOURCE_SUFFIXES)
             if imported is None:
                 continue
-            handler = _commonjs_exported_function(imported)
-            if handler is not None:
-                symbols[_text(name, source)] = f"{imported.stem}.{handler}"
+            if name.type == "identifier":
+                handler = _commonjs_exported_function(imported)
+                if handler is not None:
+                    symbols[_text(name, source)] = f"{imported.stem}.{handler}"
+            else:
+                exports = _commonjs_named_exports(imported)
+                for local_name, handler in _commonjs_destructured_handlers(name, exports, source).items():
+                    symbols[local_name] = f"{imported.stem}.{handler}"
     return symbols
 
 
