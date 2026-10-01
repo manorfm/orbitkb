@@ -12,19 +12,21 @@ from pathlib import Path
 _IMPORT_RE = re.compile(r"import\s*\{([^}]+)\}\s*from\s*[\"']([^\"']+)[\"']")
 
 
-def parse_node_named_imports(source: str) -> list[tuple[str, str, str]]:
-    """(local_name, module_basename, original_name) for every named import,
-    in source order. `module_basename` strips a scoped package's `@scope/`
-    segment the same way `@aws-sdk/client-sqs` becomes `client-sqs`. An
-    aliased import (`{ X as Y }`) resolves `local_name` to `Y` while keeping
-    `original_name` as `X`, so a caller can still match on the real exported
-    symbol regardless of what the importing file calls it locally."""
+def parse_node_named_import_declarations(source: str) -> list[tuple[str, str, str]]:
+    """Return (local name, exact module, original name) for named imports."""
     parsed: list[tuple[str, str, str]] = []
     for names, module in _IMPORT_RE.findall(source):
-        module_name = Path(module).name
         for item in names.split(","):
             original, _as, local = item.strip().partition(" as ")
             original = original.strip()
             if original:
-                parsed.append(((local or original).strip(), module_name, original))
+                parsed.append(((local or original).strip(), module, original))
     return parsed
+
+
+def parse_node_named_imports(source: str) -> list[tuple[str, str, str]]:
+    """Return (local name, module basename, original name) for named imports."""
+    return [
+        (local, Path(module).name, original)
+        for local, module, original in parse_node_named_import_declarations(source)
+    ]

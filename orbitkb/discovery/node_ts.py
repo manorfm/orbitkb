@@ -18,6 +18,7 @@ from orbitkb.discovery.node_http import (
     fastify_receivers,
 )
 from orbitkb.discovery.node_mounts import cross_file_express_mounts
+from orbitkb.discovery.node_nest import find_nest_route_hints
 from orbitkb.discovery.scan_helpers import (
     ENDPOINT_AFTER,
     ENDPOINT_BEFORE,
@@ -52,9 +53,6 @@ _HTTP_METHOD_RE = re.compile(
 _EXPRESS_ROUTE_CHAIN_RE = re.compile(
     r"""\b([A-Za-z_]\w*)\.route\s*\(\s*(['"])([^'"]+)\2\s*\)\s*\.\s*(get|post|put|patch|delete)\s*\("""
 )
-_NEST_ROUTE_RE = re.compile(r"""@(Get|Post|Put|Patch|Delete)\s*\(\s*['"`]?([^'")\`]*)['"`]?\s*\)""")
-_NEST_CONTROLLER_RE = re.compile(r"""@Controller\s*\(\s*['"`]([^'"`]*)['"`]\s*\)""")
-
 _OUTBOUND_RE = re.compile(
     r"\b(axios\.(?:get|post|put|patch|delete)|fetch|got)\s*\(\s*['\"`]?([^'\"`)]*)"
 )
@@ -171,9 +169,11 @@ class NodeTsDetector:
             for method, route, line_no in find_literal_fastify_routes(path, fastify_by_file[path]):
                 hints.endpoints.append(_endpoint_hint(method, route, path, folder, line_no))
 
-        for path, line_no, match in find_matches(folder, EXTENSIONS, _NEST_ROUTE_RE):
-            method, route = match.group(1).upper(), match.group(2) or "/"
-            hints.endpoints.append(_endpoint_hint(method, route, path, folder, line_no))
+        for path in node_files:
+            if path.suffix != ".ts":
+                continue
+            for method, route, line_no in find_nest_route_hints(path):
+                hints.endpoints.append(_endpoint_hint(method, route, path, folder, line_no))
 
         for path, line_no, match in find_matches(folder, EXTENSIONS, _OUTBOUND_RE):
             hints.outbound_calls.append(

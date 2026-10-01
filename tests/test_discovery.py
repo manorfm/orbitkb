@@ -470,6 +470,39 @@ client.route({ method: "DELETE", url: "/fake", handler: readOrder });
     assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
 
 
+def test_node_nest_hints_require_imported_decorators_and_include_controller_prefix(tmp_path: Path):
+    (tmp_path / "orders.controller.ts").write_text('''import { Controller, Get as Read, Post } from "@nestjs/common";
+@Controller("/orders")
+export class OrdersController {
+  @Read(":id")
+  find() { return "ok"; }
+  @Post()
+  create() { return "ok"; }
+}
+''', encoding="utf-8")
+    (tmp_path / "fake.ts").write_text('''@Controller("/fake")
+class FakeController {
+  @Get("/item")
+  find() { return "fake"; }
+}
+''', encoding="utf-8")
+    (tmp_path / "misleading.ts").write_text('''import { Injectable } from "@nestjs/common";
+import { Controller, Get } from "unrelated/common";
+@Controller("/wrong")
+export class WrongController {
+  @Get("/item")
+  find() { return "wrong"; }
+}
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    expected = {("GET", "/orders/:id"), ("POST", "/orders")}
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == expected
+    assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
+
+
 def test_jvm_spring_detector_matches_and_finds_hints():
     """inventory-service is Clean Architecture over Cassandra: StockController
     (conforming) exposes two endpoints; legacy.QuickStockPatchController is a

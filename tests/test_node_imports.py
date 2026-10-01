@@ -1,4 +1,4 @@
-from orbitkb.analysis.node_imports import parse_node_named_imports
+from orbitkb.discovery.node_imports import parse_node_named_imports
 
 
 def test_parses_a_simple_named_import():

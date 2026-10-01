@@ -53,8 +53,8 @@ from orbitkb.analysis.cloud_taxonomy import (
 )
 from orbitkb.analysis.jvm_imports import parse_jvm_imports
 from orbitkb.analysis.models import CloudFact, Evidence
-from orbitkb.analysis.node_imports import parse_node_named_imports
 from orbitkb.discovery.go_imports import parse_go_import_paths
+from orbitkb.discovery.node_imports import parse_node_named_imports
 
 # (provider, service_name, resource_type, sdk, operation lookup table) — what a
 # locally-declared client variable/parameter/field resolves to. Consumed by
