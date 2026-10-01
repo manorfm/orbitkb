@@ -66,28 +66,34 @@ def literal_fastify_route_definition(args: list[Node], source: bytes) -> tuple[t
 def literal_express_chained_route(
     callee: Node, source: bytes, receivers: Collection[str],
 ) -> tuple[str, str, str] | None:
-    """Extract a literal ``app.route(path).method(handler)`` call."""
+    """Extract a literal Express route method, including successive method calls."""
     if callee.type != "member_expression":
         return None
     route_call = callee.child_by_field_name("object")
     method_node = callee.child_by_field_name("property")
-    if route_call is None or route_call.type != "call_expression" or method_node is None:
+    if route_call is None or method_node is None:
         return None
-    route_callee = route_call.child_by_field_name("function")
-    route_arguments = route_call.child_by_field_name("arguments")
-    if route_callee is None or route_arguments is None:
-        return None
-    route_callee_text = _text(route_callee, source)
-    if "." not in route_callee_text:
-        return None
-    receiver, factory_method = route_callee_text.rsplit(".", 1)
-    if factory_method != "route" or receiver not in receivers:
-        return None
-    args = route_arguments.named_children
-    path = _string(args[0], source) if len(args) == 1 else None
-    if path is None:
-        return None
-    return receiver, _text(method_node, source), path
+    while route_call.type == "call_expression":
+        route_callee = route_call.child_by_field_name("function")
+        route_arguments = route_call.child_by_field_name("arguments")
+        if route_callee is None or route_callee.type != "member_expression" or route_arguments is None:
+            return None
+        factory_method_node = route_callee.child_by_field_name("property")
+        receiver_node = route_callee.child_by_field_name("object")
+        if factory_method_node is None or receiver_node is None:
+            return None
+        factory_method = _text(factory_method_node, source)
+        if factory_method == "route":
+            receiver = _text(receiver_node, source)
+            args = route_arguments.named_children
+            path = _string(args[0], source) if len(args) == 1 else None
+            if receiver in receivers and path is not None:
+                return receiver, _text(method_node, source), path
+            return None
+        if factory_method not in _DIRECT_METHODS or not route_arguments.named_children:
+            return None
+        route_call = receiver_node
+    return None
 
 
 def _walk(node: Node):

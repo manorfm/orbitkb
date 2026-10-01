@@ -458,6 +458,28 @@ app.use("/api", orders);
     ]
 
 
+def test_node_route_chain_resolves_multiple_methods_on_a_cross_file_mount(tmp_path: Path):
+    (tmp_path / "orders.routes.js").write_text('''const express = require("express");
+const router = express.Router();
+function readOrder(req, res) { res.sendStatus(200); }
+function createOrder(req, res) { res.sendStatus(201); }
+router.route("/orders").get(readOrder).post(createOrder);
+module.exports = router;
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const orders = require("./orders.routes");
+const app = express();
+app.use("/api", orders);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    expected = {("GET", "/api/orders"), ("POST", "/api/orders")}
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == expected
+    assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
+
+
 def test_node_chained_route_ignores_ambiguous_cross_file_mount(tmp_path: Path):
     (tmp_path / "orders.routes.js").write_text('''const express = require("express");
 const router = express.Router();
@@ -505,15 +527,21 @@ function createOrder(req, res) { res.sendStatus(201); }
 function readOrder(req, res) { res.sendStatus(200); }
 app.route("/orders").post(createOrder);
 app.route("/orders").get(readOrder);
+app.route("/multi").get(readOrder).post(createOrder);
 app.route("/inline").delete((req, res) => res.sendStatus(204));
 app.route("/ghost").get(missingHandler);
+app.route("/invalid").unknown(readOrder).post(createOrder);
+app.route("/empty").get().post(createOrder);
 client.route("/fake").get(readOrder);
 ''', encoding="utf-8")
 
     hints = NodeTsDetector().collect_hints(tmp_path)
     analysis = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
 
-    expected = {("POST", "/orders"), ("GET", "/orders"), ("DELETE", "/inline")}
+    expected = {
+        ("POST", "/orders"), ("GET", "/orders"),
+        ("GET", "/multi"), ("POST", "/multi"), ("DELETE", "/inline"),
+    }
     assert {(hint.method, hint.path) for hint in hints.endpoints} == expected
     assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
 
