@@ -831,6 +831,54 @@ app.get("/replaced", replaced);
     assert [entry for entry in analysis.entrypoints if entry.kind == "http"] == []
 
 
+def test_node_route_ignores_commonjs_property_api_mutations(tmp_path: Path):
+    mutations = {
+        "defined": 'Object.defineProperty(exports, "handler", { value: 123 });',
+        "definedMany": 'Object.defineProperties(module.exports, { handler: { value: 123 } });',
+        "reflected": 'Reflect.set(module.exports, "handler", 123);',
+        "removed": 'Reflect.deleteProperty(exports, "handler");',
+        "reflectedDefinition": 'Reflect.defineProperty(exports, "handler", { value: 123 });',
+    }
+    for name, mutation in mutations.items():
+        (tmp_path / f"{name}.js").write_text(
+            f"function handler(req, res) {{ res.sendStatus(200); }}\nexports.handler = handler;\n{mutation}\n",
+            encoding="utf-8",
+        )
+    imports = "\n".join(f'const {{ handler: {name} }} = require("./{name}");' for name in mutations)
+    routes = "\n".join(f'app.get("/{name}", {name});' for name in mutations)
+    (tmp_path / "server.js").write_text(
+        f'const express = require("express");\n{imports}\nconst app = express();\n{routes}\n', encoding="utf-8",
+    )
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert hints.endpoints == []
+    assert [entry for entry in analysis.entrypoints if entry.kind == "http"] == []
+
+
+def test_node_route_keeps_commonjs_handler_when_property_api_mutates_another_object(tmp_path: Path):
+    (tmp_path / "handlers.js").write_text('''function handler(req, res) { res.sendStatus(200); }
+const other = {};
+Object.defineProperty(other, "handler", { value: 123 });
+Reflect.set(other, "handler", 456);
+exports.handler = handler;
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const { handler } = require("./handlers");
+const app = express();
+app.get("/orders", handler);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert [(hint.method, hint.path) for hint in hints.endpoints] == [("GET", "/orders")]
+    assert [(entry.method, entry.name, entry.symbol) for entry in analysis.entrypoints if entry.kind == "http"] == [
+        ("GET", "/orders", "handlers.handler"),
+    ]
+
+
 def test_node_route_does_not_trust_mutated_commonjs_named_exports(tmp_path: Path):
     (tmp_path / "handlers.js").write_text('''function createOrder(req, res) { res.sendStatus(201); }
 module.exports = { createOrder };

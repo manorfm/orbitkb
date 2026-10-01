@@ -12,6 +12,10 @@ from orbitkb.discovery.node_imports import resolve_local_source
 
 _SOURCE_SUFFIXES = (".js", ".ts")
 _FUNCTION_VALUES = frozenset({"arrow_function", "function_expression"})
+_EXPORT_OBJECT_MUTATORS = frozenset({
+    "Object.assign", "Object.defineProperty", "Object.defineProperties",
+    "Reflect.set", "Reflect.deleteProperty", "Reflect.defineProperty",
+})
 
 
 def _text(node: Node, source: bytes) -> str:
@@ -169,7 +173,7 @@ def _has_indirect_commonjs_mutation(tree: Node, source: bytes) -> bool:
         elif node.type == "call_expression":
             function = node.child_by_field_name("function")
             arguments = node.child_by_field_name("arguments")
-            if function is not None and _text(function, source) == "Object.assign" and arguments is not None:
+            if function is not None and _text(function, source) in _EXPORT_OBJECT_MUTATORS and arguments is not None:
                 args = arguments.named_children
                 if args and _is_exports_object(args[0], source):
                     return True
