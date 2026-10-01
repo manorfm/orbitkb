@@ -320,6 +320,24 @@ def test_markdown_reports_source_proven_http_target_without_model_call(tmp_path:
     assert "no dependency detected" not in dependencies
 
 
+def test_service_index_reads_http_target_from_canonical_snapshot_without_legacy_calls(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    snapshot = project_analysis(ServiceKey("orders-service"), AnalysisResult(static_service_calls=[
+        StaticServiceCall("Orders.fetch", "catalog-service", "http", "GET", "/catalog/{id}",
+                          Evidence("CatalogClient.kt", 8, 8)),
+    ]))
+    snapshots_repo.replace_snapshot(conn, service_id, snapshot)
+
+    export_markdown(conn, tmp_path / "docs")
+
+    page = (tmp_path / "docs/orders-service/index.md").read_text(encoding="utf-8")
+    dependencies = page.split("## Depends on\n", 1)[1].split("\n## APIs", 1)[0]
+    assert "catalog-service" in dependencies
+    assert "http (unresolved)" in dependencies
+    assert "no dependency detected" not in dependencies
+
+
 def test_markdown_does_not_repeat_a_source_target_already_in_indexed_calls(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     service_id = _seed(conn)

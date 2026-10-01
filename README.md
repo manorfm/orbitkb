@@ -305,8 +305,8 @@ from generated `calls`, including when they share a target.
 flow boundary). Markdown shows unknown calls when the source flow is unavailable.
 A declared target is not a confirmed runtime address.
 The service dependency list also includes source-proven HTTP client targets
-when no indexed call represents them, labeled `unresolved` rather than treated
-as a confirmed destination.
+from canonical or legacy static facts when no indexed call represents them,
+labeled `unresolved` rather than treated as a confirmed destination.
 When a service has no canonical snapshot, its page reports that dependency
 analysis is unavailable alongside any known targets.
 If a route in the snapshot has unresolved or bounded flow, the dependency list
