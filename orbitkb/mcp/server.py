@@ -77,12 +77,13 @@ def build_server(db_path: Path | None = None, backend: LLMBackend | None = None)
     ) -> dict:
         """Full picture of one microservice: description, why it calls other services/queues
         (with the business reason, data needed, and target_kind/resource_type when the
-        target is external), its components (classes/controllers/modules, each with a
-        summary), its APIs as one-liners, and what it persists/publishes by name only
+        target is external), unresolved source-proven HTTP targets, its components
+        (classes/controllers/modules, each with a summary), its APIs as one-liners,
+        and what it persists/publishes by name only
         (use describe_persistence/describe_messages for the full field-level schema,
         including engine/provider). Includes freshness (indexed commit vs. the
         repository's current commit, and whether that means this knowledge may be
-        stale). Every list (calls/apis/components/persists/messages) is capped at
+        stale). Every list (calls/source_targets/apis/components/persists/messages) is capped at
         `limit` items (default 50) starting at `offset`, so a service with dozens of
         endpoints can't blow your context budget by default — the `pagination` field
         reports each list's real total and whether it was truncated; raise `offset` by

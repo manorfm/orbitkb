@@ -48,6 +48,7 @@ from orbitkb.domain.navigation import (
     TraversalResult,
 )
 from orbitkb.domain.route_calls import route_declared_http_calls
+from orbitkb.export.dependencies import unresolved_declared_http_targets
 from orbitkb.export.mermaid import (
     generate_entrypoint_sequence,
     generate_topology_diagram,
@@ -318,7 +319,14 @@ def describe_service(
     row, service_error = _resolve_service(conn, service, repository)
     if service_error:
         return service_error
-    calls, calls_page = _paginate(service_calls_repo.list_calls_for_service(conn, row["id"]), limit, offset)
+    indexed_calls = service_calls_repo.list_calls_for_service(conn, row["id"])
+    calls, calls_page = _paginate(indexed_calls, limit, offset)
+    declared_targets = unresolved_declared_http_targets(
+        flows_repo.list_static_service_calls(conn, row["id"]),
+        (call["to_service_name"] for call in indexed_calls),
+        canonical_snapshots_repo.read_snapshot(conn, row["id"]),
+    )
+    source_targets, source_targets_page = _paginate(list(declared_targets), limit, offset)
     apis, apis_page = _paginate(apis_repo.list_apis(conn, row["id"]), limit, offset)
     components, components_page = _paginate(components_repo.list_components(conn, row["id"]), limit, offset)
     persistence, persists_page = _paginate(persistence_repo.list_persistence(conn, row["id"]), limit, offset)
@@ -330,6 +338,10 @@ def describe_service(
         "long_desc": row["long_desc"],
         "stack": row["stack"],
         "calls": [_fmt_call(c) for c in calls],
+        "source_targets": [
+            {"target_service": target, "destination_status": "unresolved"}
+            for target in source_targets
+        ],
         "apis": [{"method": a["method"], "path": a["path"], "summary": a["summary"]} for a in apis],
         "components": [
             {"name": c["name"], "file_path": c["file_path"], "summary": c["summary"]} for c in components
@@ -345,7 +357,8 @@ def describe_service(
         "freshness": compute_freshness(row["updated_at"], row["last_commit"], row["root_path"]),
         "pagination": {
             "limit": limit, "offset": offset,
-            "calls": calls_page, "apis": apis_page, "components": components_page,
+            "calls": calls_page, "source_targets": source_targets_page,
+            "apis": apis_page, "components": components_page,
             "persists": persists_page, "messages": messages_page,
         },
     }
