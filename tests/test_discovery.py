@@ -576,6 +576,30 @@ app.get("/orders", readOrder);
     assert any(edge.source == "handlers.createOrder" and edge.target == "orderService.create" for edge in analysis.edges)
 
 
+def test_node_route_resolves_a_function_exported_after_its_declaration(tmp_path: Path):
+    (tmp_path / "handlers.ts").write_text('''function createOrder(req, res) {
+  return orderService.create(req.body);
+}
+const readOrder = (req, res) => res.sendStatus(200);
+export { createOrder as submitOrder, readOrder };
+''', encoding="utf-8")
+    (tmp_path / "server.ts").write_text('''import express from "express";
+import { submitOrder as addOrder, readOrder } from "./handlers";
+const app = express();
+app.post("/orders", addOrder);
+app.get("/orders", readOrder);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == {("POST", "/orders"), ("GET", "/orders")}
+    assert {(entry.method, entry.name, entry.symbol) for entry in analysis.entrypoints if entry.kind == "http"} == {
+        ("POST", "/orders", "handlers.createOrder"), ("GET", "/orders", "handlers.readOrder"),
+    }
+    assert any(edge.source == "handlers.createOrder" and edge.target == "orderService.create" for edge in analysis.edges)
+
+
 def test_node_route_ignores_imports_without_a_named_local_function_export(tmp_path: Path):
     (tmp_path / "hidden.ts").write_text('''function hidden(req, res) { res.sendStatus(200); }
 ''', encoding="utf-8")
@@ -583,6 +607,16 @@ def test_node_route_ignores_imports_without_a_named_local_function_export(tmp_pa
 ''', encoding="utf-8")
     (tmp_path / "typed.ts").write_text('''export function typeOnly(req, res) { res.sendStatus(200); }
 export function inlineType(req, res) { res.sendStatus(200); }
+''', encoding="utf-8")
+    (tmp_path / "type-export.ts").write_text('''function typeExport(req, res) { res.sendStatus(200); }
+export type { typeExport };
+''', encoding="utf-8")
+    (tmp_path / "value.ts").write_text('''const value = 123;
+export { value };
+''', encoding="utf-8")
+    (tmp_path / "reexport.ts").write_text('''export { remote } from "./remote";
+''', encoding="utf-8")
+    (tmp_path / "remote.ts").write_text('''export function remote(req, res) { res.sendStatus(200); }
 ''', encoding="utf-8")
     (tmp_path / "ambiguous.ts").write_text('''export function duplicate(req, res) { res.sendStatus(200); }
 ''', encoding="utf-8")
@@ -595,6 +629,9 @@ import { externalHandler } from "external-package";
 import type
 { typeOnly } from "./typed";
 import { type inlineType } from "./typed";
+import { typeExport } from "./type-export";
+import { value } from "./value";
+import { remote } from "./reexport";
 import { duplicate } from "./ambiguous";
 const app = express();
 app.get("/hidden", hidden);
@@ -602,6 +639,9 @@ app.get("/default", defaultHandler);
 app.get("/external", externalHandler);
 app.get("/type", typeOnly);
 app.get("/inlineType", inlineType);
+app.get("/typeExport", typeExport);
+app.get("/value", value);
+app.get("/reexport", remote);
 app.get("/ambiguous", duplicate);
 ''', encoding="utf-8")
 

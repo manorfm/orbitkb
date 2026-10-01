@@ -23,29 +23,55 @@ def _parse(path: Path, source: bytes) -> Node:
     return Parser(Language(grammar)).parse(source).root_node
 
 
-def _exported_functions(path: Path) -> frozenset[str]:
+def _declared_functions(declaration: Node, source: bytes) -> frozenset[str]:
+    names: set[str] = set()
+    if declaration.type == "function_declaration":
+        name = declaration.child_by_field_name("name")
+        if name is not None:
+            names.add(_text(name, source))
+    elif declaration.type == "lexical_declaration":
+        for variable in declaration.named_children:
+            if variable.type != "variable_declarator":
+                continue
+            name = variable.child_by_field_name("name")
+            value = variable.child_by_field_name("value")
+            if name is not None and value is not None and value.type in _FUNCTION_VALUES:
+                names.add(_text(name, source))
+    return frozenset(names)
+
+
+def _exported_functions(path: Path) -> dict[str, str]:
     source = path.read_bytes()
     tree = _parse(path, source)
-    names: set[str] = set()
+    local_functions: set[str] = set()
     for statement in tree.named_children:
-        if statement.type != "export_statement" or any(child.type == "default" for child in statement.children):
+        declaration = statement.child_by_field_name("declaration") if statement.type == "export_statement" else statement
+        if declaration is not None:
+            local_functions.update(_declared_functions(declaration, source))
+
+    exports: dict[str, str] = {}
+    for statement in tree.named_children:
+        if statement.type != "export_statement" or any(
+            child.type in {"default", "type"} for child in statement.children
+        ):
             continue
         declaration = statement.child_by_field_name("declaration")
-        if declaration is None:
+        if declaration is not None:
+            exports.update({name: name for name in _declared_functions(declaration, source)})
             continue
-        if declaration.type == "function_declaration":
-            name = declaration.child_by_field_name("name")
-            if name is not None:
-                names.add(_text(name, source))
-        elif declaration.type == "lexical_declaration":
-            for variable in declaration.named_children:
-                if variable.type != "variable_declarator":
-                    continue
-                name = variable.child_by_field_name("name")
-                value = variable.child_by_field_name("value")
-                if name is not None and value is not None and value.type in _FUNCTION_VALUES:
-                    names.add(_text(name, source))
-    return frozenset(names)
+        if statement.child_by_field_name("source") is not None:
+            continue
+        clause = next((child for child in statement.named_children if child.type == "export_clause"), None)
+        if clause is None:
+            continue
+        for specifier in clause.named_children:
+            if specifier.type != "export_specifier" or any(child.type == "type" for child in specifier.children):
+                continue
+            name = specifier.child_by_field_name("name")
+            alias = specifier.child_by_field_name("alias")
+            if name is not None and _text(name, source) in local_functions:
+                exports[_text(alias or name, source)] = _text(name, source)
+    return exports
 
 
 def proven_local_handler_imports(tree: Node, source: bytes, path: Path, root: Path) -> dict[str, str]:
@@ -74,6 +100,7 @@ def proven_local_handler_imports(tree: Node, source: bytes, path: Path, root: Pa
                     continue
                 original = specifier.child_by_field_name("name")
                 alias = specifier.child_by_field_name("alias")
-                if original is not None and _text(original, source) in exports:
-                    symbols[_text(alias or original, source)] = f"{imported.stem}.{_text(original, source)}"
+                local_name = exports.get(_text(original, source)) if original is not None else None
+                if local_name is not None:
+                    symbols[_text(alias or original, source)] = f"{imported.stem}.{local_name}"
     return symbols
