@@ -11,6 +11,7 @@ from orbitkb.db.repositories._util import now
 from orbitkb.domain.canonical import (
     CanonicalFact,
     CanonicalSnapshot,
+    CapabilityKey,
     CloudResourceKey,
     EntrypointKey,
     FactStatus,
@@ -25,7 +26,7 @@ from orbitkb.domain.canonical import (
 _SUBJECT_TYPES = {
     cls.__name__: cls for cls in (
         EntrypointKey, SymbolKey, RoutePatternKey, MessageChannelKey,
-        PersistenceResourceKey, CloudResourceKey,
+        CapabilityKey, PersistenceResourceKey, CloudResourceKey,
     )
 }
 _FORMAT_VERSION = 1

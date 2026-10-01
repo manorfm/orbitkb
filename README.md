@@ -579,6 +579,11 @@ recognizer in the same pass; route joining remains shared across languages.
 Spring Data derived methods and local `@Query` declarations are classified
 through a per-language flow classifier before the shared flow resolver runs.
 Other language frontends can register the same contract for source-proven flows.
+Frontends declare whether they recognize messaging patterns. The canonical
+snapshot keeps that capability, and `describe_messages` reports
+`static_analysis_status` as `supported`, `unsupported`, or `unknown` when no
+capability snapshot exists. An empty contract list only means no recognized
+contracts; it does not prove that the service has no messaging integration.
 The canonical projection converts entrypoints, symbol declarations, injections,
 flow boundary markers, flow edges, service calls,
 configuration keys, security requirements, error contracts, message contracts,

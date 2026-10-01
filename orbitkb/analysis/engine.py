@@ -2970,7 +2970,7 @@ class StaticAnalysisEngine:
             "python": (_PythonCliAnalyzer(), ("*.py",)),
         }
         self._frontends: dict[str, LanguageFrontend] = {
-            stack: AnalyzerFrontend(patterns, analyzer.analyze)
+            stack: AnalyzerFrontend(patterns, analyzer.analyze, frozenset({"messaging"}))
             for stack, (analyzer, patterns) in analyzers.items()
         }
         if frontends:
@@ -3011,6 +3011,9 @@ class StaticAnalysisEngine:
         -- it still touches tree-sitter for go's gRPC linking -- only costs this
         enrichment pass, not the per-file symbols/edges already collected.
         """
+        frontend = self._frontends.get(stack)
+        if frontend is not None:
+            result.capabilities["messaging"] = "messaging" in frontend.supported_capabilities
         if stack in {"node-ts", "node-js"}:
             schema = "\n".join(path.read_text(encoding="utf-8", errors="ignore") for path in files if path.suffix in {".graphql", ".gql"})
             result.contracts.update(_GraphqlContractExtractor().contracts(schema))

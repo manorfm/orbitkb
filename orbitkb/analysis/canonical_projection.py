@@ -7,6 +7,7 @@ from orbitkb.analysis.models import AnalysisResult, Evidence
 from orbitkb.domain.canonical import (
     CanonicalFact,
     CanonicalSnapshot,
+    CapabilityKey,
     CloudResourceKey,
     EntrypointKey,
     FactStatus,
@@ -41,6 +42,16 @@ def _source(evidence: Evidence) -> SourceReference:
 def project_analysis(service: ServiceKey, analysis: AnalysisResult) -> CanonicalSnapshot:
     """Project source-proven facts without altering legacy storage."""
     facts: dict[str, CanonicalFact] = {}
+    for dimension, supported in analysis.capabilities.items():
+        if not dimension or not isinstance(supported, bool):
+            raise ValueError("analysis capability must have a dimension and boolean support")
+        _add_fact(facts, CanonicalFact(
+            id=fact_id(service, "analysis_capability", dimension),
+            kind="analysis_capability", subject=CapabilityKey(service, dimension),
+            attributes={"dimension": dimension},
+            status=FactStatus.CONFIRMED if supported else FactStatus.UNSUPPORTED,
+            origin="analyzer", sources=(),
+        ))
     for entry in analysis.entrypoints:
         key = EntrypointKey(service, entry.kind, entry.method, entry.name, entry.symbol)
         stored_contract = analysis.contracts.get(entry.symbol)

@@ -109,3 +109,4 @@ def test_describe_messages_paginates_messages(tmp_path: Path):
     assert len(result["messages"]) == queries.DEFAULT_LIST_LIMIT
     assert result["total"] == 55
     assert result["truncated"] is True
+    assert result["static_analysis_status"] == "unknown"

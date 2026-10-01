@@ -59,6 +59,12 @@ class MessageChannelKey:
 
 
 @dataclass(frozen=True)
+class CapabilityKey:
+    service: ServiceKey
+    dimension: str
+
+
+@dataclass(frozen=True)
 class PersistenceResourceKey:
     service: ServiceKey
     kind: str
@@ -103,7 +109,7 @@ def _json_value(value):
 class CanonicalFact:
     id: str
     kind: str
-    subject: EntrypointKey | SymbolKey | RoutePatternKey | MessageChannelKey | PersistenceResourceKey | CloudResourceKey
+    subject: EntrypointKey | SymbolKey | RoutePatternKey | MessageChannelKey | CapabilityKey | PersistenceResourceKey | CloudResourceKey
     attributes: dict
     status: FactStatus
     origin: str

@@ -126,7 +126,8 @@ def test_entrypoint_projection_accepts_existing_go_and_kotlin_analysis(tmp_path:
         snapshot = project_analysis(ServiceKey(directory), result)
 
         assert snapshot.facts
-        assert all(fact.sources and fact.subject.service.value == directory for fact in snapshot.facts)
+        assert all(fact.subject.service.value == directory for fact in snapshot.facts)
+        assert all(fact.sources or fact.kind == "analysis_capability" for fact in snapshot.facts)
         if stack == "jvm-spring":
             assert {"entrypoint", "symbol", "injection", "flow_edge"} <= {
                 fact.kind for fact in snapshot.facts

@@ -238,6 +238,7 @@ class SecurityRequirement:
 
 @dataclass
 class AnalysisResult:
+    capabilities: dict[str, bool] = field(default_factory=dict)
     entrypoints: list[EntryPoint] = field(default_factory=list)
     edges: list[FlowEdge] = field(default_factory=list)
     contracts: dict[str, dict] = field(default_factory=dict)
@@ -259,6 +260,10 @@ class AnalysisResult:
     api_headers: list[ApiHeader] = field(default_factory=list)
 
     def extend(self, other: AnalysisResult) -> None:
+        for dimension, supported in other.capabilities.items():
+            if dimension in self.capabilities and self.capabilities[dimension] != supported:
+                raise ValueError(f"conflicting analysis capability: {dimension}")
+            self.capabilities[dimension] = supported
         self.entrypoints.extend(other.entrypoints)
         self.edges.extend(other.edges)
         self.contracts.update(other.contracts)

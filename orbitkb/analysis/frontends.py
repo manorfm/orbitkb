@@ -11,6 +11,7 @@ from orbitkb.analysis.models import AnalysisResult
 
 class LanguageFrontend(Protocol):
     file_patterns: tuple[str, ...]
+    supported_capabilities: frozenset[str]
 
     def analyze_file(self, path: Path, root: Path) -> AnalysisResult: ...
 
@@ -40,6 +41,7 @@ class AnalyzerFrontend:
 
     file_patterns: tuple[str, ...]
     analyze: Callable[[Path, Path], AnalysisResult]
+    supported_capabilities: frozenset[str] = frozenset()
 
     def analyze_file(self, path: Path, root: Path) -> AnalysisResult:
         return self.analyze(path, root)

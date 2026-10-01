@@ -11,11 +11,15 @@ from orbitkb.analysis.models import (
     SecurityRequirement,
 )
 from orbitkb.analysis.resolution import BoundedFlowResolver
+from orbitkb.db.connection import open_db
+from orbitkb.db.repositories import canonical_snapshots, services
 from orbitkb.domain.canonical import ServiceKey
+from orbitkb.mcp.queries import describe_messages
 
 
 class FixtureFrontend:
     file_patterns = ("*.fixture",)
+    supported_capabilities = frozenset()
 
     def analyze_file(self, path: Path, root: Path) -> AnalysisResult:
         route = path.read_text(encoding="utf-8").strip()
@@ -102,3 +106,36 @@ def test_flow_classifier_runs_before_resolution_for_new_language(tmp_path: Path,
 
     assert [(edge.kind, edge.boundary_kind) for edge in analysis.edges] == [("reads", "persistence")]
     assert any(fact.kind == "flow_edge" and fact.attributes["relation"] == "reads" for fact in snapshot.facts)
+
+
+def test_unsupported_messaging_survives_snapshot_and_is_visible_to_readers(tmp_path: Path):
+    (tmp_path / "routes.fixture").write_text("/fixtures\n", encoding="utf-8")
+    analysis = StaticAnalysisEngine(frontends={"fixture": FixtureFrontend()}).analyze(tmp_path, "fixture")
+    snapshot = project_analysis(ServiceKey("fixture-service"), analysis)
+    capability = next(fact for fact in snapshot.facts if fact.kind == "analysis_capability")
+    assert capability.attributes["dimension"] == "messaging"
+    assert capability.status.value == "unsupported"
+
+    conn = open_db(tmp_path / "test.db")
+    service_id = services.ensure_service(conn, "fixture-service", str(tmp_path), "fixture")
+    canonical_snapshots.replace_snapshot(conn, service_id, snapshot)
+
+    result = describe_messages(conn, "fixture-service")
+    assert result["static_analysis_status"] == "unsupported"
+    assert result["static_contracts"] == []
+    assert result["messages"] == []
+
+
+def test_existing_frontend_declares_messaging_analysis_support(tmp_path: Path):
+    (tmp_path / "main.py").write_text("def main():\n    pass\n", encoding="utf-8")
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "python")
+    snapshot = project_analysis(ServiceKey("python-service"), analysis)
+
+    capability = next(fact for fact in snapshot.facts if fact.kind == "analysis_capability")
+    assert capability.attributes["dimension"] == "messaging"
+    assert capability.status.value == "confirmed"
+
+    conn = open_db(tmp_path / "test.db")
+    service_id = services.ensure_service(conn, "python-service", str(tmp_path), "python")
+    canonical_snapshots.replace_snapshot(conn, service_id, snapshot)
+    assert describe_messages(conn, "python-service")["static_analysis_status"] == "supported"
