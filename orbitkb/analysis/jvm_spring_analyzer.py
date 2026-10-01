@@ -41,6 +41,7 @@ from orbitkb.analysis.jvm_scanner import (
 from orbitkb.analysis.jvm_security_analyzer import method_security_requirement
 from orbitkb.analysis.jvm_spring_syntax import (
     SPRING_ROUTE_ANNOTATION_TO_METHOD,
+    kotlin_supertypes,
     spring_route_prefix,
 )
 from orbitkb.analysis.models import (
@@ -381,7 +382,7 @@ class _KotlinSpringAnalyzer:
         local_classes = frozenset(class_match.name for class_match in classes) - function_names
         for class_match in classes:
             class_name = class_match.name
-            implements = engine._kotlin_supertypes(class_match.header)
+            implements = kotlin_supertypes(class_match.header)
             annotations = class_match.annotations
             configuration_prefix = engine._spring_configuration_properties_prefix(annotations)
             route_prefix = spring_route_prefix(annotations)

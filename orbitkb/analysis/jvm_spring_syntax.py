@@ -19,6 +19,24 @@ def spring_route_prefix(annotations: str) -> str | None:
     return match.group(1) if match else None
 
 
+def kotlin_supertypes(class_text: str) -> tuple[str, ...]:
+    """Read the supertype list after the class header's constructor."""
+    constructor_depth = 0
+    for index, char in enumerate(class_text):
+        if char == "(":
+            constructor_depth += 1
+        elif char == ")":
+            constructor_depth -= 1
+        elif char == ":" and constructor_depth == 0:
+            supertypes = class_text[index + 1 :]
+            return tuple(
+                match.group(1)
+                for item in supertypes.split(",")
+                if (match := re.match(r"\s*([\w.]+)", item))
+            )
+    return ()
+
+
 def spring_placeholder_literal(group_name: str) -> str:
     """One whole-string `${key}` or `${key:default}` placeholder.
 
