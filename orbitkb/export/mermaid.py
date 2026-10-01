@@ -144,14 +144,12 @@ def generate_topology_diagram(
             lines.append(f'  {node_id}(("{_mermaid_label(name)}"))')
         return external_ids[name]
 
-    rendered_targets: set[tuple[int, str]] = set()
     for edge in service_calls_repo.list_internal_edges(conn):
         from_id = service_ids.get(edge["from_id"])
         to_id = service_ids.get(edge["to_id"])
         if from_id is None or to_id is None:
             continue
         lines.append(f"  {from_id} -->|{_mermaid_label(edge['call_kind'])}| {to_id}")
-        rendered_targets.add((edge["from_id"], edge["to_name"]))
 
     for edge in service_calls_repo.list_external_edges(conn):
         from_id = service_ids.get(edge["from_id"])
@@ -160,7 +158,6 @@ def generate_topology_diagram(
         target_id = external_node(edge["to_service_name"])
         label = edge["resource_type"] or "external"
         lines.append(f"  {from_id} -.->|{_mermaid_label(label)}| {target_id}")
-        rendered_targets.add((edge["from_id"], edge["to_service_name"]))
 
     for edge in service_calls_repo.list_unresolved_edges(conn):
         from_id = service_ids.get(edge["from_id"])
@@ -168,7 +165,6 @@ def generate_topology_diagram(
             continue
         target_id = external_node(edge["to_service_name"])
         lines.append(f"  {from_id} -.->|{_mermaid_label(edge['call_kind'])} (unresolved)| {target_id}")
-        rendered_targets.add((edge["from_id"], edge["to_service_name"]))
 
     snapshots = {}
     for svc in services:
@@ -179,12 +175,11 @@ def generate_topology_diagram(
         snapshots[svc["id"]] = snapshot
         for target in unresolved_declared_http_targets(
             flows_repo.list_static_service_calls(conn, svc["id"]),
-            (name for source, name in rendered_targets if source == svc["id"]),
+            service_calls_repo.list_calls_for_service(conn, svc["id"]),
             snapshot,
         ):
             target_id = external_node(f"{target} (declared target)")
             lines.append(f"  {from_id} -.->|http (unresolved)| {target_id}")
-            rendered_targets.add((svc["id"], target))
 
     for fact in flows_repo.list_all_static_cloud_facts(conn):
         from_id = service_ids.get(fact["from_id"])

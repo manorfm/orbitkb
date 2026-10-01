@@ -7,11 +7,13 @@ from orbitkb.domain.canonical import CanonicalSnapshot, FactStatus
 
 
 def unresolved_declared_http_targets(
-    static_calls: Iterable[Mapping], represented_targets: Iterable[str],
+    static_calls: Iterable[Mapping], indexed_calls: Iterable[Mapping],
     snapshot: CanonicalSnapshot | None = None,
 ) -> tuple[str, ...]:
     """Keep a declared target once, without claiming its runtime destination is known."""
-    represented = set(represented_targets)
+    represented = {
+        call["to_service_name"] for call in indexed_calls if call["call_kind"] == "http"
+    }
     canonical_calls = (
         fact.attributes for fact in (snapshot.facts if snapshot is not None else ())
         if fact.kind == "service_call" and fact.status is FactStatus.CONFIRMED

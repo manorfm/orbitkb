@@ -9,8 +9,10 @@ from orbitkb.analysis.models import (
     StaticServiceCall,
 )
 from orbitkb.db.connection import open_db
+from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import canonical_snapshots as snapshots_repo
 from orbitkb.db.repositories import components as components_repo
+from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.domain.canonical import ServiceKey
 from orbitkb.mcp import queries
@@ -95,3 +97,29 @@ def test_describe_service_reports_source_target_coverage(tmp_path: Path):
     assessed = queries.describe_service(conn, "orders-service")
     assert assessed["source_targets"] == []
     assert assessed["source_targets_status"] == "assessed"
+
+
+def test_describe_service_deduplicates_http_targets_only_against_http_calls(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    api_id = apis_repo.upsert_api(conn, service_id, "GET", "/orders", "s", "d", [], [])
+    snapshots_repo.replace_snapshot(conn, service_id, project_analysis(
+        ServiceKey("orders-service"), AnalysisResult(static_service_calls=[
+            StaticServiceCall("Orders.fetch", "catalog-service", "http", "GET", "/catalog",
+                              Evidence("CatalogClient.kt", 8, 8)),
+        ]),
+    ))
+    service_calls_repo.replace_calls_for_api(conn, service_id, api_id, [
+        {"to_service_name": "catalog-service", "call_kind": "queue_publish"},
+    ], [])
+
+    with_queue = queries.describe_service(conn, "orders-service")
+    assert with_queue["source_targets"] == [
+        {"target_service": "catalog-service", "destination_status": "unresolved"},
+    ]
+
+    service_calls_repo.replace_calls_for_api(conn, service_id, api_id, [
+        {"to_service_name": "catalog-service", "call_kind": "http"},
+    ], [])
+    with_http = queries.describe_service(conn, "orders-service")
+    assert with_http["source_targets"] == []

@@ -307,6 +307,8 @@ A declared target is not a confirmed runtime address.
 The service dependency list also includes source-proven HTTP client targets
 from canonical or legacy static facts when no indexed call represents them,
 labeled `unresolved` rather than treated as a confirmed destination.
+An indexed call represents an HTTP target only when its call kind is `http`;
+a queue or gRPC call to the same name does not hide the declared HTTP target.
 `describe_service` exposes those targets separately in paginated `source_targets`;
 its generated `calls` retain their existing meaning.
 `source_targets_status` is `unassessed` when no canonical HTTP route is available,

@@ -78,6 +78,28 @@ def test_export_markdown_writes_service_index_and_api_detail(tmp_path: Path):
     assert "authorization" in api_text
 
 
+def test_service_exports_keep_http_target_when_indexed_call_uses_other_protocol(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    api_id = apis_repo.upsert_api(conn, service_id, "GET", "/orders", "s", "d", [], [])
+    snapshots_repo.replace_snapshot(conn, service_id, project_analysis(
+        ServiceKey("orders-service"), AnalysisResult(static_service_calls=[
+            StaticServiceCall("Orders.fetch", "catalog-service", "http", "GET", "/catalog",
+                              Evidence("CatalogClient.kt", 8, 8)),
+        ]),
+    ))
+    service_calls_repo.replace_calls_for_api(conn, service_id, api_id, [
+        {"to_service_name": "catalog-service", "call_kind": "queue_publish"},
+    ], [])
+
+    export_markdown(conn, tmp_path / "docs")
+    markdown = (tmp_path / "docs/orders-service/index.md").read_text(encoding="utf-8")
+    diagram = generate_topology_diagram(conn)
+
+    assert "**catalog-service** (http (unresolved), declared target)" in markdown
+    assert 'ext_catalog_service_declared_target(("catalog-service (declared target)"))' in diagram
+
+
 def test_export_markdown_keeps_distinct_routes_with_the_same_filename_slug(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     service_id = services_repo.ensure_service(conn, "catalog-service", "/tmp/catalog", "python")

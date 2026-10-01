@@ -138,7 +138,7 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
         navigator = KnowledgeNavigator(snapshot) if snapshot is not None else None
         declared_targets = unresolved_declared_http_targets(
             flows_repo.list_static_service_calls(conn, svc["id"]),
-            (call["to_service_name"] for call in calls), snapshot,
+            calls, snapshot,
         )
         messages = messages_repo.list_messages(conn, svc["id"])
         security_rules = flows_repo.list_static_security_requirements_in_declaration_order(conn, svc["id"])

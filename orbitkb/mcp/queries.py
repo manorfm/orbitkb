@@ -327,7 +327,7 @@ def describe_service(
     snapshot = canonical_snapshots_repo.read_snapshot(conn, row["id"])
     declared_targets = unresolved_declared_http_targets(
         flows_repo.list_static_service_calls(conn, row["id"]),
-        (call["to_service_name"] for call in indexed_calls),
+        indexed_calls,
         snapshot,
     )
     source_targets, source_targets_page = _paginate(list(declared_targets), limit, offset)
