@@ -77,7 +77,8 @@ def build_server(db_path: Path | None = None, backend: LLMBackend | None = None)
     ) -> dict:
         """Full picture of one microservice: description, why it calls other services/queues
         (with the business reason, data needed, and target_kind/resource_type when the
-        target is external), unresolved source-proven HTTP targets, its components
+        target is external), unresolved source-proven HTTP targets and
+        source_targets_status (unassessed/limited/assessed), its components
         (classes/controllers/modules, each with a summary), its APIs as one-liners,
         and what it persists/publishes by name only
         (use describe_persistence/describe_messages for the full field-level schema,

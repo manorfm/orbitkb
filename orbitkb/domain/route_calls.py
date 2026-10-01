@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from enum import Enum
 
-from orbitkb.domain.canonical import FactStatus
+from orbitkb.domain.canonical import EntrypointKey, FactStatus
 from orbitkb.domain.navigation import (
     KnowledgeNavigator,
     TraversalPolicy,
@@ -28,6 +28,24 @@ class RouteCallStatus(str, Enum):
 class RouteHttpCalls:
     calls: tuple[DeclaredHttpCall, ...]
     status: RouteCallStatus
+
+
+def service_http_call_status(navigator: KnowledgeNavigator | None) -> RouteCallStatus:
+    """Report whether every HTTP route's outbound flow was traversed without limits."""
+    if navigator is None:
+        return RouteCallStatus.UNASSESSED
+    routes = {
+        (fact.subject.method, fact.subject.name)
+        for fact in navigator.snapshot.facts
+        if fact.kind == "entrypoint" and isinstance(fact.subject, EntrypointKey)
+        and fact.subject.transport == "http"
+    }
+    if not routes:
+        return RouteCallStatus.UNASSESSED
+    if any(route_declared_http_calls(navigator, method, path).status is RouteCallStatus.LIMITED
+           for method, path in routes):
+        return RouteCallStatus.LIMITED
+    return RouteCallStatus.ASSESSED
 
 
 def route_declared_http_calls(

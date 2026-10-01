@@ -47,7 +47,10 @@ from orbitkb.domain.navigation import (
     TraversalPolicy,
     TraversalResult,
 )
-from orbitkb.domain.route_calls import route_declared_http_calls
+from orbitkb.domain.route_calls import (
+    route_declared_http_calls,
+    service_http_call_status,
+)
 from orbitkb.export.dependencies import unresolved_declared_http_targets
 from orbitkb.export.mermaid import (
     generate_entrypoint_sequence,
@@ -321,10 +324,11 @@ def describe_service(
         return service_error
     indexed_calls = service_calls_repo.list_calls_for_service(conn, row["id"])
     calls, calls_page = _paginate(indexed_calls, limit, offset)
+    snapshot = canonical_snapshots_repo.read_snapshot(conn, row["id"])
     declared_targets = unresolved_declared_http_targets(
         flows_repo.list_static_service_calls(conn, row["id"]),
         (call["to_service_name"] for call in indexed_calls),
-        canonical_snapshots_repo.read_snapshot(conn, row["id"]),
+        snapshot,
     )
     source_targets, source_targets_page = _paginate(list(declared_targets), limit, offset)
     apis, apis_page = _paginate(apis_repo.list_apis(conn, row["id"]), limit, offset)
@@ -342,6 +346,9 @@ def describe_service(
             {"target_service": target, "destination_status": "unresolved"}
             for target in source_targets
         ],
+        "source_targets_status": service_http_call_status(
+            KnowledgeNavigator(snapshot) if snapshot is not None else None,
+        ).value,
         "apis": [{"method": a["method"], "path": a["path"], "summary": a["summary"]} for a in apis],
         "components": [
             {"name": c["name"], "file_path": c["file_path"], "summary": c["summary"]} for c in components

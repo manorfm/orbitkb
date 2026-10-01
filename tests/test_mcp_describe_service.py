@@ -1,7 +1,13 @@
 from pathlib import Path
 
 from orbitkb.analysis.canonical_projection import project_analysis
-from orbitkb.analysis.models import AnalysisResult, Evidence, StaticServiceCall
+from orbitkb.analysis.models import (
+    AnalysisResult,
+    EntryPoint,
+    Evidence,
+    FlowEdge,
+    StaticServiceCall,
+)
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import canonical_snapshots as snapshots_repo
 from orbitkb.db.repositories import components as components_repo
@@ -62,3 +68,30 @@ def test_describe_service_paginates_source_targets_independently(tmp_path: Path)
     assert [item["target_service"] for item in second["source_targets"]] == ["pricing-service"]
     assert first["pagination"]["source_targets"] == {"total": 2, "truncated": True}
     assert second["pagination"]["source_targets"] == {"total": 2, "truncated": False}
+
+
+def test_describe_service_reports_source_target_coverage(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    source = Evidence("OrdersController.kt", 1, 1)
+    entrypoint = EntryPoint("http", "GET", "/orders", "OrdersController.list", source)
+    service = ServiceKey("orders-service")
+
+    absent = queries.describe_service(conn, "orders-service")
+    assert absent["source_targets"] == []
+    assert absent["source_targets_status"] == "unassessed"
+
+    snapshots_repo.replace_snapshot(conn, service_id, project_analysis(service, AnalysisResult(
+        entrypoints=[entrypoint],
+        edges=[FlowEdge("OrdersController.list", "dynamicCall", "invokes", source)],
+    )))
+    limited = queries.describe_service(conn, "orders-service")
+    assert limited["source_targets"] == []
+    assert limited["source_targets_status"] == "limited"
+
+    snapshots_repo.replace_snapshot(conn, service_id, project_analysis(service, AnalysisResult(
+        entrypoints=[entrypoint],
+    )))
+    assessed = queries.describe_service(conn, "orders-service")
+    assert assessed["source_targets"] == []
+    assert assessed["source_targets_status"] == "assessed"

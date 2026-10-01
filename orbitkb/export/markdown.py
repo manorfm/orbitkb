@@ -13,12 +13,12 @@ from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
-from orbitkb.domain.canonical import EntrypointKey
 from orbitkb.domain.navigation import KnowledgeNavigator
 from orbitkb.domain.route_calls import (
     DeclaredHttpCall,
     RouteCallStatus,
     route_declared_http_calls,
+    service_http_call_status,
 )
 from orbitkb.export.dependencies import unresolved_declared_http_targets
 from orbitkb.export.messaging import (
@@ -99,14 +99,7 @@ def _fmt_messages(messages: list[sqlite3.Row]) -> list[str]:
 def _dependency_coverage_note(navigator: KnowledgeNavigator | None) -> str | None:
     if navigator is None:
         return "- (dependency analysis unavailable)"
-    routes = {
-        (fact.subject.method, fact.subject.name)
-        for fact in navigator.snapshot.facts
-        if fact.kind == "entrypoint" and isinstance(fact.subject, EntrypointKey)
-        and fact.subject.transport == "http"
-    }
-    if any(route_declared_http_calls(navigator, method, path).status is RouteCallStatus.LIMITED
-           for method, path in routes):
+    if service_http_call_status(navigator) is RouteCallStatus.LIMITED:
         return "- (static flow limited; other dependencies may exist)"
     return None
 
