@@ -9,6 +9,8 @@ import tree_sitter_javascript
 import tree_sitter_typescript
 from tree_sitter import Language, Node, Parser
 
+from orbitkb.discovery.node_local_handlers import proven_local_handler_imports
+
 _HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
 _DIRECT_METHODS = frozenset(method.lower() for method in _HTTP_METHODS)
 
@@ -133,9 +135,9 @@ def _local_handler(handler: Node, handlers: frozenset[str], source: bytes) -> bo
 
 def find_literal_node_routes(
     path: Path, direct_receivers: frozenset[str], fastify_receivers: frozenset[str],
-    chained_receivers: frozenset[str],
+    chained_receivers: frozenset[str], root: Path,
 ) -> list[tuple[str, str, str, int]]:
-    """Find direct, chained and Fastify routes with local handlers."""
+    """Find direct, chained and Fastify routes with proven handlers."""
     if not direct_receivers and not fastify_receivers and not chained_receivers:
         return []
     source = path.read_bytes()
@@ -144,7 +146,7 @@ def find_literal_node_routes(
         else tree_sitter_javascript.language()
     )
     tree = Parser(Language(grammar)).parse(source).root_node
-    handlers = _local_handlers(tree, source)
+    handlers = _local_handlers(tree, source) | proven_local_handler_imports(tree, source, path, root).keys()
     routes: list[tuple[str, str, str, int]] = []
     for node in _walk(tree):
         if node.type != "call_expression":

@@ -553,6 +553,107 @@ app.post("/orders", createOrder);
     assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
 
 
+def test_node_route_resolves_an_exported_local_imported_handler(tmp_path: Path):
+    (tmp_path / "handlers.ts").write_text('''export function createOrder(req, res) {
+  return orderService.create(req.body);
+}
+export const readOrder = (req, res) => res.sendStatus(200);
+''', encoding="utf-8")
+    (tmp_path / "server.ts").write_text('''import express from "express";
+import { createOrder as addOrder, readOrder } from "./handlers";
+const app = express();
+app.post("/orders", addOrder);
+app.get("/orders", readOrder);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == {("POST", "/orders"), ("GET", "/orders")}
+    assert {(entry.method, entry.name, entry.symbol) for entry in analysis.entrypoints if entry.kind == "http"} == {
+        ("POST", "/orders", "handlers.createOrder"), ("GET", "/orders", "handlers.readOrder"),
+    }
+    assert any(edge.source == "handlers.createOrder" and edge.target == "orderService.create" for edge in analysis.edges)
+
+
+def test_node_route_ignores_imports_without_a_named_local_function_export(tmp_path: Path):
+    (tmp_path / "hidden.ts").write_text('''function hidden(req, res) { res.sendStatus(200); }
+''', encoding="utf-8")
+    (tmp_path / "defaults.ts").write_text('''export default function defaultHandler(req, res) { res.sendStatus(200); }
+''', encoding="utf-8")
+    (tmp_path / "typed.ts").write_text('''export function typeOnly(req, res) { res.sendStatus(200); }
+export function inlineType(req, res) { res.sendStatus(200); }
+''', encoding="utf-8")
+    (tmp_path / "ambiguous.ts").write_text('''export function duplicate(req, res) { res.sendStatus(200); }
+''', encoding="utf-8")
+    (tmp_path / "ambiguous.js").write_text('''export function duplicate(req, res) { res.sendStatus(200); }
+''', encoding="utf-8")
+    (tmp_path / "server.ts").write_text('''import express from "express";
+import { hidden } from "./hidden";
+import { defaultHandler } from "./defaults";
+import { externalHandler } from "external-package";
+import type
+{ typeOnly } from "./typed";
+import { type inlineType } from "./typed";
+import { duplicate } from "./ambiguous";
+const app = express();
+app.get("/hidden", hidden);
+app.get("/default", defaultHandler);
+app.get("/external", externalHandler);
+app.get("/type", typeOnly);
+app.get("/inlineType", inlineType);
+app.get("/ambiguous", duplicate);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert hints.endpoints == []
+    assert [entry for entry in analysis.entrypoints if entry.kind == "http"] == []
+
+
+def test_node_route_does_not_follow_an_import_outside_the_project(tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (tmp_path / "outside.ts").write_text('''export function leaked(req, res) { res.sendStatus(200); }
+''', encoding="utf-8")
+    (project / "server.ts").write_text('''import express from "express";
+import { leaked } from "../outside";
+const app = express();
+app.get("/leaked", leaked);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(project)
+    analysis = StaticAnalysisEngine().analyze(project, "node-ts")
+
+    assert hints.endpoints == []
+    assert [entry for entry in analysis.entrypoints if entry.kind == "http"] == []
+
+
+def test_node_route_resolves_a_local_imported_handler_on_a_mounted_router(tmp_path: Path):
+    (tmp_path / "handlers.ts").write_text('''export function createOrder(req, res) { res.sendStatus(201); }
+''', encoding="utf-8")
+    (tmp_path / "orders.routes.ts").write_text('''import { createOrder } from "./handlers";
+const express = require("express");
+const router = express.Router();
+router.route("/orders").post(createOrder);
+module.exports = router;
+''', encoding="utf-8")
+    (tmp_path / "server.ts").write_text('''const express = require("express");
+const orders = require("./orders.routes");
+const app = express();
+app.use("/api", orders);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert [(hint.method, hint.path) for hint in hints.endpoints] == [("POST", "/api/orders")]
+    assert [(entry.method, entry.name, entry.symbol) for entry in analysis.entrypoints if entry.kind == "http"] == [
+        ("POST", "/api/orders", "handlers.createOrder"),
+    ]
+
+
 def test_node_chained_route_ignores_ambiguous_cross_file_mount(tmp_path: Path):
     (tmp_path / "orders.routes.js").write_text('''const express = require("express");
 const router = express.Router();

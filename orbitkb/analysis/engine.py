@@ -108,6 +108,7 @@ from orbitkb.discovery.node_http_routes import (
     literal_fastify_route_definition as _fastify_literal_route_definition,
 )
 from orbitkb.discovery.node_imports import parse_node_named_imports
+from orbitkb.discovery.node_local_handlers import proven_local_handler_imports
 from orbitkb.discovery.node_nest import (
     nest_decorator_path as _nest_decorator_path,
 )
@@ -124,7 +125,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "50"
+STATIC_ANALYSIS_INPUT_VERSION = "51"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -900,6 +901,7 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
         source_text = source.decode("utf-8", errors="ignore")
         tree = self.parse(source)
         result = AnalysisResult()
+        imported_handler_symbols = proven_local_handler_imports(tree, source, path, root)
         imports = _node_named_imports(source_text)
         launchdarkly_clients = _launchdarkly_client_variables(source_text, imports)
         graphql_error_constructors = _graphql_error_constructors(imports)
@@ -995,6 +997,9 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
             if path_value is not None:
                 path_value = _join_route(route_prefixes[receiver], path_value)
             handler = functions_by_name.get(_text(handler_node, source)) if handler_node is not None else None
+            imported_handler_symbol = (
+                imported_handler_symbols.get(_text(handler_node, source)) if handler_node is not None else None
+            )
             if handler is None and handler_node is not None and handler_node.type in {"arrow_function", "function_expression"}:
                 body = handler_node.child_by_field_name("body")
                 if body is not None and path_value is not None:
@@ -1007,11 +1012,13 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
                         result, handler, path, root, source, imports, mongoose_models, prisma_clients,
                         client_declarations, command_imports, launchdarkly_clients,
                     )
-            if path_value is None or handler is None:
+            handler_symbol = handler.symbol if handler is not None else imported_handler_symbol
+            if path_value is None or handler_symbol is None:
                 continue
             for http_method in http_methods:
                 entrypoint = EntryPoint(
-                    "http", http_method, path_value, handler.symbol, _evidence(path, root, node),
+                    "http", http_method, path_value, handler_symbol,
+                    _evidence(path, root, node),
                     contract=entrypoint_contract,
                 )
                 if receiver in pending_routers:
