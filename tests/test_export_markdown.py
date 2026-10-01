@@ -2,6 +2,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.engine import StaticAnalysisEngine
 from orbitkb.analysis.models import (
     AnalysisResult,
@@ -16,11 +17,13 @@ from orbitkb.analysis.models import (
 )
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import apis as apis_repo
+from orbitkb.db.repositories import canonical_snapshots as snapshots_repo
 from orbitkb.db.repositories import flows as flows_repo
 from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
+from orbitkb.domain.canonical import ServiceKey
 from orbitkb.export.markdown import export_markdown
 from orbitkb.export.mermaid import generate_topology_diagram
 
@@ -240,6 +243,32 @@ def test_export_markdown_marks_messaging_unassessed_without_snapshot(tmp_path: P
     assert "Static analysis:** unknown" in messaging
     assert messaging.count("- (not assessed)") == 2
     assert "none detected" not in messaging
+
+
+def test_service_index_does_not_claim_no_dependencies_when_flow_is_unresolved(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "menu-service", "/tmp/menu", "jvm-spring")
+    source = Evidence("MenuController.kt", 1, 1)
+    entrypoint = EntryPoint("http", "GET", "/menus", "MenuController.list", source)
+    service = ServiceKey("menu-service")
+    snapshots_repo.replace_snapshot(conn, service_id, project_analysis(service, AnalysisResult(
+        entrypoints=[entrypoint],
+        edges=[FlowEdge("MenuController.list", "dynamicCall", "invokes", source)],
+    )))
+
+    export_markdown(conn, tmp_path / "docs")
+    page = (tmp_path / "docs/menu-service/index.md").read_text(encoding="utf-8")
+    dependencies = page.split("## Depends on\n", 1)[1].split("\n## APIs", 1)[0]
+
+    assert "static flow limited; other dependencies may exist" in dependencies
+    assert "no dependency detected" not in dependencies
+
+    snapshots_repo.replace_snapshot(conn, service_id, project_analysis(service, AnalysisResult(
+        entrypoints=[entrypoint],
+    )))
+    export_markdown(conn, tmp_path / "docs")
+    complete = (tmp_path / "docs/menu-service/index.md").read_text(encoding="utf-8")
+    assert "no dependency detected" in complete.split("## Depends on\n", 1)[1].split("\n## APIs", 1)[0]
 
 
 def test_markdown_reports_source_proven_http_target_without_model_call(tmp_path: Path):

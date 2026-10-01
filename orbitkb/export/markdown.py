@@ -13,6 +13,7 @@ from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
+from orbitkb.domain.canonical import EntrypointKey
 from orbitkb.domain.navigation import KnowledgeNavigator
 from orbitkb.domain.route_calls import (
     DeclaredHttpCall,
@@ -95,6 +96,21 @@ def _fmt_messages(messages: list[sqlite3.Row]) -> list[str]:
     return [f"- **{m['channel']}** ({m['direction']}): {m['description'] or ''}" for m in messages]
 
 
+def _empty_dependencies(navigator: KnowledgeNavigator | None) -> str:
+    if navigator is None:
+        return "- (dependency analysis unavailable)"
+    routes = {
+        (fact.subject.method, fact.subject.name)
+        for fact in navigator.snapshot.facts
+        if fact.kind == "entrypoint" and isinstance(fact.subject, EntrypointKey)
+        and fact.subject.transport == "http"
+    }
+    if any(route_declared_http_calls(navigator, method, path).status is RouteCallStatus.LIMITED
+           for method, path in routes):
+        return "- (static flow limited; other dependencies may exist)"
+    return "- (no dependency detected)"
+
+
 def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str | None = None) -> list[Path]:
     written: list[Path] = []
     services = services_repo.list_services(conn)
@@ -134,9 +150,6 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
         messages = messages_repo.list_messages(conn, svc["id"])
         security_rules = flows_repo.list_static_security_requirements_in_declaration_order(conn, svc["id"])
         cloud_facts = flows_repo.list_static_cloud_facts(conn, svc["id"])
-        empty_dependencies = (
-            "- (dependency analysis unavailable)" if snapshot is None else "- (no dependency detected)"
-        )
 
         lines = [
             f"# {svc['name']}",
@@ -150,7 +163,7 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
             "## Depends on",
             *_fmt_calls(calls),
             *(f"- **{target}** (http (unresolved), declared target)" for target in declared_targets),
-            *([empty_dependencies] if not calls and not declared_targets else []),
+            *([_empty_dependencies(navigator)] if not calls and not declared_targets else []),
             "",
             "## APIs",
         ]
