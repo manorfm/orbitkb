@@ -660,8 +660,9 @@ purpose and exchanged data. A Feign destination alone leaves
 `integration_purpose` ambiguous, so it cannot authorize zero-call generation.
 For a route with no outbound calls, the integration dimensions become sufficient
 only when the selected evidence covers flow and service calls, the entrypoint is
-confirmed, and navigation has no limits or boundaries. A partial evidence
-profile cannot prove an empty call list.
+confirmed, messaging analysis is explicitly supported, and navigation has no
+limits or boundaries. A partial evidence profile or missing capability fact
+cannot prove an empty integration list.
 The route capsule also carries frontend capability facts. If messaging analysis
 is unsupported, an empty route flow leaves integrations `unsupported`; changing
 that capability invalidates the prior route assessment during reindexing.

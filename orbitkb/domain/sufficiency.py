@@ -96,10 +96,15 @@ class DeterministicSufficiencyEvaluator:
             fact for fact in capsule.facts
             if fact.kind == "flow_edge" and fact.value.get("relation") in {"publishes", "consumes"}
         ]
-        unsupported_messaging = [
+        messaging_capabilities = [
             fact for fact in capsule.facts
             if fact.kind == "analysis_capability" and fact.value.get("dimension") == "messaging"
-            and fact.status is FactStatus.UNSUPPORTED
+        ]
+        messaging_supported = any(
+            fact.status is FactStatus.CONFIRMED for fact in messaging_capabilities
+        )
+        unsupported_messaging = [
+            fact for fact in messaging_capabilities if fact.status is FactStatus.UNSUPPORTED
         ]
         messaging_unassessed = bool(unsupported_messaging) and not messaging_edges
         integration_evidence = tuple(fact.id for fact in (
@@ -124,7 +129,7 @@ class DeterministicSufficiencyEvaluator:
             and len(entrypoints) == len(capsule.entrypoints)
             and all(fact.status == FactStatus.CONFIRMED for fact in entrypoints)
             and {"entrypoint", "flow_edge", "service_call"}.issubset(capsule.selected_kinds or ())
-            and not calls and not messaging_edges and not messaging_unassessed
+            and not calls and not messaging_edges and messaging_supported
             and not capsule.truncated and not capsule.boundaries
         )
         authorization_limited = (
@@ -182,6 +187,7 @@ class DeterministicSufficiencyEvaluator:
                 else "messaging analysis is unsupported by this frontend" if messaging_unassessed
                 else "message operation lacks a proven destination" if messaging_edges
                 else "route-reachable calls have source evidence" if calls and not capsule.truncated
+                else "messaging analysis capability is unknown" if not messaging_supported
                 else "limited or absent route call evidence",
             ),
             DimensionAssessment(
@@ -193,6 +199,7 @@ class DeterministicSufficiencyEvaluator:
                 "messaging analysis is unsupported by this frontend" if messaging_unassessed
                 else "static call targets do not establish purpose or exchanged data" if calls
                 else "message operation purpose is not established" if messaging_edges
+                else "messaging analysis capability is unknown" if not messaging_supported
                 else "limited flow may omit calls" if not no_outbound_proven
                 else "no route-reachable call requires a purpose",
             ),

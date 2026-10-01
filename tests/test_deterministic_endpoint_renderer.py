@@ -7,9 +7,6 @@ import jsonschema
 from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.engine import StaticAnalysisEngine
 from orbitkb.domain.canonical import ServiceKey
-from orbitkb.domain.evidence import EvidenceComposer, EvidenceProfile
-from orbitkb.domain.navigation import KnowledgeNavigator, TraversalPolicy
-from orbitkb.domain.reduction import EvidenceBudget, EvidenceReducer
 from orbitkb.domain.sufficiency import (
     DeterministicSufficiencyEvaluator,
     SufficiencyStatus,
@@ -178,8 +175,6 @@ def test_local_helper_flow_is_not_flattened_into_direct_response(tmp_path: Path)
 
 def _status_route_from_existing(root: Path):
     snapshot = project_analysis(ServiceKey("status"), StaticAnalysisEngine().analyze(root, "jvm-spring"))
-    route = next(fact.subject for fact in snapshot.facts if fact.kind == "entrypoint")
-    profile = EvidenceProfile(frozenset({"entrypoint", "flow_edge", "service_call", "security_requirement"}))
-    evidence = EvidenceComposer(KnowledgeNavigator(snapshot)).compose(route, profile, TraversalPolicy())
-    capsule = EvidenceReducer().reduce((evidence,), EvidenceBudget(20_000))
+    capsule = route_capsule(snapshot, "GET", "/status")
+    assert capsule is not None
     return capsule, DeterministicSufficiencyEvaluator().evaluate(capsule)

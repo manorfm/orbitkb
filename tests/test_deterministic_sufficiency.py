@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 from orbitkb.analysis.canonical_projection import project_analysis
@@ -138,7 +139,9 @@ def test_unresolved_flow_cannot_prove_that_no_call_purpose_is_needed():
 def test_simple_local_kotlin_route_has_known_empty_integrations():
     snapshot = project_analysis(ServiceKey("status"), StaticAnalysisEngine().analyze(STATUS_CORPUS, "jvm-spring"))
     route = next(fact.subject for fact in snapshot.facts if fact.kind == "entrypoint")
-    profile = EvidenceProfile(frozenset({"entrypoint", "flow_edge", "service_call", "security_requirement"}))
+    profile = EvidenceProfile(frozenset({
+        "entrypoint", "flow_edge", "service_call", "security_requirement", "analysis_capability",
+    }))
     evidence = EvidenceComposer(KnowledgeNavigator(snapshot)).compose(route, profile, TraversalPolicy())
     capsule = EvidenceReducer().reduce((evidence,), EvidenceBudget(20_000))
 
@@ -163,6 +166,40 @@ def test_simple_local_kotlin_route_has_known_empty_integrations():
     assert DeterministicSufficiencyEvaluator().evaluate(mixed_capsule).status(
         "integrations",
     ) == SufficiencyStatus.AMBIGUOUS
+
+
+def test_missing_messaging_capability_cannot_prove_empty_integrations():
+    snapshot = project_analysis(ServiceKey("status"), StaticAnalysisEngine().analyze(STATUS_CORPUS, "jvm-spring"))
+    route = next(fact.subject for fact in snapshot.facts if fact.kind == "entrypoint")
+    profile = EvidenceProfile(frozenset({"entrypoint", "flow_edge", "service_call"}))
+    evidence = EvidenceComposer(KnowledgeNavigator(snapshot)).compose(route, profile, TraversalPolicy())
+    capsule = EvidenceReducer().reduce((evidence,), EvidenceBudget(20_000))
+
+    result = DeterministicSufficiencyEvaluator().evaluate(capsule)
+
+    assert not capsule.boundaries
+    assert not capsule.truncated
+    assert result.status("integrations") == SufficiencyStatus.AMBIGUOUS
+    assert result.status("integration_purpose") == SufficiencyStatus.AMBIGUOUS
+    assert result.evidence_ids("integrations") == ()
+
+
+def test_incomplete_snapshot_cannot_prove_empty_integrations():
+    complete = project_analysis(ServiceKey("status"), StaticAnalysisEngine().analyze(STATUS_CORPUS, "jvm-spring"))
+    snapshot = replace(complete, facts=tuple(
+        fact for fact in complete.facts if fact.kind != "analysis_capability"
+    ))
+    route = next(fact.subject for fact in snapshot.facts if fact.kind == "entrypoint")
+    profile = EvidenceProfile(frozenset({
+        "entrypoint", "flow_edge", "service_call", "analysis_capability",
+    }))
+    evidence = EvidenceComposer(KnowledgeNavigator(snapshot)).compose(route, profile, TraversalPolicy())
+    capsule = EvidenceReducer().reduce((evidence,), EvidenceBudget(20_000))
+
+    result = DeterministicSufficiencyEvaluator().evaluate(capsule)
+
+    assert result.status("integrations") == SufficiencyStatus.AMBIGUOUS
+    assert result.status("integration_purpose") == SufficiencyStatus.AMBIGUOUS
 
 
 def test_known_boundary_cannot_prove_empty_integrations():
