@@ -99,6 +99,32 @@ def test_describe_service_reports_source_target_coverage(tmp_path: Path):
     assert assessed["source_targets_status"] == "assessed"
 
 
+def test_describe_service_limits_coverage_when_an_indexed_api_is_missing_from_snapshot(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    apis_repo.upsert_api(conn, service_id, "GET", "/orders", "s", "d", [], [])
+    apis_repo.upsert_api(conn, service_id, "POST", "/orders", "s", "d", [], [])
+    source = Evidence("OrdersController.kt", 1, 1)
+    service = ServiceKey("orders-service")
+    get_route = EntryPoint("http", "GET", "/orders", "OrdersController.list", source)
+    post_route = EntryPoint("http", "POST", "/orders", "OrdersController.create", source)
+    snapshots_repo.replace_snapshot(conn, service_id, project_analysis(service, AnalysisResult(
+        entrypoints=[get_route],
+    )))
+
+    partial = queries.describe_service(conn, "orders-service")
+    assert partial["source_targets_status"] == "limited"
+    assert queries.describe_service(conn, "orders-service", limit=1, offset=1)[
+        "source_targets_status"
+    ] == "limited"
+
+    snapshots_repo.replace_snapshot(conn, service_id, project_analysis(service, AnalysisResult(
+        entrypoints=[get_route, post_route],
+    )))
+    complete = queries.describe_service(conn, "orders-service")
+    assert complete["source_targets_status"] == "assessed"
+
+
 def test_describe_service_deduplicates_http_targets_only_against_http_calls(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")

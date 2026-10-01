@@ -1,5 +1,6 @@
 """Source-proven outbound HTTP calls in one bounded API flow."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -30,8 +31,10 @@ class RouteHttpCalls:
     status: RouteCallStatus
 
 
-def service_http_call_status(navigator: KnowledgeNavigator | None) -> RouteCallStatus:
-    """Report whether every HTTP route's outbound flow was traversed without limits."""
+def service_http_call_status(
+    navigator: KnowledgeNavigator | None, indexed_routes: Iterable[tuple[str, str]],
+) -> RouteCallStatus:
+    """Report whether indexed and canonical HTTP routes have complete source flow."""
     if navigator is None:
         return RouteCallStatus.UNASSESSED
     routes = {
@@ -42,6 +45,8 @@ def service_http_call_status(navigator: KnowledgeNavigator | None) -> RouteCallS
     }
     if not routes:
         return RouteCallStatus.UNASSESSED
+    if set(indexed_routes) - routes:
+        return RouteCallStatus.LIMITED
     if any(route_declared_http_calls(navigator, method, path).status is RouteCallStatus.LIMITED
            for method, path in routes):
         return RouteCallStatus.LIMITED

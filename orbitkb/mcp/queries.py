@@ -331,7 +331,8 @@ def describe_service(
         snapshot,
     )
     source_targets, source_targets_page = _paginate(list(declared_targets), limit, offset)
-    apis, apis_page = _paginate(apis_repo.list_apis(conn, row["id"]), limit, offset)
+    indexed_apis = apis_repo.list_apis(conn, row["id"])
+    apis, apis_page = _paginate(indexed_apis, limit, offset)
     components, components_page = _paginate(components_repo.list_components(conn, row["id"]), limit, offset)
     persistence, persists_page = _paginate(persistence_repo.list_persistence(conn, row["id"]), limit, offset)
     messages, messages_page = _paginate(messages_repo.list_messages(conn, row["id"]), limit, offset)
@@ -348,6 +349,7 @@ def describe_service(
         ],
         "source_targets_status": service_http_call_status(
             KnowledgeNavigator(snapshot) if snapshot is not None else None,
+            {(api["method"], api["path"]) for api in indexed_apis},
         ).value,
         "apis": [{"method": a["method"], "path": a["path"], "summary": a["summary"]} for a in apis],
         "components": [

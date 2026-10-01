@@ -96,10 +96,12 @@ def _fmt_messages(messages: list[sqlite3.Row]) -> list[str]:
     return [f"- **{m['channel']}** ({m['direction']}): {m['description'] or ''}" for m in messages]
 
 
-def _dependency_coverage_note(navigator: KnowledgeNavigator | None) -> str | None:
+def _dependency_coverage_note(
+    navigator: KnowledgeNavigator | None, indexed_routes: set[tuple[str, str]],
+) -> str | None:
     if navigator is None:
         return "- (dependency analysis unavailable)"
-    status = service_http_call_status(navigator)
+    status = service_http_call_status(navigator, indexed_routes)
     if status is RouteCallStatus.UNASSESSED:
         return "- (HTTP route flow unassessed; other dependencies may exist)"
     if status is RouteCallStatus.LIMITED:
@@ -150,7 +152,9 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
         dependency_lines.extend(
             f"- **{target}** (http (unresolved), declared target)" for target in declared_targets
         )
-        coverage_note = _dependency_coverage_note(navigator)
+        coverage_note = _dependency_coverage_note(
+            navigator, {(api["method"], api["path"]) for api in apis},
+        )
         if coverage_note:
             dependency_lines.append(coverage_note)
         elif not dependency_lines:

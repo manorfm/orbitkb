@@ -320,6 +320,25 @@ def test_service_index_marks_http_flow_unassessed_without_canonical_routes(tmp_p
     assert "HTTP route flow unassessed; other dependencies may exist" in dependencies
 
 
+def test_service_index_warns_when_an_indexed_api_lacks_canonical_flow(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    apis_repo.upsert_api(conn, service_id, "GET", "/orders", "s", "d", [], [])
+    apis_repo.upsert_api(conn, service_id, "POST", "/orders", "s", "d", [], [])
+    source = Evidence("OrdersController.kt", 1, 1)
+    snapshots_repo.replace_snapshot(conn, service_id, project_analysis(
+        ServiceKey("orders-service"), AnalysisResult(entrypoints=[
+            EntryPoint("http", "GET", "/orders", "OrdersController.list", source),
+        ]),
+    ))
+
+    export_markdown(conn, tmp_path / "docs")
+    page = (tmp_path / "docs/orders-service/index.md").read_text(encoding="utf-8")
+    dependencies = page.split("## Depends on\n", 1)[1].split("\n## APIs", 1)[0]
+    assert "static flow limited; other dependencies may exist" in dependencies
+    assert "no dependency detected" not in dependencies
+
+
 def test_service_index_keeps_known_dependency_and_warns_about_limited_flow(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     service_id = _seed(conn)

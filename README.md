@@ -312,8 +312,9 @@ a queue or gRPC call to the same name does not hide the declared HTTP target.
 `describe_service` exposes those targets separately in paginated `source_targets`;
 its generated `calls` retain their existing meaning.
 `source_targets_status` is `unassessed` when no canonical HTTP route is available,
-`limited` when a route reaches an unresolved or bounded flow, and `assessed` when
-all known HTTP routes are traversed without limits. An empty target list therefore
+`limited` when a route reaches an unresolved or bounded flow or an indexed API
+has no matching canonical route, and `assessed` when all known HTTP routes are
+traversed without limits. An empty target list therefore
 does not by itself mean that the service has no outbound calls.
 When a service has no canonical snapshot, its page reports that dependency
 analysis is unavailable alongside any known targets.
