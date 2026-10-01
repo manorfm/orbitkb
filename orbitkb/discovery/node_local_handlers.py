@@ -151,6 +151,31 @@ def _is_exports_property(node: Node, source: bytes) -> bool:
     )
 
 
+def _is_exports_object(node: Node, source: bytes) -> bool:
+    return _is_module_exports(node, source) or (node.type == "identifier" and _text(node, source) == "exports")
+
+
+def _has_indirect_commonjs_mutation(tree: Node, source: bytes) -> bool:
+    pending = [tree]
+    while pending:
+        node = pending.pop()
+        pending.extend(node.named_children)
+        if node.type in {"unary_expression", "update_expression"}:
+            argument = node.child_by_field_name("argument")
+            is_delete = node.type == "unary_expression" and node.children[0].type == "delete"
+            if (is_delete or node.type == "update_expression") and argument is not None:
+                if _is_exports_property(argument, source):
+                    return True
+        elif node.type == "call_expression":
+            function = node.child_by_field_name("function")
+            arguments = node.child_by_field_name("arguments")
+            if function is not None and _text(function, source) == "Object.assign" and arguments is not None:
+                args = arguments.named_children
+                if args and _is_exports_object(args[0], source):
+                    return True
+    return False
+
+
 def _commonjs_property_assignments(tree: Node, source: bytes) -> list[tuple[Node, bool]]:
     assignments: list[tuple[Node, bool]] = []
     pending = [tree]
@@ -225,6 +250,8 @@ def _assigned_commonjs_named_exports(
 def _commonjs_named_exports(path: Path) -> dict[str, str]:
     source = path.read_bytes()
     tree = _parse(path, source)
+    if _has_indirect_commonjs_mutation(tree, source):
+        return {}
     values = _commonjs_assignment_values(tree, source)
     local_functions = _local_functions(tree, source)
     assignments = _commonjs_property_assignments(tree, source)

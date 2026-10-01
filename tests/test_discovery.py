@@ -801,6 +801,36 @@ app.get("/detached", detached);
     assert [entry for entry in analysis.entrypoints if entry.kind == "http"] == []
 
 
+def test_node_route_ignores_indirect_commonjs_export_mutations(tmp_path: Path):
+    cases = {
+        "deleted": "module.exports = { handler };\ndelete module.exports.handler;",
+        "incremented": "exports.handler = handler;\nexports.handler++;",
+        "assigned": "exports.handler = handler;\nObject.assign(exports, { handler: 123 });",
+        "replaced": "module.exports = { handler };\nObject.assign(module.exports, { handler: 123 });",
+    }
+    for name, export_statements in cases.items():
+        (tmp_path / f"{name}.js").write_text(
+            f"function handler(req, res) {{ res.sendStatus(200); }}\n{export_statements}\n", encoding="utf-8",
+        )
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const { handler: deleted } = require("./deleted");
+const { handler: incremented } = require("./incremented");
+const { handler: assigned } = require("./assigned");
+const { handler: replaced } = require("./replaced");
+const app = express();
+app.get("/deleted", deleted);
+app.get("/incremented", incremented);
+app.get("/assigned", assigned);
+app.get("/replaced", replaced);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert hints.endpoints == []
+    assert [entry for entry in analysis.entrypoints if entry.kind == "http"] == []
+
+
 def test_node_route_does_not_trust_mutated_commonjs_named_exports(tmp_path: Path):
     (tmp_path / "handlers.js").write_text('''function createOrder(req, res) { res.sendStatus(201); }
 module.exports = { createOrder };
