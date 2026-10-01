@@ -37,7 +37,7 @@ _ENGINE_DRIVER_KEYWORDS = {
 EXTENSIONS = (".go",)
 
 _ROUTER_RE = re.compile(
-    r"\b(?:router|r|mux|e|app)\.(GET|POST|PUT|PATCH|DELETE|Handle)\s*\(\s*\"([^\"]+)\"",
+    r"\b(?:router|r|mux|e|app)\.(GET|POST|PUT|PATCH|DELETE)\s*\(\s*\"([^\"]+)\"",
 )
 _NET_HTTP_HANDLE_RE = re.compile(
     r'\bhttp\.HandleFunc\s*\(\s*"(/[^"]*)"\s*,\s*([A-Za-z_]\w*)\s*,?\s*\)',
@@ -104,10 +104,7 @@ class GoDetector:
             hints.entry_excerpt = excerpt_around(entry, folder, 1, context=20)
 
         for path, line_no, match in find_matches(folder, EXTENSIONS, _ROUTER_RE):
-            method = match.group(1).upper()
-            if method == "HANDLE":
-                method = "GET"
-            hints.endpoints.append(_endpoint_hint(method, match.group(2), path, folder, line_no))
+            hints.endpoints.append(_endpoint_hint(match.group(1).upper(), match.group(2), path, folder, line_no))
         handlers_by_path: dict[Path, set[str]] = {}
         for path, line_no, match in find_matches(folder, EXTENSIONS, _NET_HTTP_HANDLE_RE):
             if path not in handlers_by_path:

@@ -63,6 +63,19 @@ func unknown() {}
     assert [(hint.method, hint.path) for hint in hints.endpoints] == [("ANY", "/known")]
 
 
+def test_go_discovery_does_not_assign_get_to_generic_router_handle(tmp_path: Path):
+    (tmp_path / "main.go").write_text('''package main
+func register() {
+    router.Handle("/orders", orderHandler)
+    router.GET("/health", healthHandler)
+}
+''', encoding="utf-8")
+
+    hints = GoDetector().collect_hints(tmp_path)
+
+    assert [(hint.method, hint.path) for hint in hints.endpoints] == [("GET", "/health")]
+
+
 def test_discover_services_finds_all_three():
     candidates = discover_services(SAMPLE_ROOT)
     names = sorted(c.name for c in candidates)
