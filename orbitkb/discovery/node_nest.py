@@ -35,6 +35,15 @@ def nest_imports(source: str) -> dict[str, str]:
 
 
 def preceding_decorators(node: Node) -> list[Node]:
+    """Return decorators attached to a declaration by either TypeScript AST shape."""
+    own_decorators: list[Node] = []
+    for child in node.named_children:
+        if child.type != "decorator":
+            break
+        own_decorators.append(child)
+    if own_decorators:
+        return own_decorators
+
     parent = node.parent
     if parent is None:
         return []

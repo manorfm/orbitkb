@@ -529,6 +529,24 @@ export class WrongController {
     assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
 
 
+def test_node_nest_hints_include_a_non_exported_controller(tmp_path: Path):
+    (tmp_path / "orders.ts").write_text('''import { Controller, Get } from "@nestjs/common";
+@Controller("/orders")
+class OrdersController {
+  @Get(":id")
+  find() { return "ok"; }
+}
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert [(hint.method, hint.path) for hint in hints.endpoints] == [("GET", "/orders/:id")]
+    assert [(entry.method, entry.name, entry.symbol) for entry in analysis.entrypoints if entry.kind == "http"] == [
+        ("GET", "/orders/:id", "OrdersController.find"),
+    ]
+
+
 def test_jvm_spring_detector_matches_and_finds_hints():
     """inventory-service is Clean Architecture over Cassandra: StockController
     (conforming) exposes two endpoints; legacy.QuickStockPatchController is a
