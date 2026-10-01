@@ -655,6 +655,88 @@ app.get("/orders/:id", readOrder);
     assert any(edge.source == "readHandler.default" and edge.target == "orderService.read" for edge in analysis.edges)
 
 
+def test_node_route_resolves_a_local_commonjs_function_import(tmp_path: Path):
+    (tmp_path / "createHandler.js").write_text('''function createOrder(req, res) {
+  return orderService.create(req.body);
+}
+module.exports = createOrder;
+''', encoding="utf-8")
+    (tmp_path / "readHandler.js").write_text('''const readOrder = (req, res) => res.sendStatus(200);
+module.exports = readOrder;
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const addOrder = require("./createHandler");
+const readOrder = require("./readHandler");
+const app = express();
+app.post("/orders", addOrder);
+app.get("/orders", readOrder);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == {("POST", "/orders"), ("GET", "/orders")}
+    assert {(entry.method, entry.name, entry.symbol) for entry in analysis.entrypoints if entry.kind == "http"} == {
+        ("POST", "/orders", "createHandler.createOrder"), ("GET", "/orders", "readHandler.readOrder"),
+    }
+    assert any(edge.source == "createHandler.createOrder" and edge.target == "orderService.create" for edge in analysis.edges)
+
+
+def test_node_route_ignores_unproven_commonjs_handler_imports(tmp_path: Path):
+    (tmp_path / "value.js").write_text('''const value = 123;
+module.exports = value;
+''', encoding="utf-8")
+    (tmp_path / "hidden.js").write_text('''function hidden(req, res) { res.sendStatus(200); }
+// module.exports = hidden;
+''', encoding="utf-8")
+    (tmp_path / "overwritten.js").write_text('''function overwritten(req, res) { res.sendStatus(200); }
+module.exports = overwritten;
+module.exports = {};
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const value = require("./value");
+const hidden = require("./hidden");
+const overwritten = require("./overwritten");
+const external = require("external-package");
+const app = express();
+app.get("/value", value);
+app.get("/hidden", hidden);
+app.get("/overwritten", overwritten);
+app.get("/external", external);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert hints.endpoints == []
+    assert [entry for entry in analysis.entrypoints if entry.kind == "http"] == []
+
+
+def test_node_route_resolves_a_commonjs_handler_on_a_mounted_router(tmp_path: Path):
+    (tmp_path / "createHandler.js").write_text('''function createOrder(req, res) { res.sendStatus(201); }
+module.exports = createOrder;
+''', encoding="utf-8")
+    (tmp_path / "orders.routes.js").write_text('''const express = require("express");
+const createOrder = require("./createHandler");
+const router = express.Router();
+router.route("/orders").post(createOrder);
+module.exports = router;
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const orders = require("./orders.routes");
+const app = express();
+app.use("/api", orders);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert [(hint.method, hint.path) for hint in hints.endpoints] == [("POST", "/api/orders")]
+    assert [(entry.method, entry.name, entry.symbol) for entry in analysis.entrypoints if entry.kind == "http"] == [
+        ("POST", "/api/orders", "createHandler.createOrder"),
+    ]
+
+
 def test_node_route_ignores_imports_without_a_named_local_function_export(tmp_path: Path):
     (tmp_path / "hidden.ts").write_text('''function hidden(req, res) { res.sendStatus(200); }
 ''', encoding="utf-8")

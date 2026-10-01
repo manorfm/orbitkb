@@ -58,14 +58,19 @@ def anonymous_default_function(tree: Node) -> Node | None:
     return next((value for statement in tree.named_children if (value := _anonymous_default_callable(statement))), None)
 
 
-def _exported_functions(path: Path) -> dict[str, str]:
-    source = path.read_bytes()
-    tree = _parse(path, source)
-    local_functions: set[str] = set()
+def _local_functions(tree: Node, source: bytes) -> set[str]:
+    names: set[str] = set()
     for statement in tree.named_children:
         declaration = statement.child_by_field_name("declaration") if statement.type == "export_statement" else statement
         if declaration is not None:
-            local_functions.update(_declared_functions(declaration, source))
+            names.update(_declared_functions(declaration, source))
+    return names
+
+
+def _exported_functions(path: Path) -> dict[str, str]:
+    source = path.read_bytes()
+    tree = _parse(path, source)
+    local_functions = _local_functions(tree, source)
 
     exports: dict[str, str] = {}
     for statement in tree.named_children:
@@ -109,10 +114,64 @@ def _exported_functions(path: Path) -> dict[str, str]:
     return exports
 
 
+def _commonjs_exported_function(path: Path) -> str | None:
+    source = path.read_bytes()
+    tree = _parse(path, source)
+    local_functions = _local_functions(tree, source)
+    exports: list[str] = []
+    for statement in tree.named_children:
+        if statement.type != "expression_statement" or not statement.named_children:
+            continue
+        assignment = statement.named_children[0]
+        if assignment.type != "assignment_expression":
+            continue
+        left = assignment.child_by_field_name("left")
+        right = assignment.child_by_field_name("right")
+        if left is None or left.type != "member_expression":
+            continue
+        receiver = left.child_by_field_name("object")
+        property_name = left.child_by_field_name("property")
+        if receiver is None or property_name is None or _text(receiver, source) != "module":
+            continue
+        if _text(property_name, source) != "exports":
+            continue
+        exports.append(_text(right, source) if right is not None and right.type == "identifier" else "")
+    return exports[0] if len(exports) == 1 and exports[0] in local_functions else None
+
+
+def _commonjs_handler_imports(tree: Node, source: bytes, path: Path, root: Path) -> dict[str, str]:
+    symbols: dict[str, str] = {}
+    for statement in tree.named_children:
+        if statement.type not in {"lexical_declaration", "variable_declaration"}:
+            continue
+        for variable in statement.named_children:
+            if variable.type != "variable_declarator":
+                continue
+            name = variable.child_by_field_name("name")
+            value = variable.child_by_field_name("value")
+            if name is None or name.type != "identifier" or value is None or value.type != "call_expression":
+                continue
+            function = value.child_by_field_name("function")
+            arguments = value.child_by_field_name("arguments")
+            if function is None or _text(function, source) != "require" or arguments is None:
+                continue
+            args = arguments.named_children
+            if len(args) != 1 or args[0].type != "string":
+                continue
+            module = _text(args[0], source)[1:-1]
+            imported = resolve_local_source(path, module, root, suffixes=_SOURCE_SUFFIXES)
+            if imported is None:
+                continue
+            handler = _commonjs_exported_function(imported)
+            if handler is not None:
+                symbols[_text(name, source)] = f"{imported.stem}.{handler}"
+    return symbols
+
+
 def proven_local_handler_imports(tree: Node, source: bytes, path: Path, root: Path) -> dict[str, str]:
     """Map local aliases to analyzed symbols only after a relative import/export proof."""
     root = root.resolve()
-    symbols: dict[str, str] = {}
+    symbols = _commonjs_handler_imports(tree, source, path, root)
     for statement in tree.named_children:
         if statement.type != "import_statement":
             continue
