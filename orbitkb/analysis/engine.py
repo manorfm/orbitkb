@@ -94,15 +94,15 @@ from orbitkb.discovery.go_imports import (
     has_standard_net_http_import,
     parse_go_import_declarations,
 )
-from orbitkb.discovery.node_fastify import (
-    literal_fastify_route_definition as _fastify_literal_route_definition,
-)
 from orbitkb.discovery.node_http import express_receivers
 from orbitkb.discovery.node_http import (
     express_route_prefixes as _express_route_prefixes,
 )
 from orbitkb.discovery.node_http import (
     fastify_receivers as fastify_receivers_for_source,
+)
+from orbitkb.discovery.node_http_routes import (
+    literal_fastify_route_definition as _fastify_literal_route_definition,
 )
 from orbitkb.discovery.node_imports import parse_node_named_imports
 from orbitkb.discovery.node_nest import (

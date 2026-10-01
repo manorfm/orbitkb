@@ -363,6 +363,7 @@ const api = express();
 const router = express.Router();
 const fastify = Fastify();
 const app = unrelatedClient();
+function handler(req, res) { res.sendStatus(200); }
 api.get("/express", handler);
 router.post("/router", handler);
 fastify.put("/fastify", handler);
@@ -374,6 +375,28 @@ app.get("/fake", handler);
     assert {(hint.method, hint.path) for hint in hints.endpoints} == {
         ("GET", "/express"), ("PUT", "/fastify"),
     }
+
+
+def test_node_direct_route_hints_require_a_local_handler(tmp_path: Path):
+    (tmp_path / "main.ts").write_text('''import express from "express";
+import Fastify from "fastify";
+const app = express();
+const server = Fastify();
+function known(req, res) { res.sendStatus(200); }
+app.get("/known", known);
+app.post("/inline", (req, res) => res.sendStatus(201));
+app.get("/ghost", missingHandler);
+app.GET("/uppercase", known);
+server.put("/fastify", known);
+server.delete("/missing", missingHandler);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    expected = {("GET", "/known"), ("POST", "/inline"), ("PUT", "/fastify")}
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == expected
+    assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
 
 
 def test_node_route_hints_include_a_literal_local_express_mount_prefix(tmp_path: Path):
@@ -399,6 +422,7 @@ def test_node_route_hints_include_a_proven_cross_file_express_mount_prefix(tmp_p
     (tmp_path / "orders.routes.js").write_text('''const express = require("express");
 const router = express.Router();
 router.post("/orders", createOrder);
+function createOrder(req, res) { res.sendStatus(201); }
 module.exports = router;
 ''', encoding="utf-8")
     (tmp_path / "server.js").write_text('''const express = require("express");

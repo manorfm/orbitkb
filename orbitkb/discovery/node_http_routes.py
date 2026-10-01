@@ -1,4 +1,4 @@
-"""Literal Fastify route objects shared by discovery and static analysis."""
+"""Literal Node HTTP route calls and shared Fastify object parsing."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import tree_sitter_typescript
 from tree_sitter import Language, Node, Parser
 
 _HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+_DIRECT_METHODS = frozenset(method.lower() for method in _HTTP_METHODS)
 
 
 def _text(node: Node, source: bytes) -> str:
@@ -84,9 +85,17 @@ def _local_handlers(tree: Node, source: bytes) -> frozenset[str]:
     return frozenset(names)
 
 
-def find_literal_fastify_routes(path: Path, receivers: frozenset[str]) -> list[tuple[str, str, int]]:
-    """Find route hints that have a proven factory receiver and local handler."""
-    if not receivers:
+def _local_handler(handler: Node, handlers: frozenset[str], source: bytes) -> bool:
+    if handler.type == "identifier":
+        return _text(handler, source) in handlers
+    return handler.type in {"arrow_function", "function_expression"} and handler.child_by_field_name("body") is not None
+
+
+def find_literal_node_routes(
+    path: Path, direct_receivers: frozenset[str], fastify_receivers: frozenset[str],
+) -> list[tuple[str, str, str, int]]:
+    """Find direct routes and Fastify objects with literal paths and local handlers."""
+    if not direct_receivers and not fastify_receivers:
         return []
     source = path.read_bytes()
     grammar = (
@@ -95,7 +104,7 @@ def find_literal_fastify_routes(path: Path, receivers: frozenset[str]) -> list[t
     )
     tree = Parser(Language(grammar)).parse(source).root_node
     handlers = _local_handlers(tree, source)
-    routes: list[tuple[str, str, int]] = []
+    routes: list[tuple[str, str, str, int]] = []
     for node in _walk(tree):
         if node.type != "call_expression":
             continue
@@ -107,15 +116,22 @@ def find_literal_fastify_routes(path: Path, receivers: frozenset[str]) -> list[t
         method = callee.child_by_field_name("property")
         if receiver is None or method is None:
             continue
-        if _text(receiver, source) not in receivers or _text(method, source) != "route":
+        receiver_name = _text(receiver, source)
+        method_name = _text(method, source)
+        arguments = args.named_children
+        if receiver_name in direct_receivers and method_name in _DIRECT_METHODS:
+            route = _string(arguments[0], source) if arguments else None
+            handler = arguments[-1] if len(arguments) > 1 else None
+            if route is not None and handler is not None and _local_handler(handler, handlers, source):
+                routes.append((receiver_name, method_name.upper(), route, node.start_point.row + 1))
             continue
-        definition = literal_fastify_route_definition(args.named_children, source)
+        if receiver_name not in fastify_receivers or method_name != "route":
+            continue
+        definition = literal_fastify_route_definition(arguments, source)
         if definition is None:
             continue
         methods, route, handler = definition
-        if handler.type == "identifier" and _text(handler, source) not in handlers:
+        if not _local_handler(handler, handlers, source):
             continue
-        if handler.type not in {"identifier", "arrow_function", "function_expression"}:
-            continue
-        routes.extend((http_method, route, node.start_point.row + 1) for http_method in methods)
+        routes.extend((receiver_name, http_method, route, node.start_point.row + 1) for http_method in methods)
     return routes

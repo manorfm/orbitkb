@@ -11,12 +11,12 @@ from orbitkb.discovery.base import (
     PersistenceHint,
     ServiceHints,
 )
-from orbitkb.discovery.node_fastify import find_literal_fastify_routes
 from orbitkb.discovery.node_http import (
     express_receivers,
     express_route_prefixes,
     fastify_receivers,
 )
+from orbitkb.discovery.node_http_routes import find_literal_node_routes
 from orbitkb.discovery.node_mounts import cross_file_express_mounts
 from orbitkb.discovery.node_nest import find_nest_route_hints
 from orbitkb.discovery.scan_helpers import (
@@ -46,10 +46,6 @@ _PRISMA_PROVIDER_TO_ENGINE = {"postgresql": "postgres", "mysql": "mysql", "mongo
 
 EXTENSIONS = (".js", ".ts")
 
-_HTTP_METHOD_RE = re.compile(
-    r"""\b([A-Za-z_]\w*)\.(get|post|put|patch|delete)\s*\(\s*['"`]([^'"`]+)['"`]""",
-    re.IGNORECASE,
-)
 _EXPRESS_ROUTE_CHAIN_RE = re.compile(
     r"""\b([A-Za-z_]\w*)\.route\s*\(\s*(['"])([^'"]+)\2\s*\)\s*\.\s*(get|post|put|patch|delete)\s*\("""
 )
@@ -147,14 +143,14 @@ class NodeTsDetector:
                 }
             return route_prefixes[path]
 
-        for path, line_no, match in find_matches(folder, EXTENSIONS, _HTTP_METHOD_RE):
+        for path in node_files:
             prefixes = prefixes_for(path)
-            receiver = match.group(1)
-            if receiver not in prefixes:
-                continue
-            method, route = match.group(2).upper(), match.group(3)
-            route = _route_with_prefix(prefixes[receiver], route)
-            hints.endpoints.append(_endpoint_hint(method, route, path, folder, line_no))
+            for receiver, method, route, line_no in find_literal_node_routes(
+                path, frozenset(prefixes), fastify_by_file[path],
+            ):
+                hints.endpoints.append(_endpoint_hint(
+                    method, _route_with_prefix(prefixes[receiver], route), path, folder, line_no,
+                ))
 
         for path, line_no, match in find_matches(folder, EXTENSIONS, _EXPRESS_ROUTE_CHAIN_RE):
             prefixes_for(path)
@@ -163,11 +159,6 @@ class NodeTsDetector:
                 continue
             route = _route_with_prefix(local_express_prefixes[path][receiver], match.group(3))
             hints.endpoints.append(_endpoint_hint(match.group(4).upper(), route, path, folder, line_no))
-
-        for path in node_files:
-            prefixes_for(path)
-            for method, route, line_no in find_literal_fastify_routes(path, fastify_by_file[path]):
-                hints.endpoints.append(_endpoint_hint(method, route, path, folder, line_no))
 
         for path in node_files:
             if path.suffix != ".ts":
