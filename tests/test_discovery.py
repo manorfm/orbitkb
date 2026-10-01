@@ -356,6 +356,54 @@ def test_node_ts_detector_matches_and_finds_hints():
     assert any(p.kind == "document" and p.engine_hint == "mongodb" for p in hints.persistence)
 
 
+def test_node_sample_routes_reach_the_exported_service_instance():
+    folder = SAMPLE_ROOT / "payments-service"
+
+    analysis = StaticAnalysisEngine().analyze(folder, "node-js")
+
+    assert any(
+        edge.source == "payments.routes.http.post:/charge" and edge.target == "PaymentService.chargeCustomer"
+        for edge in analysis.edges
+    )
+    assert any(
+        edge.source == "payments.routes.http.post:/payments/:id/refund"
+        and edge.target == "PaymentService.refundCustomer"
+        for edge in analysis.edges
+    )
+    assert any(
+        edge.source == "PaymentService.chargeCustomer" and edge.target == "cardGatewayClient.charge"
+        for edge in analysis.edges
+    )
+
+
+def test_node_route_does_not_resolve_an_unproven_commonjs_service_instance(tmp_path: Path):
+    (tmp_path / "dynamic.js").write_text('''class DynamicService { run() {} }
+module.exports = factory();
+''', encoding="utf-8")
+    (tmp_path / "overridden.js").write_text('''class OverriddenService { run() {} }
+module.exports = new OverriddenService();
+module.exports.run = 123;
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const dynamic = require("./dynamic");
+const overridden = require("./overridden");
+const app = express();
+app.get("/dynamic", (req, res) => dynamic.run());
+app.get("/overridden", (req, res) => overridden.run());
+''', encoding="utf-8")
+
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert not any(
+        edge.source == "server.http.get:/dynamic" and edge.target == "DynamicService.run"
+        for edge in analysis.edges
+    )
+    assert not any(
+        edge.source == "server.http.get:/overridden" and edge.target == "OverriddenService.run"
+        for edge in analysis.edges
+    )
+
+
 def test_node_route_hints_require_a_locally_created_http_receiver(tmp_path: Path):
     (tmp_path / "main.ts").write_text('''import express from "express";
 import Fastify from "fastify";

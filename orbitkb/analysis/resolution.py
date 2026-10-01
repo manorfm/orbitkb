@@ -175,8 +175,8 @@ class BoundedFlowResolver:
         if target in imports:
             return imports[target]
         receiver, separator, member = target.partition(".")
-        module = imports.get(receiver)
-        return f"{module}.{member}" if module and separator else None
+        module = imports.get(receiver.strip())
+        return f"{module}.{member.strip()}" if module and separator else None
 
     @staticmethod
     def _qualified_candidates(

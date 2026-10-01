@@ -1,4 +1,4 @@
-"""Resolve explicitly exported functions behind local Node imports."""
+"""Resolve proven local Node exports for route handlers and instance calls."""
 
 from __future__ import annotations
 
@@ -388,8 +388,8 @@ def _commonjs_destructured_handlers(name: Node, exports: dict[str, str], source:
     return handlers
 
 
-def _commonjs_handler_imports(tree: Node, source: bytes, path: Path, root: Path) -> dict[str, str]:
-    symbols: dict[str, str] = {}
+def _relative_commonjs_requires(tree: Node, source: bytes, path: Path, root: Path) -> list[tuple[Node, Path]]:
+    imports: list[tuple[Node, Path]] = []
     for statement in tree.named_children:
         if statement.type not in {"lexical_declaration", "variable_declaration"}:
             continue
@@ -411,17 +411,56 @@ def _commonjs_handler_imports(tree: Node, source: bytes, path: Path, root: Path)
                 continue
             module = _text(args[0], source)[1:-1]
             imported = resolve_local_source(path, module, root, suffixes=_SOURCE_SUFFIXES)
-            if imported is None:
-                continue
-            if name.type == "identifier":
-                handler = _commonjs_exported_function(imported)
-                if handler is not None:
-                    symbols[_text(name, source)] = f"{imported.stem}.{handler}"
-            else:
-                exports = _commonjs_named_exports(imported)
-                for local_name, handler in _commonjs_destructured_handlers(name, exports, source).items():
-                    symbols[local_name] = f"{imported.stem}.{handler}"
+            if imported is not None:
+                imports.append((name, imported))
+    return imports
+
+
+def _commonjs_handler_imports(tree: Node, source: bytes, path: Path, root: Path) -> dict[str, str]:
+    symbols: dict[str, str] = {}
+    for name, imported in _relative_commonjs_requires(tree, source, path, root):
+        if name.type == "identifier":
+            handler = _commonjs_exported_function(imported)
+            if handler is not None:
+                symbols[_text(name, source)] = f"{imported.stem}.{handler}"
+        else:
+            exports = _commonjs_named_exports(imported)
+            for local_name, handler in _commonjs_destructured_handlers(name, exports, source).items():
+                symbols[local_name] = f"{imported.stem}.{handler}"
     return symbols
+
+
+def _commonjs_exported_instance(path: Path) -> str | None:
+    source = path.read_bytes()
+    tree = _parse(path, source)
+    values = _commonjs_assignment_values(tree, source)
+    if len(values) != 1 or values[0] is None or values[0].type != "new_expression":
+        return None
+    if _commonjs_property_assignments(tree, source) or _has_commonjs_export_mutation_or_escape(tree, source):
+        return None
+    constructor = values[0].child_by_field_name("constructor")
+    if constructor is None or constructor.type != "identifier":
+        return None
+    class_name = _text(constructor, source)
+    classes = [
+        statement for statement in tree.named_children
+        if statement.type == "class_declaration"
+        and (name := statement.child_by_field_name("name")) is not None
+        and _text(name, source) == class_name
+    ]
+    return class_name if len(classes) == 1 else None
+
+
+def proven_local_commonjs_instance_imports(tree: Node, source: bytes, path: Path, root: Path) -> tuple[tuple[str, str], ...]:
+    """Bind relative require aliases only to a single exported local class instance."""
+    imports: list[tuple[str, str]] = []
+    for name, imported in _relative_commonjs_requires(tree, source, path, root):
+        if name.type != "identifier":
+            continue
+        class_name = _commonjs_exported_instance(imported)
+        if class_name is not None:
+            imports.append((_text(name, source), class_name))
+    return tuple(imports)
 
 
 def proven_local_handler_imports(tree: Node, source: bytes, path: Path, root: Path) -> dict[str, str]:
