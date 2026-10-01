@@ -1,4 +1,4 @@
-from orbitkb.analysis.go_imports import parse_go_import_paths
+from orbitkb.discovery.go_imports import parse_go_import_paths
 
 
 def test_parses_a_single_import_with_default_alias():

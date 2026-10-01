@@ -49,7 +49,6 @@ from orbitkb.analysis.frontends import (
     FrameworkAdapter,
     LanguageFrontend,
 )
-from orbitkb.analysis.go_imports import parse_go_import_declarations
 from orbitkb.analysis.jvm_feign import SpringFeignRecognizer
 from orbitkb.analysis.jvm_grpc_analyzer import (
     jvm_grpc_client_bindings,
@@ -90,6 +89,10 @@ from orbitkb.analysis.models import (
 from orbitkb.analysis.node_imports import parse_node_named_imports
 from orbitkb.analysis.resolution import BoundedFlowResolver
 from orbitkb.analysis.route_paths import join_route as _join_route
+from orbitkb.discovery.go_imports import (
+    has_standard_net_http_import,
+    parse_go_import_declarations,
+)
 from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
@@ -508,7 +511,7 @@ class _GoAnalyzer(_FileAnalyzer):
         source_text = source.decode("utf-8", errors="ignore")
         package = _go_package_name(source_text, path)
         imports = _go_imports(source_text)
-        standard_http_imported = _has_standard_net_http_import(source_text)
+        standard_http_imported = has_standard_net_http_import(source_text)
         cloud_declarations = go_client_declarations(source_text)
         functions: list[_Function] = []
         for node in _walk(tree):
@@ -627,13 +630,6 @@ class _GoAnalyzer(_FileAnalyzer):
             if cloud_fact is not None:
                 cloud_facts.append(cloud_fact)
         return edges, cloud_facts
-
-
-def _has_standard_net_http_import(source: str) -> bool:
-    return any(
-        module == "net/http" and alias in {"", "http"}
-        for alias, module in parse_go_import_declarations(source)
-    )
 
 
 def _go_http_error_contracts(

@@ -1,12 +1,39 @@
 import logging
 from pathlib import Path
 
+from orbitkb.discovery.go_stack import GoDetector
 from orbitkb.discovery.jvm_stack import JvmSpringDetector
 from orbitkb.discovery.node_ts import NodeTsDetector
 from orbitkb.discovery.python_stack import PythonDetector
 from orbitkb.discovery.walker import discover_services
 
 SAMPLE_ROOT = Path(__file__).resolve().parent.parent / "verify" / "sample_project"
+
+
+def test_go_handlefunc_hints_require_net_http_import_in_the_same_file(tmp_path: Path):
+    (tmp_path / "fake.go").write_text('''package main
+import "example.org/http"
+func fake() { http.HandleFunc("/fake", fakeHandler) }
+''', encoding="utf-8")
+    (tmp_path / "missing.go").write_text('''package main
+func missing() { http.HandleFunc("/missing", missingHandler) }
+''', encoding="utf-8")
+    (tmp_path / "valid.go").write_text('''package main
+import "net/http"
+func valid() { http.HandleFunc("/valid", validHandler) }
+''', encoding="utf-8")
+    (tmp_path / "grouped.go").write_text('''package main
+import (
+    http "net/http"
+)
+func grouped() { http.HandleFunc("/grouped", groupedHandler) }
+''', encoding="utf-8")
+
+    hints = GoDetector().collect_hints(tmp_path)
+
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == {
+        ("ANY", "/valid"), ("ANY", "/grouped"),
+    }
 
 
 def test_discover_services_finds_all_three():

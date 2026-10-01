@@ -10,6 +10,7 @@ from orbitkb.discovery.base import (
     PersistenceHint,
     ServiceHints,
 )
+from orbitkb.discovery.go_imports import has_standard_net_http_import
 from orbitkb.discovery.scan_helpers import (
     ENDPOINT_AFTER,
     ENDPOINT_BEFORE,
@@ -19,6 +20,7 @@ from orbitkb.discovery.scan_helpers import (
     find_matches,
     first_existing_file,
     provider_from_match,
+    read_text,
     resolve_local_calls,
 )
 
@@ -103,8 +105,12 @@ class GoDetector:
             if method == "HANDLE":
                 method = "GET"
             hints.endpoints.append(_endpoint_hint(method, match.group(2), path, folder, line_no))
+        import_proof: dict[Path, bool] = {}
         for path, line_no, match in find_matches(folder, EXTENSIONS, _NET_HTTP_HANDLE_RE):
-            hints.endpoints.append(_endpoint_hint("ANY", match.group(1), path, folder, line_no))
+            if path not in import_proof:
+                import_proof[path] = has_standard_net_http_import(read_text(path) or "")
+            if import_proof[path]:
+                hints.endpoints.append(_endpoint_hint("ANY", match.group(1), path, folder, line_no))
         for path, line_no, match in find_matches(folder, EXTENSIONS, _GRPC_SERVER_METHOD_RE):
             hints.endpoints.append(_endpoint_hint("RPC", match.group(1), path, folder, line_no))
 

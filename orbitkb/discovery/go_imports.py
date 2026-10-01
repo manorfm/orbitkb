@@ -1,10 +1,4 @@
-"""Shared Go import parsing. `engine.py`'s general symbol resolution only
-ever needed a package's short name (its own `_go_imports`, unchanged), but
-`cloud_detection.py`'s SDK-import verification needs the full import path —
-the short name alone can't tell AWS's `.../service/sqs` apart from some
-unrelated package whose own last path segment also happens to be `sqs`. One
-shared regex here, not two drifting copies.
-"""
+"""Go import paths shared by discovery and static analysis."""
 from __future__ import annotations
 
 import re
@@ -24,6 +18,14 @@ def parse_go_import_declarations(source: str) -> list[tuple[str, str]]:
         for item in _DECLARATION_RE.findall(block)
     ]
     return [*_SINGLE_RE.findall(source), *declarations]
+
+
+def has_standard_net_http_import(source: str) -> bool:
+    """True only when `http` resolves to Go's standard net/http package."""
+    return any(
+        module == "net/http" and alias in {"", "http"}
+        for alias, module in parse_go_import_declarations(source)
+    )
 
 
 def parse_go_import_paths(source: str) -> dict[str, str]:
