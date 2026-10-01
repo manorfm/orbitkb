@@ -355,6 +355,26 @@ def test_node_ts_detector_matches_and_finds_hints():
     assert any(p.kind == "document" and p.engine_hint == "mongodb" for p in hints.persistence)
 
 
+def test_node_route_hints_require_a_locally_created_http_receiver(tmp_path: Path):
+    (tmp_path / "main.ts").write_text('''import express from "express";
+import Fastify from "fastify";
+const api = express();
+const router = express.Router();
+const fastify = Fastify();
+const app = unrelatedClient();
+api.get("/express", handler);
+router.post("/router", handler);
+fastify.put("/fastify", handler);
+app.get("/fake", handler);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == {
+        ("GET", "/express"), ("POST", "/router"), ("PUT", "/fastify"),
+    }
+
+
 def test_jvm_spring_detector_matches_and_finds_hints():
     """inventory-service is Clean Architecture over Cassandra: StockController
     (conforming) exposes two endpoints; legacy.QuickStockPatchController is a

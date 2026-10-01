@@ -93,6 +93,10 @@ from orbitkb.discovery.go_imports import (
     has_standard_net_http_import,
     parse_go_import_declarations,
 )
+from orbitkb.discovery.node_http import express_receivers
+from orbitkb.discovery.node_http import (
+    fastify_receivers as fastify_receivers_for_source,
+)
 from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
@@ -881,7 +885,7 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
         client_declarations = node_stateful_client_declarations(source_text)
         command_imports = node_command_imports(source_text)
         express_route_prefixes = _express_route_prefixes(source_text)
-        fastify_receivers = _fastify_route_receivers(source_text)
+        fastify_receivers = fastify_receivers_for_source(source_text)
         error_handler_parameter_counts = {
             name: 4
             for name in _express_error_middleware_names(source_text, frozenset(express_route_prefixes))
@@ -2170,19 +2174,7 @@ def _express_route_prefixes(source: str) -> dict[str, str]:
     once by a literal ``app.use(prefix, router)`` call. Framework wrappers, dynamic
     construction and ambiguous router mounts remain unresolved.
     """
-    imported = re.search(
-        r"(?:import\s+(?:\*\s+as\s+)?express(?:\s*,\s*\{[^}]*\})?\s+from\s*|"
-        r"(?:const|let)\s+express\s*=\s*require\s*\()"
-        r"[\"']express[\"']",
-        source,
-    )
-    if imported is None:
-        return {}
-    factories = re.findall(
-        r"\b(?:const|let|var)\s+(\w+)\s*=\s*express(?:(\.Router))?\s*\(", source,
-    )
-    applications = {name for name, router_factory in factories if not router_factory}
-    routers = {name for name, router_factory in factories if router_factory}
+    applications, routers = express_receivers(source)
     mounts: dict[str, list[str]] = {}
     for application, _quote, prefix, router in re.findall(
         r"\b(\w+)\.use\s*\(\s*([\"'])([^\"']+)\2\s*,\s*(\w+)\s*\)", source,
@@ -2246,22 +2238,6 @@ def _express_route_middleware_contract(arguments: list[Node], source: bytes) -> 
         if argument.type == "identifier"
     ]
     return {"route_middlewares": middleware} if middleware else None
-
-
-def _fastify_route_receivers(source: str) -> frozenset[str]:
-    """Return instances created from a locally imported Fastify factory."""
-    factories = {
-        *re.findall(r"\bimport\s+(\w+)\s+from\s*[\"']fastify[\"']", source),
-        *re.findall(
-            r"\b(?:const|let)\s+(\w+)\s*=\s*require\s*\(\s*[\"']fastify[\"']\s*\)", source,
-        ),
-    }
-    receivers: set[str] = set()
-    for factory in factories:
-        receivers.update(re.findall(
-            rf"\b(?:const|let|var)\s+(\w+)\s*=\s*{re.escape(factory)}\s*\(", source,
-        ))
-    return frozenset(receivers)
 
 
 def _fastify_error_handler_names(source: str, receivers: frozenset[str]) -> frozenset[str]:

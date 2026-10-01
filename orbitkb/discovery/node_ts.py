@@ -11,6 +11,7 @@ from orbitkb.discovery.base import (
     PersistenceHint,
     ServiceHints,
 )
+from orbitkb.discovery.node_http import express_receivers, fastify_receivers
 from orbitkb.discovery.scan_helpers import (
     ENDPOINT_AFTER,
     ENDPOINT_BEFORE,
@@ -38,7 +39,7 @@ _PRISMA_PROVIDER_TO_ENGINE = {"postgresql": "postgres", "mysql": "mysql", "mongo
 EXTENSIONS = (".js", ".ts")
 
 _HTTP_METHOD_RE = re.compile(
-    r"""\b(?:app|router)\.(get|post|put|patch|delete)\s*\(\s*['"`]([^'"`]+)['"`]""",
+    r"""\b([A-Za-z_]\w*)\.(get|post|put|patch|delete)\s*\(\s*['"`]([^'"`]+)['"`]""",
     re.IGNORECASE,
 )
 _NEST_ROUTE_RE = re.compile(r"""@(Get|Post|Put|Patch|Delete)\s*\(\s*['"`]?([^'")\`]*)['"`]?\s*\)""")
@@ -112,8 +113,15 @@ class NodeTsDetector:
         if entry:
             hints.entry_excerpt = excerpt_around(entry, folder, 1, context=20)
 
+        route_receivers: dict[Path, frozenset[str]] = {}
         for path, line_no, match in find_matches(folder, EXTENSIONS, _HTTP_METHOD_RE):
-            method, route = match.group(1).upper(), match.group(2)
+            if path not in route_receivers:
+                source = path.read_text(encoding="utf-8", errors="ignore")
+                applications, routers = express_receivers(source)
+                route_receivers[path] = applications | routers | fastify_receivers(source)
+            if match.group(1) not in route_receivers[path]:
+                continue
+            method, route = match.group(2).upper(), match.group(3)
             hints.endpoints.append(_endpoint_hint(method, route, path, folder, line_no))
 
         for path, line_no, match in find_matches(folder, EXTENSIONS, _NEST_ROUTE_RE):
