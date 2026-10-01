@@ -114,11 +114,8 @@ def _exported_functions(path: Path) -> dict[str, str]:
     return exports
 
 
-def _commonjs_exported_function(path: Path) -> str | None:
-    source = path.read_bytes()
-    tree = _parse(path, source)
-    local_functions = _local_functions(tree, source)
-    exports: list[str] = []
+def _commonjs_assignment_values(tree: Node, source: bytes) -> list[Node | None]:
+    exports: list[Node | None] = []
     for statement in tree.named_children:
         if statement.type != "expression_statement" or not statement.named_children:
             continue
@@ -135,8 +132,29 @@ def _commonjs_exported_function(path: Path) -> str | None:
             continue
         if _text(property_name, source) != "exports":
             continue
-        exports.append(_text(right, source) if right is not None and right.type == "identifier" else "")
-    return exports[0] if len(exports) == 1 and exports[0] in local_functions else None
+        exports.append(right)
+    return exports
+
+
+def anonymous_commonjs_function(tree: Node, source: bytes) -> Node | None:
+    """Return a callable assigned directly and uniquely to ``module.exports``."""
+    values = _commonjs_assignment_values(tree, source)
+    if len(values) != 1:
+        return None
+    value = values[0]
+    return value if value is not None and value.type in _FUNCTION_VALUES and value.child_by_field_name("body") else None
+
+
+def _commonjs_exported_function(path: Path) -> str | None:
+    source = path.read_bytes()
+    tree = _parse(path, source)
+    values = _commonjs_assignment_values(tree, source)
+    if len(values) != 1 or values[0] is None:
+        return None
+    value = values[0]
+    if value.type == "identifier" and _text(value, source) in _local_functions(tree, source):
+        return _text(value, source)
+    return "exports" if anonymous_commonjs_function(tree, source) is not None else None
 
 
 def _commonjs_handler_imports(tree: Node, source: bytes, path: Path, root: Path) -> dict[str, str]:

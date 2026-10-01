@@ -682,6 +682,35 @@ app.get("/orders", readOrder);
     assert any(edge.source == "createHandler.createOrder" and edge.target == "orderService.create" for edge in analysis.edges)
 
 
+def test_node_route_resolves_an_anonymous_commonjs_function_import(tmp_path: Path):
+    (tmp_path / "createHandler.js").write_text('''module.exports = function(req, res) {
+  return orderService.create(req.body);
+};
+''', encoding="utf-8")
+    (tmp_path / "readHandler.js").write_text('''module.exports = (req, res) => orderService.read(req.params.id);
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const addOrder = require("./createHandler");
+const readOrder = require("./readHandler");
+const app = express();
+app.post("/orders", addOrder);
+app.get("/orders/:id", readOrder);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == {
+        ("POST", "/orders"), ("GET", "/orders/:id"),
+    }
+    assert {(entry.method, entry.name, entry.symbol) for entry in analysis.entrypoints if entry.kind == "http"} == {
+        ("POST", "/orders", "createHandler.exports"),
+        ("GET", "/orders/:id", "readHandler.exports"),
+    }
+    assert any(edge.source == "createHandler.exports" and edge.target == "orderService.create" for edge in analysis.edges)
+    assert any(edge.source == "readHandler.exports" and edge.target == "orderService.read" for edge in analysis.edges)
+
+
 def test_node_route_ignores_unproven_commonjs_handler_imports(tmp_path: Path):
     (tmp_path / "value.js").write_text('''const value = 123;
 module.exports = value;
@@ -693,15 +722,20 @@ module.exports = value;
 module.exports = overwritten;
 module.exports = {};
 ''', encoding="utf-8")
+    (tmp_path / "overwrittenAnonymous.js").write_text('''module.exports = (req, res) => res.sendStatus(200);
+module.exports = {};
+''', encoding="utf-8")
     (tmp_path / "server.js").write_text('''const express = require("express");
 const value = require("./value");
 const hidden = require("./hidden");
 const overwritten = require("./overwritten");
+const overwrittenAnonymous = require("./overwrittenAnonymous");
 const external = require("external-package");
 const app = express();
 app.get("/value", value);
 app.get("/hidden", hidden);
 app.get("/overwritten", overwritten);
+app.get("/overwrittenAnonymous", overwrittenAnonymous);
 app.get("/external", external);
 ''', encoding="utf-8")
 
