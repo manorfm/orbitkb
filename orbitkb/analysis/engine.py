@@ -108,7 +108,10 @@ from orbitkb.discovery.node_http_routes import (
     literal_fastify_route_definition as _fastify_literal_route_definition,
 )
 from orbitkb.discovery.node_imports import parse_node_named_imports
-from orbitkb.discovery.node_local_handlers import proven_local_handler_imports
+from orbitkb.discovery.node_local_handlers import (
+    anonymous_default_function,
+    proven_local_handler_imports,
+)
 from orbitkb.discovery.node_nest import (
     nest_decorator_path as _nest_decorator_path,
 )
@@ -125,7 +128,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "53"
+STATIC_ANALYSIS_INPUT_VERSION = "54"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -2256,6 +2259,11 @@ def _node_named_functions(tree: Node, source: bytes, module_name: str) -> list[_
             continue
         name = _text(name_node, source)
         functions.append(_Function(name, f"{module_name}.{name}", body, node))
+    anonymous_default = anonymous_default_function(tree)
+    if anonymous_default is not None:
+        body = anonymous_default.child_by_field_name("body")
+        if body is not None:
+            functions.append(_Function("default", f"{module_name}.default", body, anonymous_default))
     return functions
 
 

@@ -626,6 +626,35 @@ app.get("/orders", readOrder);
     assert any(edge.source == "createHandler.createOrder" and edge.target == "orderService.create" for edge in analysis.edges)
 
 
+def test_node_route_resolves_an_anonymous_default_function_import(tmp_path: Path):
+    (tmp_path / "createHandler.ts").write_text('''export default function(req, res) {
+  return orderService.create(req.body);
+}
+''', encoding="utf-8")
+    (tmp_path / "readHandler.ts").write_text('''export default (req, res) => orderService.read(req.params.id);
+''', encoding="utf-8")
+    (tmp_path / "server.ts").write_text('''import express from "express";
+import addOrder from "./createHandler";
+import readOrder from "./readHandler";
+const app = express();
+app.post("/orders", addOrder);
+app.get("/orders/:id", readOrder);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == {
+        ("POST", "/orders"), ("GET", "/orders/:id"),
+    }
+    assert {(entry.method, entry.name, entry.symbol) for entry in analysis.entrypoints if entry.kind == "http"} == {
+        ("POST", "/orders", "createHandler.default"),
+        ("GET", "/orders/:id", "readHandler.default"),
+    }
+    assert any(edge.source == "createHandler.default" and edge.target == "orderService.create" for edge in analysis.edges)
+    assert any(edge.source == "readHandler.default" and edge.target == "orderService.read" for edge in analysis.edges)
+
+
 def test_node_route_ignores_imports_without_a_named_local_function_export(tmp_path: Path):
     (tmp_path / "hidden.ts").write_text('''function hidden(req, res) { res.sendStatus(200); }
 ''', encoding="utf-8")
@@ -642,7 +671,7 @@ export { value };
 ''', encoding="utf-8")
     (tmp_path / "default-value.ts").write_text('''export default 123;
 ''', encoding="utf-8")
-    (tmp_path / "anonymous-default.ts").write_text('''export default function(req, res) { res.sendStatus(200); }
+    (tmp_path / "default-class.ts").write_text('''export default class NotAHandler {}
 ''', encoding="utf-8")
     (tmp_path / "default-function.ts").write_text('''export default function onlyType(req, res) { res.sendStatus(200); }
 ''', encoding="utf-8")
@@ -665,7 +694,7 @@ import { typeExport } from "./type-export";
 import { value } from "./value";
 import { remote } from "./reexport";
 import notCallable from "./default-value";
-import anonymous from "./anonymous-default";
+import notAHandler from "./default-class";
 import type onlyType from "./default-function";
 import externalDefault from "external-package";
 import { duplicate } from "./ambiguous";
@@ -679,7 +708,7 @@ app.get("/typeExport", typeExport);
 app.get("/value", value);
 app.get("/reexport", remote);
 app.get("/defaultValue", notCallable);
-app.get("/anonymous", anonymous);
+app.get("/defaultClass", notAHandler);
 app.get("/defaultType", onlyType);
 app.get("/externalDefault", externalDefault);
 app.get("/ambiguous", duplicate);

@@ -40,6 +40,24 @@ def _declared_functions(declaration: Node, source: bytes) -> frozenset[str]:
     return frozenset(names)
 
 
+def _anonymous_default_callable(statement: Node) -> Node | None:
+    if statement.type != "export_statement" or not any(child.type == "default" for child in statement.children):
+        return None
+    declaration = statement.child_by_field_name("declaration")
+    if declaration is not None and declaration.type == "function_declaration":
+        if declaration.child_by_field_name("name") is None and declaration.child_by_field_name("body") is not None:
+            return declaration
+    for child in statement.named_children:
+        if child.type in _FUNCTION_VALUES and child.child_by_field_name("body") is not None:
+            return child
+    return None
+
+
+def anonymous_default_function(tree: Node) -> Node | None:
+    """Return an anonymous callable exported directly as default, if present."""
+    return next((value for statement in tree.named_children if (value := _anonymous_default_callable(statement))), None)
+
+
 def _exported_functions(path: Path) -> dict[str, str]:
     source = path.read_bytes()
     tree = _parse(path, source)
@@ -55,15 +73,20 @@ def _exported_functions(path: Path) -> dict[str, str]:
             continue
         is_default = any(child.type == "default" for child in statement.children)
         if is_default:
+            local_name: str | None = None
             declaration = statement.child_by_field_name("declaration")
             if declaration is not None:
                 names = _declared_functions(declaration, source)
                 if len(names) == 1:
-                    exports["default"] = next(iter(names))
+                    local_name = next(iter(names))
             else:
                 identifier = next((child for child in statement.named_children if child.type == "identifier"), None)
                 if identifier is not None and _text(identifier, source) in local_functions:
-                    exports["default"] = _text(identifier, source)
+                    local_name = _text(identifier, source)
+            if local_name is None and _anonymous_default_callable(statement) is not None:
+                local_name = "default"
+            if local_name is not None:
+                exports["default"] = local_name
             continue
         if any(child.type == "type" for child in statement.children):
             continue
