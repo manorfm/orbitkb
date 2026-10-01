@@ -735,6 +735,72 @@ app.get("/orders", readOrder);
     assert any(edge.source == "handlers.createOrder" and edge.target == "orderService.create" for edge in analysis.edges)
 
 
+def test_node_route_resolves_named_commonjs_property_assignments(tmp_path: Path):
+    (tmp_path / "handlers.js").write_text('''function createOrder(req, res) {
+  return orderService.create(req.body);
+}
+const readOrder = (req, res) => orderService.read(req.params.id);
+exports.submitOrder = createOrder;
+module.exports.readOrder = readOrder;
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const { submitOrder: addOrder, readOrder } = require("./handlers");
+const app = express();
+app.post("/orders", addOrder);
+app.get("/orders/:id", readOrder);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == {
+        ("POST", "/orders"), ("GET", "/orders/:id"),
+    }
+    assert {(entry.method, entry.name, entry.symbol) for entry in analysis.entrypoints if entry.kind == "http"} == {
+        ("POST", "/orders", "handlers.createOrder"),
+        ("GET", "/orders/:id", "handlers.readOrder"),
+    }
+    assert any(edge.source == "handlers.createOrder" and edge.target == "orderService.create" for edge in analysis.edges)
+    assert any(edge.source == "handlers.readOrder" and edge.target == "orderService.read" for edge in analysis.edges)
+
+
+def test_node_route_ignores_conflicting_commonjs_property_assignments(tmp_path: Path):
+    (tmp_path / "duplicate.js").write_text('''function handler(req, res) { res.sendStatus(200); }
+exports.handler = handler;
+module.exports.handler = 123;
+''', encoding="utf-8")
+    (tmp_path / "replaced.js").write_text('''function handler(req, res) { res.sendStatus(200); }
+exports.handler = handler;
+module.exports = {};
+''', encoding="utf-8")
+    (tmp_path / "dynamic.js").write_text('''function handler(req, res) { res.sendStatus(200); }
+exports.handler = handler;
+const key = "handler";
+exports[key] = 123;
+''', encoding="utf-8")
+    (tmp_path / "detached.js").write_text('''function handler(req, res) { res.sendStatus(200); }
+exports = {};
+exports.handler = handler;
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const { handler: duplicate } = require("./duplicate");
+const { handler: replaced } = require("./replaced");
+const { handler: dynamic } = require("./dynamic");
+const { handler: detached } = require("./detached");
+const app = express();
+app.get("/duplicate", duplicate);
+app.get("/replaced", replaced);
+app.get("/dynamic", dynamic);
+app.get("/detached", detached);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert hints.endpoints == []
+    assert [entry for entry in analysis.entrypoints if entry.kind == "http"] == []
+
+
 def test_node_route_does_not_trust_mutated_commonjs_named_exports(tmp_path: Path):
     (tmp_path / "handlers.js").write_text('''function createOrder(req, res) { res.sendStatus(201); }
 module.exports = { createOrder };

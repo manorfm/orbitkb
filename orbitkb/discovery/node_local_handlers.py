@@ -141,7 +141,18 @@ def _is_module_exports(node: Node, source: bytes) -> bool:
     )
 
 
-def _has_commonjs_property_assignment(tree: Node, source: bytes) -> bool:
+def _is_exports_property(node: Node, source: bytes) -> bool:
+    if node.type not in {"member_expression", "subscript_expression"}:
+        return False
+    receiver = node.child_by_field_name("object")
+    return receiver is not None and (
+        _is_module_exports(receiver, source)
+        or (receiver.type == "identifier" and _text(receiver, source) == "exports")
+    )
+
+
+def _commonjs_property_assignments(tree: Node, source: bytes) -> list[tuple[Node, bool]]:
+    assignments: list[tuple[Node, bool]] = []
     pending = [tree]
     while pending:
         node = pending.pop()
@@ -149,13 +160,21 @@ def _has_commonjs_property_assignment(tree: Node, source: bytes) -> bool:
         if node.type != "assignment_expression":
             continue
         left = node.child_by_field_name("left")
-        if left is None or left.type != "member_expression":
+        if left is not None and _is_exports_property(left, source):
+            top_level = node.parent is not None and node.parent.type == "expression_statement" and node.parent.parent == tree
+            assignments.append((node, top_level))
+    return assignments
+
+
+def _has_exports_rebinding(tree: Node, source: bytes) -> bool:
+    pending = [tree]
+    while pending:
+        node = pending.pop()
+        pending.extend(node.named_children)
+        if node.type not in {"assignment_expression", "variable_declarator"}:
             continue
-        receiver = left.child_by_field_name("object")
-        if receiver is not None and (
-            _is_module_exports(receiver, source)
-            or (receiver.type == "identifier" and _text(receiver, source) == "exports")
-        ):
+        name = node.child_by_field_name("left" if node.type == "assignment_expression" else "name")
+        if name is not None and name.type == "identifier" and _text(name, source) == "exports":
             return True
     return False
 
@@ -181,15 +200,40 @@ def _commonjs_exported_function(path: Path) -> str | None:
     return "exports" if anonymous_commonjs_function(tree, source) is not None else None
 
 
+def _assigned_commonjs_named_exports(
+    assignments: list[tuple[Node, bool]], local_functions: set[str], source: bytes,
+) -> dict[str, str]:
+    exports: dict[str, str] = {}
+    seen: set[str] = set()
+    for assignment, top_level in assignments:
+        left = assignment.child_by_field_name("left")
+        right = assignment.child_by_field_name("right")
+        if not top_level or left is None or left.type != "member_expression":
+            return {}
+        property_name = left.child_by_field_name("property")
+        if property_name is None or property_name.type != "property_identifier":
+            return {}
+        exported_name = _text(property_name, source)
+        if exported_name in seen:
+            return {}
+        seen.add(exported_name)
+        if right is not None and right.type == "identifier" and _text(right, source) in local_functions:
+            exports[exported_name] = _text(right, source)
+    return exports
+
+
 def _commonjs_named_exports(path: Path) -> dict[str, str]:
     source = path.read_bytes()
     tree = _parse(path, source)
-    if _has_commonjs_property_assignment(tree, source):
-        return {}
     values = _commonjs_assignment_values(tree, source)
+    local_functions = _local_functions(tree, source)
+    assignments = _commonjs_property_assignments(tree, source)
+    if assignments:
+        if values or _has_exports_rebinding(tree, source):
+            return {}
+        return _assigned_commonjs_named_exports(assignments, local_functions, source)
     if len(values) != 1 or values[0] is None or values[0].type != "object":
         return {}
-    local_functions = _local_functions(tree, source)
     exports: dict[str, str] = {}
     seen: set[str] = set()
     for property_node in values[0].named_children:
