@@ -145,37 +145,70 @@ def _is_module_exports(node: Node, source: bytes) -> bool:
     )
 
 
-def _is_exports_property(node: Node, source: bytes) -> bool:
+def _is_exports_property(node: Node, source: bytes, aliases: set[str] | None = None) -> bool:
     if node.type not in {"member_expression", "subscript_expression"}:
         return False
     receiver = node.child_by_field_name("object")
-    return receiver is not None and (
-        _is_module_exports(receiver, source)
-        or (receiver.type == "identifier" and _text(receiver, source) == "exports")
-    )
+    return receiver is not None and _is_exports_object(receiver, source, aliases)
 
 
-def _is_exports_object(node: Node, source: bytes) -> bool:
-    return _is_module_exports(node, source) or (node.type == "identifier" and _text(node, source) == "exports")
+def _is_exports_object(node: Node, source: bytes, aliases: set[str] | None = None) -> bool:
+    if _is_module_exports(node, source):
+        return True
+    if node.type != "identifier":
+        return False
+    name = _text(node, source)
+    return name == "exports" or (aliases is not None and name in aliases)
+
+
+def _commonjs_export_aliases(tree: Node, source: bytes) -> set[str]:
+    declarations = [
+        variable
+        for statement in tree.named_children
+        if statement.type in {"lexical_declaration", "variable_declaration"}
+        for variable in statement.named_children
+        if variable.type == "variable_declarator"
+    ]
+    aliases: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for declaration in declarations:
+            name = declaration.child_by_field_name("name")
+            value = declaration.child_by_field_name("value")
+            if name is None or name.type != "identifier" or value is None:
+                continue
+            alias = _text(name, source)
+            if alias not in aliases and _is_exports_object(value, source, aliases):
+                aliases.add(alias)
+                changed = True
+    return aliases
 
 
 def _has_indirect_commonjs_mutation(tree: Node, source: bytes) -> bool:
+    aliases = _commonjs_export_aliases(tree, source)
     pending = [tree]
     while pending:
         node = pending.pop()
         pending.extend(node.named_children)
-        if node.type in {"unary_expression", "update_expression"}:
+        if node.type == "assignment_expression":
+            left = node.child_by_field_name("left")
+            if left is not None and left.type in {"member_expression", "subscript_expression"}:
+                receiver = left.child_by_field_name("object")
+                if receiver is not None and receiver.type == "identifier" and _text(receiver, source) in aliases:
+                    return True
+        elif node.type in {"unary_expression", "update_expression"}:
             argument = node.child_by_field_name("argument")
             is_delete = node.type == "unary_expression" and node.children[0].type == "delete"
             if (is_delete or node.type == "update_expression") and argument is not None:
-                if _is_exports_property(argument, source):
+                if _is_exports_property(argument, source, aliases):
                     return True
         elif node.type == "call_expression":
             function = node.child_by_field_name("function")
             arguments = node.child_by_field_name("arguments")
             if function is not None and _text(function, source) in _EXPORT_OBJECT_MUTATORS and arguments is not None:
                 args = arguments.named_children
-                if args and _is_exports_object(args[0], source):
+                if args and _is_exports_object(args[0], source, aliases):
                     return True
     return False
 
