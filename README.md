@@ -662,6 +662,9 @@ For a route with no outbound calls, the integration dimensions become sufficient
 only when the selected evidence covers flow and service calls, the entrypoint is
 confirmed, and navigation has no limits or boundaries. A partial evidence
 profile cannot prove an empty call list.
+Source-proven publish or consume edges also prevent a "no outbound integration"
+assessment; without a proven destination, the integration stays ambiguous and
+keeps the edge as evidence.
 An explicit OpenAPI operation description can satisfy the business behavior
 dimension for its exact matching HTTP route. Missing or blank descriptions
 remain missing; other incomplete dimensions still require generation.

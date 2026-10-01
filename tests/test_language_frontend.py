@@ -12,15 +12,18 @@ from orbitkb.analysis.models import (
     Evidence,
     FlowEdge,
     SecurityRequirement,
+    Symbol,
 )
 from orbitkb.analysis.resolution import BoundedFlowResolver
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import canonical_snapshots, messages, services
 from orbitkb.discovery.base import CodeExcerpt, EndpointHint, ServiceHints
 from orbitkb.domain.canonical import ServiceKey
+from orbitkb.domain.sufficiency import SufficiencyStatus
 from orbitkb.export.markdown import export_markdown
 from orbitkb.generation.mock_backend import MockBackend
 from orbitkb.generation.orchestrator import DiscoveryError, index_path, index_service
+from orbitkb.generation.route_evidence import route_capsule
 from orbitkb.mcp.queries import (
     describe_api,
     describe_entrypoint,
@@ -79,6 +82,21 @@ class FixtureDetector:
 
 class FixtureSupportedFrontend(FixtureFrontend):
     supported_capabilities = frozenset({"messaging"})
+
+
+class FixtureWritePublishFrontend(FixtureFrontend):
+    def analyze_file(self, path: Path, root: Path) -> AnalysisResult:
+        result = super().analyze_file(path, root)
+        evidence = Evidence(path.relative_to(root).as_posix(), 1, 1)
+        result.symbols.extend([
+            Symbol("FixtureStore.save", "FixtureStore", "save", evidence),
+            Symbol("FixtureEvents.publish", "FixtureEvents", "publish", evidence),
+        ])
+        result.edges.extend([
+            FlowEdge("Fixture.list", "FixtureStore.save", "writes", evidence),
+            FlowEdge("Fixture.list", "FixtureEvents.publish", "publishes", evidence),
+        ])
+        return result
 
 
 def test_new_language_frontend_uses_existing_analysis_and_canonical_projection(tmp_path: Path):
@@ -280,3 +298,29 @@ def test_custom_detector_no_match_reports_configured_search(tmp_path: Path):
 
     with pytest.raises(DiscoveryError, match="checked 1 configured detector"):
         index_path(conn, tmp_path, MockBackend(), detectors=(FixtureDetector(),))
+
+
+def test_fake_language_publish_flow_reaches_composer_gate_and_smells(tmp_path: Path):
+    (tmp_path / "routes.fixture").write_text("/fixtures\n", encoding="utf-8")
+    conn = open_db(tmp_path / "test.db")
+
+    result = index_service(
+        conn, "fixture-service", tmp_path, FixtureDetector(), MockBackend(),
+        analysis_engine=StaticAnalysisEngine(frontends={"fixture": FixtureWritePublishFrontend()}),
+    )
+
+    snapshot = canonical_snapshots.read_snapshot(conn, result.service_id)
+    capsule = route_capsule(snapshot, "GET", "/fixtures")
+    assert capsule is not None
+    assert {fact.value["relation"] for fact in capsule.facts if fact.kind == "flow_edge"} == {
+        "writes", "publishes",
+    }
+    assert capsule.boundaries == ()
+    assessment = result.sufficiency_details[0].assessment
+    assert assessment.status("integrations") == SufficiencyStatus.AMBIGUOUS
+    assert assessment.evidence_ids("integrations") == tuple(
+        fact.id for fact in capsule.facts if fact.kind == "flow_edge" and fact.value["relation"] == "publishes"
+    )
+    public = describe_entrypoint(conn, "fixture-service", "http", "GET", "/fixtures")
+    assert [smell["kind"] for smell in public["smells"]] == ["possible_non_atomic_publish"]
+    assert public["smells"][0]["evidence_targets"] == ["FixtureStore.save", "FixtureEvents.publish"]

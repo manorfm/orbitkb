@@ -92,6 +92,10 @@ class DeterministicSufficiencyEvaluator:
         contracts = [fact.value.get("contract") for fact in entrypoints
                      if isinstance(fact.value.get("contract"), dict)]
         calls = by_kind["service_call"]
+        messaging_edges = [
+            fact for fact in capsule.facts
+            if fact.kind == "flow_edge" and fact.value.get("relation") in {"publishes", "consumes"}
+        ]
         security = by_kind["security_requirement"]
         described = tuple(
             fact.id for fact in entrypoints
@@ -111,7 +115,7 @@ class DeterministicSufficiencyEvaluator:
             and len(entrypoints) == len(capsule.entrypoints)
             and all(fact.status == FactStatus.CONFIRMED for fact in entrypoints)
             and {"entrypoint", "flow_edge", "service_call"}.issubset(capsule.selected_kinds or ())
-            and not calls and not capsule.truncated and not capsule.boundaries
+            and not calls and not messaging_edges and not capsule.truncated and not capsule.boundaries
         )
         authorization_limited = (
             capsule.navigation_truncated
@@ -156,12 +160,13 @@ class DeterministicSufficiencyEvaluator:
             ),
             DimensionAssessment(
                 "integrations",
-                SufficiencyStatus.ENOUGH if no_outbound_proven or (calls and not capsule.truncated)
+                SufficiencyStatus.ENOUGH if no_outbound_proven or (calls and not capsule.truncated and not messaging_edges)
                 else SufficiencyStatus.AMBIGUOUS,
-                tuple(fact.id for fact in calls) if calls else (
+                tuple(fact.id for fact in (*calls, *messaging_edges)) if calls or messaging_edges else (
                     tuple(fact.id for fact in entrypoints) if no_outbound_proven else ()
                 ),
                 "no outbound calls in complete route flow" if no_outbound_proven
+                else "message operation lacks a proven destination" if messaging_edges
                 else "route-reachable calls have source evidence" if calls and not capsule.truncated
                 else "limited or absent route call evidence",
             ),
@@ -169,8 +174,9 @@ class DeterministicSufficiencyEvaluator:
                 "integration_purpose",
                 SufficiencyStatus.ENOUGH if no_outbound_proven
                 else SufficiencyStatus.AMBIGUOUS,
-                tuple(fact.id for fact in calls),
+                tuple(fact.id for fact in (*calls, *messaging_edges)),
                 "static call targets do not establish purpose or exchanged data" if calls
+                else "message operation purpose is not established" if messaging_edges
                 else "limited flow may omit calls" if not no_outbound_proven
                 else "no route-reachable call requires a purpose",
             ),
