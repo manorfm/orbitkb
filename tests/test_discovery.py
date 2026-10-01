@@ -480,6 +480,41 @@ app.use("/api", orders);
     assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
 
 
+def test_node_route_chain_applies_all_middleware_to_each_method(tmp_path: Path):
+    (tmp_path / "orders.routes.js").write_text('''const express = require("express");
+const router = express.Router();
+function requireAuthentication(req, res, next) { next(); }
+function traceRequest(req, res, next) { next(); }
+function validateOrder(req, res, next) { next(); }
+function readOrder(req, res) { res.sendStatus(200); }
+function createOrder(req, res) { res.sendStatus(201); }
+router.route("/orders").all(requireAuthentication).all(traceRequest)
+    .get(validateOrder, readOrder).post(createOrder);
+module.exports = router;
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const orders = require("./orders.routes");
+const app = express();
+app.use("/api", orders);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    expected = {("GET", "/api/orders"), ("POST", "/api/orders")}
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == expected
+    assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
+    contracts = {entry.method: entry.contract for entry in analysis.entrypoints if entry.kind == "http"}
+    assert contracts == {
+        "GET": {"route_middlewares": [
+            {"symbol": "requireAuthentication"}, {"symbol": "traceRequest"}, {"symbol": "validateOrder"},
+        ]},
+        "POST": {"route_middlewares": [
+            {"symbol": "requireAuthentication"}, {"symbol": "traceRequest"},
+        ]},
+    }
+
+
 def test_node_chained_route_ignores_ambiguous_cross_file_mount(tmp_path: Path):
     (tmp_path / "orders.routes.js").write_text('''const express = require("express");
 const router = express.Router();
@@ -532,6 +567,7 @@ app.route("/inline").delete((req, res) => res.sendStatus(204));
 app.route("/ghost").get(missingHandler);
 app.route("/invalid").unknown(readOrder).post(createOrder);
 app.route("/empty").get().post(createOrder);
+app.route("/emptyAll").all().get(readOrder);
 client.route("/fake").get(readOrder);
 ''', encoding="utf-8")
 

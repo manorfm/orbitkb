@@ -65,14 +65,15 @@ def literal_fastify_route_definition(args: list[Node], source: bytes) -> tuple[t
 
 def literal_express_chained_route(
     callee: Node, source: bytes, receivers: Collection[str],
-) -> tuple[str, str, str] | None:
-    """Extract a literal Express route method, including successive method calls."""
+) -> tuple[str, str, str, tuple[Node, ...]] | None:
+    """Extract a literal Express route method and preceding ``all`` middleware."""
     if callee.type != "member_expression":
         return None
     route_call = callee.child_by_field_name("object")
     method_node = callee.child_by_field_name("property")
     if route_call is None or method_node is None:
         return None
+    all_middleware_groups: list[list[Node]] = []
     while route_call.type == "call_expression":
         route_callee = route_call.child_by_field_name("function")
         route_arguments = route_call.child_by_field_name("arguments")
@@ -88,10 +89,15 @@ def literal_express_chained_route(
             args = route_arguments.named_children
             path = _string(args[0], source) if len(args) == 1 else None
             if receiver in receivers and path is not None:
-                return receiver, _text(method_node, source), path
+                all_middleware = tuple(
+                    argument for group in reversed(all_middleware_groups) for argument in group
+                )
+                return receiver, _text(method_node, source), path, all_middleware
             return None
-        if factory_method not in _DIRECT_METHODS or not route_arguments.named_children:
+        if (factory_method != "all" and factory_method not in _DIRECT_METHODS) or not route_arguments.named_children:
             return None
+        if factory_method == "all":
+            all_middleware_groups.append(route_arguments.named_children)
         route_call = receiver_node
     return None
 
@@ -149,7 +155,7 @@ def find_literal_node_routes(
             continue
         chained = literal_express_chained_route(callee, source, chained_receivers)
         if chained is not None:
-            receiver_name, method_name, route = chained
+            receiver_name, method_name, route, _ = chained
             handler = args.named_children[-1] if args.named_children else None
             if method_name in _DIRECT_METHODS and handler is not None and _local_handler(handler, handlers, source):
                 routes.append((receiver_name, method_name.upper(), route, node.start_point.row + 1))

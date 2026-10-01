@@ -124,7 +124,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "48"
+STATIC_ANALYSIS_INPUT_VERSION = "49"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -964,13 +964,13 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
             chained_route = _express_literal_chained_route(callee, source, chained_express_receivers)
             entrypoint_contract: dict | None = None
             if chained_route is not None:
-                receiver, method, path_value = chained_route
+                receiver, method, path_value, all_middleware = chained_route
                 if method not in self.HTTP_ROUTE_METHODS:
                     continue
                 http_methods = (method.upper(),)
                 args = arguments.named_children
                 handler_node = args[-1] if args else None
-                entrypoint_contract = _express_route_middleware_contract(args, source)
+                entrypoint_contract = _express_route_middleware_contract([*all_middleware, *args], source)
             else:
                 callee_text = _text(callee, source)
                 if "." not in callee_text:
