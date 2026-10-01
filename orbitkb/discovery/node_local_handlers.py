@@ -157,14 +157,17 @@ def _is_exports_object(node: Node, source: bytes, aliases: set[str] | None = Non
     return name == "exports" or (aliases is not None and name in aliases)
 
 
-def _commonjs_export_aliases(tree: Node, source: bytes) -> set[str]:
-    declarations = [
+def _top_level_declarators(tree: Node) -> list[Node]:
+    return [
         variable
         for statement in tree.named_children
         if statement.type in {"lexical_declaration", "variable_declaration"}
         for variable in statement.named_children
         if variable.type == "variable_declarator"
     ]
+
+
+def _commonjs_export_aliases(declarations: list[Node], source: bytes) -> set[str]:
     aliases: set[str] = set()
     changed = True
     while changed:
@@ -181,8 +184,45 @@ def _commonjs_export_aliases(tree: Node, source: bytes) -> set[str]:
     return aliases
 
 
+def _contains_export_reference(node: Node, source: bytes, aliases: set[str], containers: set[str]) -> bool:
+    if _is_exports_object(node, source, aliases):
+        return True
+    if node.type == "identifier":
+        return _text(node, source) in containers
+    if node.type == "shorthand_property_identifier":
+        name = _text(node, source)
+        return name == "exports" or name in aliases or name in containers
+    if node.type == "pair":
+        value = node.child_by_field_name("value")
+        return value is not None and _contains_export_reference(value, source, aliases, containers)
+    if node.type not in {"object", "array", "parenthesized_expression", "spread_element"}:
+        return False
+    return any(_contains_export_reference(child, source, aliases, containers) for child in node.named_children)
+
+
+def _commonjs_export_containers(declarations: list[Node], source: bytes, aliases: set[str]) -> set[str]:
+    containers: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for declaration in declarations:
+            name = declaration.child_by_field_name("name")
+            value = declaration.child_by_field_name("value")
+            if name is None or name.type != "identifier" or value is None:
+                continue
+            container = _text(name, source)
+            if container not in aliases and container not in containers:
+                if not _contains_export_reference(value, source, aliases, containers):
+                    continue
+                containers.add(container)
+                changed = True
+    return containers
+
+
 def _has_commonjs_export_mutation_or_escape(tree: Node, source: bytes) -> bool:
-    aliases = _commonjs_export_aliases(tree, source)
+    declarations = _top_level_declarators(tree)
+    aliases = _commonjs_export_aliases(declarations, source)
+    containers = _commonjs_export_containers(declarations, source, aliases)
     pending = [tree]
     while pending:
         node = pending.pop()
@@ -199,6 +239,9 @@ def _has_commonjs_export_mutation_or_escape(tree: Node, source: bytes) -> bool:
             if (is_delete or node.type == "update_expression") and argument is not None:
                 if _is_exports_property(argument, source, aliases):
                     return True
+        elif node.type == "return_statement":
+            if any(_contains_export_reference(child, source, aliases, containers) for child in node.named_children):
+                return True
         elif node.type == "call_expression":
             function = node.child_by_field_name("function")
             arguments = node.child_by_field_name("arguments")
@@ -209,6 +252,12 @@ def _has_commonjs_export_mutation_or_escape(tree: Node, source: bytes) -> bool:
                 if _is_exports_object(argument, source, aliases)
             ]
             if exported_args and (_text(function, source) != "Object.assign" or 0 in exported_args):
+                return True
+            if any(
+                _contains_export_reference(argument, source, aliases, containers)
+                and not _is_exports_object(argument, source, aliases)
+                for argument in arguments.named_children
+            ):
                 return True
     return False
 
