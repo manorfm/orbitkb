@@ -372,7 +372,7 @@ app.get("/fake", handler);
     hints = NodeTsDetector().collect_hints(tmp_path)
 
     assert {(hint.method, hint.path) for hint in hints.endpoints} == {
-        ("GET", "/express"), ("POST", "/router"), ("PUT", "/fastify"),
+        ("GET", "/express"), ("PUT", "/fastify"),
     }
 
 
@@ -393,6 +393,41 @@ function health(req, res) { res.sendStatus(200); }
     expected = {("POST", "/api/orders"), ("GET", "/health")}
     assert {(hint.method, hint.path) for hint in hints.endpoints} == expected
     assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
+
+
+def test_node_route_hints_include_a_proven_cross_file_express_mount_prefix(tmp_path: Path):
+    (tmp_path / "orders.routes.js").write_text('''const express = require("express");
+const router = express.Router();
+router.post("/orders", createOrder);
+module.exports = router;
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const orders = require("./orders.routes");
+const app = express();
+app.use("/api", orders);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+
+    assert [(hint.method, hint.path) for hint in hints.endpoints] == [("POST", "/api/orders")]
+
+
+def test_node_route_hints_do_not_guess_an_ambiguous_cross_file_mount(tmp_path: Path):
+    (tmp_path / "routes.js").write_text('''const express = require("express");
+const router = express.Router();
+router.get("/orders", handler);
+module.exports = router;
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const orders = require("./routes");
+const app = express();
+app.use("/api", orders);
+app.use("/internal", orders);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+
+    assert hints.endpoints == []
 
 
 def test_jvm_spring_detector_matches_and_finds_hints():

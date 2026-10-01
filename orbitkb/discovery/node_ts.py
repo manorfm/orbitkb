@@ -16,6 +16,7 @@ from orbitkb.discovery.node_http import (
     express_route_prefixes,
     fastify_receivers,
 )
+from orbitkb.discovery.node_mounts import cross_file_express_mounts
 from orbitkb.discovery.scan_helpers import (
     ENDPOINT_AFTER,
     ENDPOINT_BEFORE,
@@ -24,6 +25,7 @@ from orbitkb.discovery.scan_helpers import (
     excerpt_around,
     find_matches,
     first_existing_file,
+    iter_files,
     provider_from_match,
     resolve_local_calls,
 )
@@ -117,13 +119,18 @@ class NodeTsDetector:
         if entry:
             hints.entry_excerpt = excerpt_around(entry, folder, 1, context=20)
 
+        cross_file_mounts = cross_file_express_mounts(list(iter_files(folder, EXTENSIONS)), folder)
+        mounted_receivers: dict[Path, dict[str, str]] = {}
+        for (mounted_path, receiver), prefix in cross_file_mounts.items():
+            mounted_receivers.setdefault(mounted_path, {})[receiver] = prefix
         route_prefixes: dict[Path, dict[str, str]] = {}
         for path, line_no, match in find_matches(folder, EXTENSIONS, _HTTP_METHOD_RE):
             if path not in route_prefixes:
                 source = path.read_text(encoding="utf-8", errors="ignore")
-                applications, routers = express_receivers(source)
+                applications, _ = express_receivers(source)
                 route_prefixes[path] = {
-                    **{receiver: "" for receiver in applications | routers | fastify_receivers(source)},
+                    **{receiver: "" for receiver in applications | fastify_receivers(source)},
+                    **mounted_receivers.get(path.resolve(), {}),
                     **express_route_prefixes(source),
                 }
             receiver = match.group(1)
