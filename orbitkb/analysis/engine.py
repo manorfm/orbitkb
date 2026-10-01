@@ -81,18 +81,21 @@ from orbitkb.analysis.models import (
     Injection,
     MessageContract,
     MigrationFact,
+    NodeRouteCandidate,
     PersistenceFact,
     ResiliencePolicy,
     StaticServiceCall,
     Symbol,
 )
 from orbitkb.analysis.node_imports import parse_node_named_imports
+from orbitkb.analysis.node_router_mounts import resolve_node_router_mounts
 from orbitkb.analysis.resolution import BoundedFlowResolver
 from orbitkb.analysis.route_paths import join_route as _join_route
 from orbitkb.discovery.go_imports import (
     has_standard_net_http_import,
     parse_go_import_declarations,
 )
+from orbitkb.discovery.node_http import express_receivers
 from orbitkb.discovery.node_http import (
     express_route_prefixes as _express_route_prefixes,
 )
@@ -103,7 +106,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "44"
+STATIC_ANALYSIS_INPUT_VERSION = "45"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -887,6 +890,8 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
         client_declarations = node_stateful_client_declarations(source_text)
         command_imports = node_command_imports(source_text)
         express_route_prefixes = _express_route_prefixes(source_text)
+        _, express_routers = express_receivers(source_text)
+        pending_routers = express_routers - express_route_prefixes.keys()
         fastify_receivers = fastify_receivers_for_source(source_text)
         error_handler_parameter_counts = {
             name: 4
@@ -927,6 +932,7 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
             )
         route_prefixes = {
             **express_route_prefixes,
+            **{receiver: "" for receiver in pending_routers},
             **{receiver: "" for receiver in fastify_receivers},
         }
         for node in _walk(tree):
@@ -958,7 +964,7 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
                     http_methods = (method.upper(),)
                     path_value = _string(args[0], source) if args else None
                     handler_node = args[-1] if len(args) > 1 else None
-                    if receiver in express_route_prefixes:
+                    if receiver in express_routers or receiver in express_route_prefixes:
                         entrypoint_contract = _express_route_middleware_contract(args[1:], source)
                 elif method == "route" and receiver in fastify_receivers:
                     route_definition = _fastify_literal_route_definition(args, source)
@@ -984,13 +990,15 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
                     )
             if path_value is None or handler is None:
                 continue
-            result.entrypoints.extend(
-                EntryPoint(
+            for http_method in http_methods:
+                entrypoint = EntryPoint(
                     "http", http_method, path_value, handler.symbol, _evidence(path, root, node),
                     contract=entrypoint_contract,
                 )
-                for http_method in http_methods
-            )
+                if receiver in pending_routers:
+                    result.pending_node_routes.append(NodeRouteCandidate(receiver, entrypoint))
+                else:
+                    result.entrypoints.append(entrypoint)
         for parent in _walk(tree):
             if parent.type != "pair" or _text(parent.child_by_field_name("key"), source) not in {"Query", "Mutation", "Subscription"}:
                 continue
@@ -2983,6 +2991,7 @@ class StaticAnalysisEngine:
         if stack in {"node-ts", "node-js"}:
             schema = "\n".join(path.read_text(encoding="utf-8", errors="ignore") for path in files if path.suffix in {".graphql", ".gql"})
             result.contracts.update(_GraphqlContractExtractor().contracts(schema))
+            resolve_node_router_mounts(result, files, root)
         classifier = self._flow_classifiers.get(stack)
         if classifier is not None:
             classifier.classify(result, files)

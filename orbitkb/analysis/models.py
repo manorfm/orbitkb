@@ -23,6 +23,14 @@ class EntryPoint:
 
 
 @dataclass(frozen=True)
+class NodeRouteCandidate:
+    """Local Express router route awaiting proof of a cross-file mount."""
+
+    receiver: str
+    entrypoint: EntryPoint
+
+
+@dataclass(frozen=True)
 class FlowEdge:
     """A deterministic relation observed in a bounded entrypoint flow."""
 
@@ -240,6 +248,7 @@ class SecurityRequirement:
 class AnalysisResult:
     capabilities: dict[str, bool] = field(default_factory=dict)
     entrypoints: list[EntryPoint] = field(default_factory=list)
+    pending_node_routes: list[NodeRouteCandidate] = field(default_factory=list)
     edges: list[FlowEdge] = field(default_factory=list)
     contracts: dict[str, dict] = field(default_factory=dict)
     symbols: list[Symbol] = field(default_factory=list)
@@ -265,6 +274,7 @@ class AnalysisResult:
                 raise ValueError(f"conflicting analysis capability: {dimension}")
             self.capabilities[dimension] = supported
         self.entrypoints.extend(other.entrypoints)
+        self.pending_node_routes.extend(other.pending_node_routes)
         self.edges.extend(other.edges)
         self.contracts.update(other.contracts)
         self.symbols.extend(other.symbols)

@@ -6,6 +6,7 @@ from orbitkb.discovery.node_ts import NodeTsDetector
 
 CATALOG_GO_SAMPLE = Path(__file__).resolve().parents[1] / "verify/language_corpus/catalog-go-service"
 INVENTORY_TS_SAMPLE = Path(__file__).resolve().parents[1] / "verify/language_corpus/inventory-typescript-service"
+PAYMENTS_JS_SAMPLE = Path(__file__).resolve().parents[1] / "verify/sample_project/payments-service"
 
 
 def test_kotlin_local_constructor_is_not_an_invocation_but_unknown_call_remains(tmp_path: Path):
@@ -827,6 +828,59 @@ def test_node_analyzer_matches_discovered_routes_with_express_default_and_named_
     actual = {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"}
     assert expected == {("GET", "/items/:id"), ("POST", "/items")}
     assert actual == expected
+
+
+def test_node_analyzer_resolves_exported_express_router_mounted_in_another_file():
+    hints = NodeTsDetector().collect_hints(PAYMENTS_JS_SAMPLE)
+
+    expected = {(hint.method, hint.path) for hint in hints.endpoints}
+    assert expected == {
+        ("POST", "/charge"), ("GET", "/payments/:id"),
+        ("POST", "/payments/:id/refund"),
+    }
+    for stack in ("node-js", "node-ts"):
+        analysis = StaticAnalysisEngine().analyze(PAYMENTS_JS_SAMPLE, stack)
+        assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
+
+
+def test_node_analyzer_requires_one_literal_cross_file_express_mount(tmp_path: Path):
+    (tmp_path / "routes.js").write_text('''const express = require("express");
+const router = express.Router();
+router.post("/orders", (req, res) => orderService.create(req.body));
+module.exports = router;
+''', encoding="utf-8")
+    server = tmp_path / "server.js"
+    server.write_text('''const express = require("express");
+const orders = require("./routes");
+const app = express();
+app.use("/api", orders);
+''', encoding="utf-8")
+
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert [(entry.method, entry.name, entry.evidence.file_path) for entry in analysis.entrypoints] == [
+        ("POST", "/api/orders", "routes.js"),
+    ]
+    assert any(edge.source == analysis.entrypoints[0].symbol and edge.target == "orderService.create"
+               for edge in analysis.edges)
+
+    server.write_text(server.read_text() + 'app.use("/internal", orders);\n', encoding="utf-8")
+    assert not StaticAnalysisEngine().analyze(tmp_path, "node-js").entrypoints
+
+
+def test_node_analyzer_does_not_promote_router_without_proven_export(tmp_path: Path):
+    (tmp_path / "routes.js").write_text('''const express = require("express");
+const router = express.Router();
+router.get("/orders", (req, res) => res.sendStatus(200));
+module.exports = otherRouter;
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const orders = require("./routes");
+const app = express();
+app.use("/api", orders);
+''', encoding="utf-8")
+
+    assert not StaticAnalysisEngine().analyze(tmp_path, "node-js").entrypoints
 
 
 def test_node_analyzer_exposes_literal_express_route_and_named_handler_flow(tmp_path: Path):

@@ -18,10 +18,10 @@
     "orders-service/apis/post-orders-order-id-cancel.md": "a7addf4699d4be7e72cf9a007d49ed915bb3eda86246f1f67e9cd40ee59e1744",
     "orders-service/apis/post-orders.md": "d161b3a5aadd9337ad9e0747a3d318f89a209a2bb256389026d591d6ea402913",
     "orders-service/index.md": "047a60b8440ee0ce89055c5d6b4de081a9e1fc54e840b97f93adf77b042c8446",
-    "payments-service/apis/get-payments-id.md": "386aedb5e710e4aaf489f22cc096e11b1fe9a66cd55e7cf97a94397ce2b46b30",
-    "payments-service/apis/post-charge.md": "31e631bea5fb064bf47e5864d9701b1c37c8b5cd231444c65d9ca573aaf4ad0a",
-    "payments-service/apis/post-payments-id-refund.md": "1df026ce922b28127db73f9925947bdde9456f1077001ee33df73d4f5e854c43",
-    "payments-service/index.md": "34209a3696bef1695fa3cedbff7c880e47998db414c375bae39fcf714f65578d",
+    "payments-service/apis/get-payments-id.md": "54e683321a798cdb6be0d1d9d7d4734c5b119cd124c2672ce26301518a1b9ca0",
+    "payments-service/apis/post-charge.md": "5acddd6b641b7c15e2a9bc5a5d268421d177d8a838ffb71379b267c76ecec453",
+    "payments-service/apis/post-payments-id-refund.md": "b003ebe5b2e171cb6ddedb58f015d8723a1251794be7db760cd1812493e25d7b",
+    "payments-service/index.md": "b031408d75d67526fc0ecca4aac816df0a205cd28bfbdbfe4095a190181b2687",
     "topology.mmd": "9f0ffb8fdeccd6d62ffa6cce8d74a4464d19b6c6867d50fe373be08d1b5c3577"
   },
   "integration_fixture": {
