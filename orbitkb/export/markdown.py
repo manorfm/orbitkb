@@ -96,9 +96,9 @@ def _fmt_messages(messages: list[sqlite3.Row]) -> list[str]:
     return [f"- **{m['channel']}** ({m['direction']}): {m['description'] or ''}" for m in messages]
 
 
-def _dependency_limit_note(navigator: KnowledgeNavigator | None) -> str | None:
+def _dependency_coverage_note(navigator: KnowledgeNavigator | None) -> str | None:
     if navigator is None:
-        return None
+        return "- (dependency analysis unavailable)"
     routes = {
         (fact.subject.method, fact.subject.name)
         for fact in navigator.snapshot.facts
@@ -154,13 +154,11 @@ def export_markdown(conn: sqlite3.Connection, out_dir: Path, service_filter: str
         dependency_lines.extend(
             f"- **{target}** (http (unresolved), declared target)" for target in declared_targets
         )
-        limit_note = _dependency_limit_note(navigator)
-        if limit_note:
-            dependency_lines.append(limit_note)
+        coverage_note = _dependency_coverage_note(navigator)
+        if coverage_note:
+            dependency_lines.append(coverage_note)
         elif not dependency_lines:
-            dependency_lines.append(
-                "- (dependency analysis unavailable)" if navigator is None else "- (no dependency detected)"
-            )
+            dependency_lines.append("- (no dependency detected)")
 
         lines = [
             f"# {svc['name']}",

@@ -68,6 +68,7 @@ def test_export_markdown_writes_service_index_and_api_detail(tmp_path: Path):
     assert "Handles orders." in index_text
     assert "payments-service" in index_text  # dependency line
     assert "charge the customer" in index_text
+    assert "dependency analysis unavailable" in index_text.split("## Depends on\n", 1)[1].split("\n## APIs", 1)[0]
     assert "POST /orders" in index_text
 
     api_files = list((out_dir / "orders-service" / "apis").glob("*.md"))
@@ -307,6 +308,7 @@ def test_markdown_reports_source_proven_http_target_without_model_call(tmp_path:
             Evidence("CatalogClient.kt", 8, 8),
         ),
     ]))
+    conn.execute("DELETE FROM canonical_snapshots WHERE service_id = ?", (service_id,))
 
     export_markdown(conn, tmp_path / "docs")
 
@@ -314,6 +316,7 @@ def test_markdown_reports_source_proven_http_target_without_model_call(tmp_path:
     dependencies = text.split("## Depends on\n", 1)[1].split("\n## APIs", 1)[0]
     assert "catalog-service" in dependencies
     assert "http (unresolved)" in dependencies
+    assert "dependency analysis unavailable" in dependencies
     assert "no dependency detected" not in dependencies
 
 

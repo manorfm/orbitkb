@@ -307,8 +307,8 @@ A declared target is not a confirmed runtime address.
 The service dependency list also includes source-proven HTTP client targets
 when no indexed call represents them, labeled `unresolved` rather than treated
 as a confirmed destination.
-When a service has no indexed dependency and no canonical snapshot, its page
-reports that dependency analysis is unavailable.
+When a service has no canonical snapshot, its page reports that dependency
+analysis is unavailable alongside any known targets.
 If a route in the snapshot has unresolved or bounded flow, the dependency list
 warns that other dependencies may exist alongside any known targets.
 Indexed calls with an unresolved target carry the same label in service and API

@@ -27,12 +27,12 @@
   "integration_fixture": {
     "exports": {
       "checkout-service/apis/post-checkout.md": "2ae17dfe3591def0d242548a35893f0bc68e69110f75f2b663b3939cc8dd62a4",
-      "checkout-service/index.md": "b5c17de0f0b27dba61dc6f698fbb530b5bbc87f8f5dbc81aa4ffa5c71799e5e6",
+      "checkout-service/index.md": "a971ed2d83d76d30682719927fedb42d96ec20411438cddc9bf0b709b2fbf5e6",
       "notification-service/index.md": "d8665d5295d7d6025bf0656a143adaca4124c0358773b942081fca4d44c600c8",
       "order-service/apis/post-orders.md": "83894079c230f7cba9cd53d334efeda065463fa23ac8aaabc4b7c6f340a8a979",
-      "order-service/index.md": "850e1298ea4cbb1f6282813b288abada737ebfa08ad36a1f5e70ef30178b5382",
+      "order-service/index.md": "80aad9a7ff6c623481793e0512b5652f5e428850ed49511296e8608d7c4db8e5",
       "payments-service/apis/post-charge.md": "db4cf7fa0c4b4816e89f501c3972fc5204ee17d4f6c72589735988c22949a8c6",
-      "payments-service/index.md": "eab04c378fe0dc395a38915e79718c8f6f6211fcb695b88a1a1e05443b19922d",
+      "payments-service/index.md": "42ae7190e3c73f404f2254c9875a39dcadae745a8e661eef267fe2f3f8c77ef6",
       "topology.mmd": "72a7e3363625085b2a24e20d3d5b7ff18008ea60309b2c519f5af4cb307b120a"
     },
     "topology": "graph TD\n  svc_checkout_service[\"checkout-service\"]\n  svc_notification_service[\"notification-service\"]\n  svc_order_service[\"order-service\"]\n  svc_payments_service[\"payments-service\"]\n  svc_checkout_service -->|http| svc_payments_service\n  svc_order_service -->|http| svc_payments_service\n  ext_stripe_api((\"Stripe API\"))\n  svc_payments_service -.->|saas| ext_stripe_api\n  svc_payments_service ==>|payment_authorized| svc_notification_service"
