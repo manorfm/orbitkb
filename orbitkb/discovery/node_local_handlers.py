@@ -1,4 +1,4 @@
-"""Resolve explicitly exported functions behind local Node named imports."""
+"""Resolve explicitly exported functions behind local Node imports."""
 
 from __future__ import annotations
 
@@ -51,9 +51,21 @@ def _exported_functions(path: Path) -> dict[str, str]:
 
     exports: dict[str, str] = {}
     for statement in tree.named_children:
-        if statement.type != "export_statement" or any(
-            child.type in {"default", "type"} for child in statement.children
-        ):
+        if statement.type != "export_statement":
+            continue
+        is_default = any(child.type == "default" for child in statement.children)
+        if is_default:
+            declaration = statement.child_by_field_name("declaration")
+            if declaration is not None:
+                names = _declared_functions(declaration, source)
+                if len(names) == 1:
+                    exports["default"] = next(iter(names))
+            else:
+                identifier = next((child for child in statement.named_children if child.type == "identifier"), None)
+                if identifier is not None and _text(identifier, source) in local_functions:
+                    exports["default"] = _text(identifier, source)
+            continue
+        if any(child.type == "type" for child in statement.children):
             continue
         declaration = statement.child_by_field_name("declaration")
         if declaration is not None:
@@ -93,6 +105,11 @@ def proven_local_handler_imports(tree: Node, source: bytes, path: Path, root: Pa
             continue
         exports = _exported_functions(imported)
         for names in clause.named_children:
+            if names.type == "identifier":
+                local_name = exports.get("default")
+                if local_name is not None:
+                    symbols[_text(names, source)] = f"{imported.stem}.{local_name}"
+                continue
             if names.type != "named_imports":
                 continue
             for specifier in names.named_children:
