@@ -21,12 +21,19 @@ func missing() { http.HandleFunc("/missing", missingHandler) }
     (tmp_path / "valid.go").write_text('''package main
 import "net/http"
 func valid() { http.HandleFunc("/valid", validHandler) }
+func validHandler() {}
 ''', encoding="utf-8")
     (tmp_path / "grouped.go").write_text('''package main
 import (
     http "net/http"
 )
-func grouped() { http.HandleFunc("/grouped", groupedHandler) }
+func grouped() {
+    http.HandleFunc(
+        "/grouped",
+        groupedHandler,
+    )
+}
+func groupedHandler() {}
 ''', encoding="utf-8")
 
     hints = GoDetector().collect_hints(tmp_path)
@@ -34,6 +41,26 @@ func grouped() { http.HandleFunc("/grouped", groupedHandler) }
     assert {(hint.method, hint.path) for hint in hints.endpoints} == {
         ("ANY", "/valid"), ("ANY", "/grouped"),
     }
+
+
+def test_go_handlefunc_hints_require_a_named_handler_declared_in_the_same_file(tmp_path: Path):
+    (tmp_path / "main.go").write_text('''package main
+import "net/http"
+func main() {
+    http.HandleFunc("/known", known)
+    http.HandleFunc("/unknown", unknown)
+    http.HandleFunc("/method", handler.Serve)
+    http.HandleFunc("/dynamic", func() {})
+}
+func known() {}
+''', encoding="utf-8")
+    (tmp_path / "other.go").write_text('''package main
+func unknown() {}
+''', encoding="utf-8")
+
+    hints = GoDetector().collect_hints(tmp_path)
+
+    assert [(hint.method, hint.path) for hint in hints.endpoints] == [("ANY", "/known")]
 
 
 def test_discover_services_finds_all_three():
