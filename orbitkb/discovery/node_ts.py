@@ -143,7 +143,8 @@ class NodeTsDetector:
         for path in node_files:
             prefixes = prefixes_for(path)
             for receiver, method, route, line_no in find_literal_node_routes(
-                path, frozenset(prefixes), fastify_by_file[path], frozenset(local_express_prefixes[path]),
+                path, frozenset(prefixes), fastify_by_file[path],
+                frozenset(local_express_prefixes[path]) | frozenset(mounted_receivers.get(path.resolve(), {})),
             ):
                 hints.endpoints.append(_endpoint_hint(
                     method, _route_with_prefix(prefixes[receiver], route), path, folder, line_no,

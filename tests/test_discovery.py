@@ -436,6 +436,49 @@ app.use("/api", orders);
     assert [(hint.method, hint.path) for hint in hints.endpoints] == [("POST", "/api/orders")]
 
 
+def test_node_chained_route_resolves_a_proven_cross_file_mount(tmp_path: Path):
+    (tmp_path / "orders.routes.js").write_text('''const express = require("express");
+const router = express.Router();
+function createOrder(req, res) { res.sendStatus(201); }
+router.route("/orders").post(createOrder);
+module.exports = router;
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const orders = require("./orders.routes");
+const app = express();
+app.use("/api", orders);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert [(hint.method, hint.path) for hint in hints.endpoints] == [("POST", "/api/orders")]
+    assert [(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"] == [
+        ("POST", "/api/orders"),
+    ]
+
+
+def test_node_chained_route_ignores_ambiguous_cross_file_mount(tmp_path: Path):
+    (tmp_path / "orders.routes.js").write_text('''const express = require("express");
+const router = express.Router();
+function createOrder(req, res) { res.sendStatus(201); }
+router.route("/orders").post(createOrder);
+module.exports = router;
+''', encoding="utf-8")
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const orders = require("./orders.routes");
+const app = express();
+app.use("/api", orders);
+app.use("/internal", orders);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert hints.endpoints == []
+    assert [entry for entry in analysis.entrypoints if entry.kind == "http"] == []
+
+
 def test_node_route_hints_do_not_guess_an_ambiguous_cross_file_mount(tmp_path: Path):
     (tmp_path / "routes.js").write_text('''const express = require("express");
 const router = express.Router();
