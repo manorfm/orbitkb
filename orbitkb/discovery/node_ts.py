@@ -11,6 +11,7 @@ from orbitkb.discovery.base import (
     PersistenceHint,
     ServiceHints,
 )
+from orbitkb.discovery.node_fastify import find_literal_fastify_routes
 from orbitkb.discovery.node_http import (
     express_receivers,
     express_route_prefixes,
@@ -126,20 +127,23 @@ class NodeTsDetector:
         if entry:
             hints.entry_excerpt = excerpt_around(entry, folder, 1, context=20)
 
-        cross_file_mounts = cross_file_express_mounts(list(iter_files(folder, EXTENSIONS)), folder)
+        node_files = list(iter_files(folder, EXTENSIONS))
+        cross_file_mounts = cross_file_express_mounts(node_files, folder)
         mounted_receivers: dict[Path, dict[str, str]] = {}
         for (mounted_path, receiver), prefix in cross_file_mounts.items():
             mounted_receivers.setdefault(mounted_path, {})[receiver] = prefix
         route_prefixes: dict[Path, dict[str, str]] = {}
         local_express_prefixes: dict[Path, dict[str, str]] = {}
+        fastify_by_file: dict[Path, frozenset[str]] = {}
 
         def prefixes_for(path: Path) -> dict[str, str]:
             if path not in route_prefixes:
                 source = path.read_text(encoding="utf-8", errors="ignore")
                 applications, _ = express_receivers(source)
                 local_express_prefixes[path] = express_route_prefixes(source)
+                fastify_by_file[path] = fastify_receivers(source)
                 route_prefixes[path] = {
-                    **{receiver: "" for receiver in applications | fastify_receivers(source)},
+                    **{receiver: "" for receiver in applications | fastify_by_file[path]},
                     **mounted_receivers.get(path.resolve(), {}),
                     **local_express_prefixes[path],
                 }
@@ -161,6 +165,11 @@ class NodeTsDetector:
                 continue
             route = _route_with_prefix(local_express_prefixes[path][receiver], match.group(3))
             hints.endpoints.append(_endpoint_hint(match.group(4).upper(), route, path, folder, line_no))
+
+        for path in node_files:
+            prefixes_for(path)
+            for method, route, line_no in find_literal_fastify_routes(path, fastify_by_file[path]):
+                hints.endpoints.append(_endpoint_hint(method, route, path, folder, line_no))
 
         for path, line_no, match in find_matches(folder, EXTENSIONS, _NEST_ROUTE_RE):
             method, route = match.group(1).upper(), match.group(2) or "/"

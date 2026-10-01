@@ -449,6 +449,27 @@ client.route("/fake").get(readOrder);
     assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
 
 
+def test_node_route_hints_include_literal_fastify_route_objects(tmp_path: Path):
+    (tmp_path / "main.ts").write_text('''import Fastify from "fastify";
+const app = Fastify();
+const client = unrelatedClient();
+const dynamicPath = "/dynamic";
+function createOrder(request, reply) { reply.code(201).send(); }
+function readOrder(request, reply) { reply.send(); }
+app.route({ method: "POST", url: "/orders", handler: createOrder });
+app.route({ method: ["GET", "HEAD"], url: "/orders/:id", handler: readOrder });
+app.route({ method: "GET", url: dynamicPath, handler: readOrder });
+client.route({ method: "DELETE", url: "/fake", handler: readOrder });
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    expected = {("POST", "/orders"), ("GET", "/orders/:id"), ("HEAD", "/orders/:id")}
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == expected
+    assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
+
+
 def test_jvm_spring_detector_matches_and_finds_hints():
     """inventory-service is Clean Architecture over Cassandra: StockController
     (conforming) exposes two endpoints; legacy.QuickStockPatchController is a

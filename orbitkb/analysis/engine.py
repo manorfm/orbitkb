@@ -95,6 +95,9 @@ from orbitkb.discovery.go_imports import (
     has_standard_net_http_import,
     parse_go_import_declarations,
 )
+from orbitkb.discovery.node_fastify import (
+    literal_fastify_route_definition as _fastify_literal_route_definition,
+)
 from orbitkb.discovery.node_http import express_receivers
 from orbitkb.discovery.node_http import (
     express_route_prefixes as _express_route_prefixes,
@@ -2236,56 +2239,6 @@ def _fastify_error_handler_names(source: str, receivers: frozenset[str]) -> froz
         for receiver, handler in re.findall(r"\b(\w+)\.setErrorHandler\s*\(\s*(\w+)\s*\)", source)
         if receiver in receivers
     )
-
-
-def _fastify_literal_route_definition(args: list[Node], source: bytes) -> tuple[tuple[str, ...], str, Node] | None:
-    """Return the complete literal subset of a Fastify ``route`` object.
-
-    Object registration is intentionally accepted only when the three facts needed
-    for a reliable endpoint are present exactly once. Arrays, variables and dynamic
-    object construction are left unresolved instead of being guessed.
-    """
-    if len(args) != 1 or args[0].type != "object":
-        return None
-    fields: dict[str, Node] = {}
-    for pair in args[0].named_children:
-        if pair.type != "pair":
-            continue
-        key = pair.child_by_field_name("key")
-        value = pair.child_by_field_name("value")
-        if key is None or value is None:
-            continue
-        field_name = _text(key, source)
-        if field_name not in {"method", "url", "handler"}:
-            continue
-        if field_name in fields:
-            return None
-        fields[field_name] = value
-    methods = _fastify_literal_route_methods(fields.get("method"), source)
-    path = _string(fields.get("url"), source)
-    handler = fields.get("handler")
-    if methods is None or path is None or handler is None:
-        return None
-    return methods, path, handler
-
-
-def _fastify_literal_route_methods(node: Node | None, source: bytes) -> tuple[str, ...] | None:
-    """Return one or more literal HTTP methods accepted by Fastify route objects."""
-    if node is None:
-        return None
-    method_nodes = node.named_children if node.type == "array" else (node,)
-    if not method_nodes:
-        return None
-    methods = tuple(_string(method_node, source) for method_node in method_nodes)
-    if any(method is None for method in methods):
-        return None
-    normalized_methods = tuple(method.upper() for method in methods if method is not None)
-    if len(set(normalized_methods)) != len(normalized_methods):
-        return None
-    allowed_methods = {route_method.upper() for route_method in _NodeGraphqlAnalyzer.HTTP_ROUTE_METHODS}
-    if any(method not in allowed_methods for method in normalized_methods):
-        return None
-    return normalized_methods
 
 
 def _node_named_functions(tree: Node, source: bytes, module_name: str) -> list[_Function]:
