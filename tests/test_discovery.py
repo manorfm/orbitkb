@@ -430,6 +430,25 @@ app.use("/internal", orders);
     assert hints.endpoints == []
 
 
+def test_node_route_hints_include_proven_express_route_chains(tmp_path: Path):
+    (tmp_path / "main.ts").write_text('''import express from "express";
+const app = express();
+const client = unrelatedClient();
+function createOrder(req, res) { res.sendStatus(201); }
+function readOrder(req, res) { res.sendStatus(200); }
+app.route("/orders").post(createOrder);
+app.route("/orders").get(readOrder);
+client.route("/fake").get(readOrder);
+''', encoding="utf-8")
+
+    hints = NodeTsDetector().collect_hints(tmp_path)
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    expected = {("POST", "/orders"), ("GET", "/orders")}
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == expected
+    assert {(entry.method, entry.name) for entry in analysis.entrypoints if entry.kind == "http"} == expected
+
+
 def test_jvm_spring_detector_matches_and_finds_hints():
     """inventory-service is Clean Architecture over Cassandra: StockController
     (conforming) exposes two endpoints; legacy.QuickStockPatchController is a

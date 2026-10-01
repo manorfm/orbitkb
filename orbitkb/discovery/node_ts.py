@@ -48,6 +48,9 @@ _HTTP_METHOD_RE = re.compile(
     r"""\b([A-Za-z_]\w*)\.(get|post|put|patch|delete)\s*\(\s*['"`]([^'"`]+)['"`]""",
     re.IGNORECASE,
 )
+_EXPRESS_ROUTE_CHAIN_RE = re.compile(
+    r"""\b([A-Za-z_]\w*)\.route\s*\(\s*(['"])([^'"]+)\2\s*\)\s*\.\s*(get|post|put|patch|delete)\s*\("""
+)
 _NEST_ROUTE_RE = re.compile(r"""@(Get|Post|Put|Patch|Delete)\s*\(\s*['"`]?([^'")\`]*)['"`]?\s*\)""")
 _NEST_CONTROLLER_RE = re.compile(r"""@Controller\s*\(\s*['"`]([^'"`]*)['"`]\s*\)""")
 
@@ -95,6 +98,10 @@ def _endpoint_hint(method: str, path_value: str, file_path: Path, folder: Path, 
     )
 
 
+def _route_with_prefix(prefix: str, route: str) -> str:
+    return f"{prefix.rstrip('/')}/{route.lstrip('/')}" if prefix else route
+
+
 class NodeTsDetector:
     id = "node-ts"
 
@@ -124,23 +131,36 @@ class NodeTsDetector:
         for (mounted_path, receiver), prefix in cross_file_mounts.items():
             mounted_receivers.setdefault(mounted_path, {})[receiver] = prefix
         route_prefixes: dict[Path, dict[str, str]] = {}
-        for path, line_no, match in find_matches(folder, EXTENSIONS, _HTTP_METHOD_RE):
+        local_express_prefixes: dict[Path, dict[str, str]] = {}
+
+        def prefixes_for(path: Path) -> dict[str, str]:
             if path not in route_prefixes:
                 source = path.read_text(encoding="utf-8", errors="ignore")
                 applications, _ = express_receivers(source)
+                local_express_prefixes[path] = express_route_prefixes(source)
                 route_prefixes[path] = {
                     **{receiver: "" for receiver in applications | fastify_receivers(source)},
                     **mounted_receivers.get(path.resolve(), {}),
-                    **express_route_prefixes(source),
+                    **local_express_prefixes[path],
                 }
+            return route_prefixes[path]
+
+        for path, line_no, match in find_matches(folder, EXTENSIONS, _HTTP_METHOD_RE):
+            prefixes = prefixes_for(path)
             receiver = match.group(1)
-            if receiver not in route_prefixes[path]:
+            if receiver not in prefixes:
                 continue
             method, route = match.group(2).upper(), match.group(3)
-            prefix = route_prefixes[path][receiver]
-            if prefix:
-                route = f"{prefix.rstrip('/')}/{route.lstrip('/')}"
+            route = _route_with_prefix(prefixes[receiver], route)
             hints.endpoints.append(_endpoint_hint(method, route, path, folder, line_no))
+
+        for path, line_no, match in find_matches(folder, EXTENSIONS, _EXPRESS_ROUTE_CHAIN_RE):
+            prefixes_for(path)
+            receiver = match.group(1)
+            if receiver not in local_express_prefixes[path]:
+                continue
+            route = _route_with_prefix(local_express_prefixes[path][receiver], match.group(3))
+            hints.endpoints.append(_endpoint_hint(match.group(4).upper(), route, path, folder, line_no))
 
         for path, line_no, match in find_matches(folder, EXTENSIONS, _NEST_ROUTE_RE):
             method, route = match.group(1).upper(), match.group(2) or "/"
