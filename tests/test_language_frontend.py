@@ -324,3 +324,29 @@ def test_fake_language_publish_flow_reaches_composer_gate_and_smells(tmp_path: P
     public = describe_entrypoint(conn, "fixture-service", "http", "GET", "/fixtures")
     assert [smell["kind"] for smell in public["smells"]] == ["possible_non_atomic_publish"]
     assert public["smells"][0]["evidence_targets"] == ["FixtureStore.save", "FixtureEvents.publish"]
+
+
+def test_unsupported_messaging_cannot_prove_empty_route_integrations(tmp_path: Path):
+    (tmp_path / "routes.fixture").write_text("/fixtures\n", encoding="utf-8")
+    conn = open_db(tmp_path / "test.db")
+
+    first = index_service(
+        conn, "fixture-service", tmp_path, FixtureDetector(), MockBackend(),
+        analysis_engine=StaticAnalysisEngine(frontends={"fixture": FixtureFrontend()}),
+    )
+
+    snapshot = canonical_snapshots.read_snapshot(conn, first.service_id)
+    capsule = route_capsule(snapshot, "GET", "/fixtures")
+    capability = next(fact for fact in capsule.facts if fact.kind == "analysis_capability")
+    assert capability.value == {"dimension": "messaging"}
+    assert capability.status.value == "unsupported"
+    assessment = first.sufficiency_details[0].assessment
+    assert assessment.status("integrations") == SufficiencyStatus.UNSUPPORTED
+    assert assessment.evidence_ids("integrations") == (capability.id,)
+
+    second = index_service(
+        conn, "fixture-service", tmp_path, FixtureDetector(), MockBackend(),
+        analysis_engine=StaticAnalysisEngine(frontends={"fixture": FixtureSupportedFrontend()}),
+    )
+
+    assert second.sufficiency_details[0].assessment.status("integrations") == SufficiencyStatus.ENOUGH

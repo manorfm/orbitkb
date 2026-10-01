@@ -96,6 +96,15 @@ class DeterministicSufficiencyEvaluator:
             fact for fact in capsule.facts
             if fact.kind == "flow_edge" and fact.value.get("relation") in {"publishes", "consumes"}
         ]
+        unsupported_messaging = [
+            fact for fact in capsule.facts
+            if fact.kind == "analysis_capability" and fact.value.get("dimension") == "messaging"
+            and fact.status is FactStatus.UNSUPPORTED
+        ]
+        messaging_unassessed = bool(unsupported_messaging) and not messaging_edges
+        integration_evidence = tuple(fact.id for fact in (
+            *calls, *messaging_edges, *(unsupported_messaging if messaging_unassessed else ())
+        ))
         security = by_kind["security_requirement"]
         described = tuple(
             fact.id for fact in entrypoints
@@ -115,7 +124,8 @@ class DeterministicSufficiencyEvaluator:
             and len(entrypoints) == len(capsule.entrypoints)
             and all(fact.status == FactStatus.CONFIRMED for fact in entrypoints)
             and {"entrypoint", "flow_edge", "service_call"}.issubset(capsule.selected_kinds or ())
-            and not calls and not messaging_edges and not capsule.truncated and not capsule.boundaries
+            and not calls and not messaging_edges and not messaging_unassessed
+            and not capsule.truncated and not capsule.boundaries
         )
         authorization_limited = (
             capsule.navigation_truncated
@@ -160,22 +170,28 @@ class DeterministicSufficiencyEvaluator:
             ),
             DimensionAssessment(
                 "integrations",
-                SufficiencyStatus.ENOUGH if no_outbound_proven or (calls and not capsule.truncated and not messaging_edges)
+                SufficiencyStatus.UNSUPPORTED if messaging_unassessed
+                else SufficiencyStatus.ENOUGH if no_outbound_proven or (
+                    calls and not capsule.truncated and not messaging_edges
+                )
                 else SufficiencyStatus.AMBIGUOUS,
-                tuple(fact.id for fact in (*calls, *messaging_edges)) if calls or messaging_edges else (
+                integration_evidence if integration_evidence else (
                     tuple(fact.id for fact in entrypoints) if no_outbound_proven else ()
                 ),
                 "no outbound calls in complete route flow" if no_outbound_proven
+                else "messaging analysis is unsupported by this frontend" if messaging_unassessed
                 else "message operation lacks a proven destination" if messaging_edges
                 else "route-reachable calls have source evidence" if calls and not capsule.truncated
                 else "limited or absent route call evidence",
             ),
             DimensionAssessment(
                 "integration_purpose",
-                SufficiencyStatus.ENOUGH if no_outbound_proven
+                SufficiencyStatus.UNSUPPORTED if messaging_unassessed
+                else SufficiencyStatus.ENOUGH if no_outbound_proven
                 else SufficiencyStatus.AMBIGUOUS,
-                tuple(fact.id for fact in (*calls, *messaging_edges)),
-                "static call targets do not establish purpose or exchanged data" if calls
+                integration_evidence,
+                "messaging analysis is unsupported by this frontend" if messaging_unassessed
+                else "static call targets do not establish purpose or exchanged data" if calls
                 else "message operation purpose is not established" if messaging_edges
                 else "limited flow may omit calls" if not no_outbound_proven
                 else "no route-reachable call requires a purpose",

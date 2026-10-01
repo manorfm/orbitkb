@@ -22,7 +22,7 @@ def route_capsule(snapshot: CanonicalSnapshot, method: str, path: str) -> Contex
         return None
     composer = EvidenceComposer(KnowledgeNavigator(snapshot))
     profile = EvidenceProfile(frozenset({
-        "entrypoint", "flow_edge", "service_call", "security_requirement",
+        "entrypoint", "flow_edge", "service_call", "security_requirement", "analysis_capability",
     }))
     capsule = EvidenceReducer().reduce(tuple(
         composer.compose(entrypoint, profile, TraversalPolicy()) for entrypoint in entrypoints

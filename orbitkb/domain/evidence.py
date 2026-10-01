@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 
 from orbitkb.domain.canonical import (
     CanonicalFact,
+    CapabilityKey,
     EntrypointKey,
     FactStatus,
     RoutePatternKey,
@@ -83,6 +84,14 @@ class EvidenceComposer:
             EvidenceFact.from_canonical(fact, traversal.path_to(fact.id))
             for fact in traversal.facts if fact.kind in profile.kinds
         ]
+        if "analysis_capability" in profile.kinds:
+            facts.extend(
+                EvidenceFact.from_canonical(fact, (entrypoint.symbol,))
+                for fact in self._navigator.snapshot.facts
+                if fact.kind == "analysis_capability"
+                and isinstance(fact.subject, CapabilityKey)
+                and fact.subject.service == entrypoint.service
+            )
         if entrypoint.transport == "http" and "security_requirement" in profile.kinds:
             for fact in self._navigator.snapshot.facts:
                 subject = fact.subject

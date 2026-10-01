@@ -662,6 +662,9 @@ For a route with no outbound calls, the integration dimensions become sufficient
 only when the selected evidence covers flow and service calls, the entrypoint is
 confirmed, and navigation has no limits or boundaries. A partial evidence
 profile cannot prove an empty call list.
+The route capsule also carries frontend capability facts. If messaging analysis
+is unsupported, an empty route flow leaves integrations `unsupported`; changing
+that capability invalidates the prior route assessment during reindexing.
 Source-proven publish or consume edges also prevent a "no outbound integration"
 assessment; without a proven destination, the integration stays ambiguous and
 keeps the edge as evidence.
