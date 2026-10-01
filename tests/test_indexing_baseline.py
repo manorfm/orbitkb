@@ -27,7 +27,7 @@ def test_language_corpus_discovers_kotlin_go_and_typescript_routes():
 
     assert routes == {
         "menu-kotlin-service": {("GET", "/menus/{id}"), ("POST", "/menus")},
-        "catalog-go-service": {("GET", "/catalog"), ("GET", "/health")},
+        "catalog-go-service": {("ANY", "/catalog"), ("ANY", "/health")},
         "inventory-typescript-service": {("GET", "/items/:id"), ("POST", "/items")},
     }
 

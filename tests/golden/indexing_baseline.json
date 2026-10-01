@@ -1,8 +1,8 @@
 {
   "exports": {
-    "catalog-go-service/apis/get-catalog.md": "88b89d8594fed701ec49b0b9c439415c576909789ebaee24620d9705e881fe26",
-    "catalog-go-service/apis/get-health.md": "ff8011fe49aaa272cd8c9f8eec30e342d18ebd60512819d86b24040fbcd4b544",
-    "catalog-go-service/index.md": "db313ce17475fdc6fcc3236729d2f87e34d7b4d138596b008f8fc3cbc0ff713d",
+    "catalog-go-service/apis/any-catalog.md": "4712a01c7f3c0252c6b7fe6aec4a6219535709fa2643a6320fbae38b0e44eed8",
+    "catalog-go-service/apis/any-health.md": "780c6ebe46707102b02c2eb501d8ca6d2206a5cc98c6fdd44dc0a9bcb43db131",
+    "catalog-go-service/index.md": "ee910804fdafd90e758fe5716682ce7ee184e69b65a3cc2508fc754cc260a72e",
     "inventory-service/apis/get-stock-sku.md": "c6c4e610d2117a7185ec65f9c2854bdccca9a95e38ae4a4dbee55c025f2213d8",
     "inventory-service/apis/post-internal-stock-sku-adjust.md": "1f79dca4f6eeff4ef0802c2be8aaa3ac9d4adf863a0617f9c33717abeda5fd10",
     "inventory-service/apis/post-stock-sku-reserve.md": "e2665ce0843670bb187af7841bc6ca06ecc9e9b2d3e0a8f46338620b179f420d",
@@ -103,12 +103,12 @@
       "api_count": 2,
       "apis": [
         {
-          "method": "GET",
+          "method": "ANY",
           "path": "/catalog",
           "summary": "Mock summary."
         },
         {
-          "method": "GET",
+          "method": "ANY",
           "path": "/health",
           "summary": "Mock summary."
         }

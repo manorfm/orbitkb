@@ -1,8 +1,10 @@
 from pathlib import Path
 
 from orbitkb.analysis.engine import StaticAnalysisEngine
+from orbitkb.discovery.go_stack import GoDetector
 from orbitkb.discovery.node_ts import NodeTsDetector
 
+CATALOG_GO_SAMPLE = Path(__file__).resolve().parents[1] / "verify/language_corpus/catalog-go-service"
 INVENTORY_TS_SAMPLE = Path(__file__).resolve().parents[1] / "verify/language_corpus/inventory-typescript-service"
 
 
@@ -39,6 +41,44 @@ class Handler {
 
     assert any(edge.source == "Handler.handle" and edge.target == "Local" and edge.kind == "invokes"
                for edge in result.edges)
+
+
+def test_go_net_http_handlefunc_routes_match_discovery_without_claiming_get():
+    hints = GoDetector().collect_hints(CATALOG_GO_SAMPLE)
+    analysis = StaticAnalysisEngine().analyze(CATALOG_GO_SAMPLE, "go")
+
+    expected = {("ANY", "/catalog"), ("ANY", "/health")}
+    assert {(hint.method, hint.path) for hint in hints.endpoints} == expected
+    assert {(entry.method, entry.name, entry.symbol) for entry in analysis.entrypoints
+            if entry.kind == "http"} == {
+                ("ANY", "/catalog", "main.catalog"),
+                ("ANY", "/health", "main.health"),
+            }
+
+
+def test_go_net_http_handlefunc_requires_import_literal_path_and_local_handler(tmp_path: Path):
+    (tmp_path / "main.go").write_text('''package main
+func main() {
+    http.HandleFunc("/fake", fake)
+    http.HandleFunc(dynamicPath, real)
+    http.HandleFunc("/missing", missing)
+}
+func fake() {}
+func real() {}
+''', encoding="utf-8")
+    assert not [entry for entry in StaticAnalysisEngine().analyze(tmp_path, "go").entrypoints
+                if entry.kind == "http"]
+
+    source = tmp_path / "main.go"
+    source.write_text(source.read_text().replace("package main\n", 'package main\nimport "example.org/http"\n'),
+                      encoding="utf-8")
+    assert not [entry for entry in StaticAnalysisEngine().analyze(tmp_path, "go").entrypoints
+                if entry.kind == "http"]
+
+    source.write_text(source.read_text().replace('"example.org/http"', '"net/http"'),
+                      encoding="utf-8")
+    assert [(entry.method, entry.name) for entry in StaticAnalysisEngine().analyze(tmp_path, "go").entrypoints
+            if entry.kind == "http"] == [("ANY", "/fake")]
 
 
 def test_go_analyzer_maps_route_to_internal_and_persistence_flow(tmp_path: Path):

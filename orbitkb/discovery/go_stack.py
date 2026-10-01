@@ -37,7 +37,7 @@ EXTENSIONS = (".go",)
 _ROUTER_RE = re.compile(
     r"\b(?:router|r|mux|e|app)\.(GET|POST|PUT|PATCH|DELETE|Handle)\s*\(\s*\"([^\"]+)\"",
 )
-_NET_HTTP_HANDLE_RE = re.compile(r"\bhttp\.HandleFunc\s*\(\s*\"([^\"]+)\"")
+_NET_HTTP_HANDLE_RE = re.compile(r"\bhttp\.HandleFunc\s*\(\s*\"(/[^\"]*)\"")
 _GRPC_SERVER_METHOD_RE = re.compile(r"func\s+\(\w+\s+\*?\w*Server\)\s+(\w+)\s*\(")
 
 _OUTBOUND_HTTP_RE = re.compile(r"\bhttp\.(Get|Post|NewRequest)\s*\(")
@@ -104,7 +104,7 @@ class GoDetector:
                 method = "GET"
             hints.endpoints.append(_endpoint_hint(method, match.group(2), path, folder, line_no))
         for path, line_no, match in find_matches(folder, EXTENSIONS, _NET_HTTP_HANDLE_RE):
-            hints.endpoints.append(_endpoint_hint("GET", match.group(1), path, folder, line_no))
+            hints.endpoints.append(_endpoint_hint("ANY", match.group(1), path, folder, line_no))
         for path, line_no, match in find_matches(folder, EXTENSIONS, _GRPC_SERVER_METHOD_RE):
             hints.endpoints.append(_endpoint_hint("RPC", match.group(1), path, folder, line_no))
 

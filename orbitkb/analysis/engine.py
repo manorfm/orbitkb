@@ -586,6 +586,15 @@ class _GoAnalyzer(_FileAnalyzer):
                     result.cloud_facts.extend(handler_facts)
                     result.boundaries.extend(self._boundaries_for(handler, path, root, source))
                     result.contracts[symbol] = _message_contract(channel, _text(args[-1], source), "go")
+            if callee_text == "http.HandleFunc" and standard_http_imported and len(args) == 2:
+                route = _string(args[0], source)
+                function = by_last_name.get(_text(args[1], source)) if args[1].type == "identifier" else None
+                if route and route.startswith("/") and function and function.declaration.type == "function_declaration":
+                    result.entrypoints.append(EntryPoint(
+                        "http", "ANY", route, function.symbol, _evidence(path, root, node),
+                    ))
+                    result.contracts[function.symbol] = _go_http_contract(_text(function.declaration, source))
+                continue
             if method not in self.ROUTE_METHODS or len(args) < 2:
                 continue
             route = _string(args[0], source)
