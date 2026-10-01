@@ -45,6 +45,7 @@ from orbitkb.analysis.depth import DepthProvider, NoopDepthProvider
 from orbitkb.analysis.frontends import (
     AnalyzerFrontend,
     CombinedFrameworkAdapter,
+    FlowClassifier,
     FrameworkAdapter,
     LanguageFrontend,
 )
@@ -2950,6 +2951,7 @@ class StaticAnalysisEngine:
     def __init__(
         self, depth_provider: DepthProvider | None = None,
         frontends: Mapping[str, LanguageFrontend] | None = None,
+        flow_classifiers: Mapping[str, FlowClassifier] | None = None,
         framework_adapters: Mapping[str, FrameworkAdapter] | None = None,
     ) -> None:
         # Deferred: jvm_spring_analyzer imports this module for its shared Spring
@@ -2973,6 +2975,9 @@ class StaticAnalysisEngine:
         }
         if frontends:
             self._frontends.update(frontends)
+        self._flow_classifiers: dict[str, FlowClassifier] = {"jvm-spring": SpringDataClassifier()}
+        if flow_classifiers:
+            self._flow_classifiers.update(flow_classifiers)
         self._framework_adapters: dict[str, FrameworkAdapter] = {
             "jvm-spring": CombinedFrameworkAdapter((SpringFeignRecognizer(), SpringSecurityAdapter())),
         }
@@ -3009,8 +3014,10 @@ class StaticAnalysisEngine:
         if stack in {"node-ts", "node-js"}:
             schema = "\n".join(path.read_text(encoding="utf-8", errors="ignore") for path in files if path.suffix in {".graphql", ".gql"})
             result.contracts.update(_GraphqlContractExtractor().contracts(schema))
+        classifier = self._flow_classifiers.get(stack)
+        if classifier is not None:
+            classifier.classify(result, files)
         if stack == "jvm-spring":
-            SpringDataClassifier().classify(result, files)
             result.grpc_handlers.extend(jvm_grpc_handlers(files, root))
             result.grpc_handlers.extend(kotlin_grpc_handlers(files, root))
             result.grpc_client_bindings.extend(jvm_grpc_client_bindings(files, root))

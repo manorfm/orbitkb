@@ -576,8 +576,9 @@ Cross-file Spring Security filter-chain rules run through a framework adapter
 in that shared enrichment pass.
 Feign calls and client URL property bindings now come from one Spring Feign
 recognizer in the same pass; route joining remains shared across languages.
-Spring Data derived methods and local `@Query` declarations are classified by
-one Spring Data component before the shared flow resolver runs.
+Spring Data derived methods and local `@Query` declarations are classified
+through a per-language flow classifier before the shared flow resolver runs.
+Other language frontends can register the same contract for source-proven flows.
 The canonical projection converts entrypoints, symbol declarations, injections,
 flow boundary markers, flow edges, service calls,
 configuration keys, security requirements, error contracts, message contracts,

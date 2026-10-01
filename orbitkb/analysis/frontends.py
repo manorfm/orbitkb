@@ -15,6 +15,12 @@ class LanguageFrontend(Protocol):
     def analyze_file(self, path: Path, root: Path) -> AnalysisResult: ...
 
 
+class FlowClassifier(Protocol):
+    """Classify source-proven edges before shared symbol resolution."""
+
+    def classify(self, result: AnalysisResult, files: list[Path]) -> None: ...
+
+
 class FrameworkAdapter(Protocol):
     def enrich(self, result: AnalysisResult, files: list[Path], root: Path) -> None: ...
 

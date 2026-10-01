@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 from orbitkb.analysis.canonical_projection import project_analysis
@@ -6,8 +7,10 @@ from orbitkb.analysis.models import (
     AnalysisResult,
     EntryPoint,
     Evidence,
+    FlowEdge,
     SecurityRequirement,
 )
+from orbitkb.analysis.resolution import BoundedFlowResolver
 from orbitkb.domain.canonical import ServiceKey
 
 
@@ -27,6 +30,21 @@ class FixtureFrameworkAdapter:
         result.security_requirements.append(SecurityRequirement(
             "/fixtures", "GET", None, "permitAll", (), Evidence("routes.fixture", 1, 1),
         ))
+
+
+class FixtureFlowFrontend(FixtureFrontend):
+    def analyze_file(self, path: Path, root: Path) -> AnalysisResult:
+        result = super().analyze_file(path, root)
+        result.edges.append(FlowEdge(
+            "Fixture.list", "fixtureRepo.find", "invokes", Evidence(path.relative_to(root).as_posix(), 1, 1),
+        ))
+        return result
+
+
+class FixtureFlowClassifier:
+    def classify(self, result: AnalysisResult, files: list[Path]) -> None:
+        assert [path.name for path in files] == ["routes.fixture"]
+        result.edges = [replace(edge, kind="reads", boundary_kind="persistence") for edge in result.edges]
 
 
 def test_new_language_frontend_uses_existing_analysis_and_canonical_projection(tmp_path: Path):
@@ -63,3 +81,24 @@ def test_framework_adapter_enriches_new_language_in_shared_pipeline(tmp_path: Pa
         ("/fixtures", "permitAll"),
     ]
     assert any(fact.kind == "security_requirement" for fact in snapshot.facts)
+
+
+def test_flow_classifier_runs_before_resolution_for_new_language(tmp_path: Path, monkeypatch):
+    (tmp_path / "routes.fixture").write_text("/fixtures\n", encoding="utf-8")
+    original_resolve = BoundedFlowResolver.resolve
+
+    def check_order(self, result: AnalysisResult) -> AnalysisResult:
+        assert [(edge.kind, edge.boundary_kind) for edge in result.edges] == [("reads", "persistence")]
+        return original_resolve(self, result)
+
+    monkeypatch.setattr(BoundedFlowResolver, "resolve", check_order)
+    engine = StaticAnalysisEngine(
+        frontends={"fixture": FixtureFlowFrontend()},
+        flow_classifiers={"fixture": FixtureFlowClassifier()},
+    )
+
+    analysis = engine.analyze(tmp_path, "fixture")
+    snapshot = project_analysis(ServiceKey("fixture-service"), analysis)
+
+    assert [(edge.kind, edge.boundary_kind) for edge in analysis.edges] == [("reads", "persistence")]
+    assert any(fact.kind == "flow_edge" and fact.attributes["relation"] == "reads" for fact in snapshot.facts)
