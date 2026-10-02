@@ -142,7 +142,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "70"
+STATIC_ANALYSIS_INPUT_VERSION = "71"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -1548,13 +1548,80 @@ class _GraphqlContractExtractor:
         return {"type": self._base_type(type_name), "required": type_name.endswith("!")}
 
 
-class _PythonCliAnalyzer:
-    """A small built-in AST analyzer used to dogfood CLI entrypoints.
+_PYTHON_FASTAPI_METHODS = {
+    "get": "GET", "post": "POST", "put": "PUT", "patch": "PATCH",
+    "delete": "DELETE", "head": "HEAD", "options": "OPTIONS",
+}
 
-    Python is intentionally limited to explicit ``main`` functions here; service
-    HTTP discovery remains the existing framework detector until it receives its
-    own flow analyzer.
-    """
+
+def _python_fastapi_routes(tree: ast.Module) -> dict[ast.AST, list[tuple[str, str, ast.Call]]]:
+    """Find literal routes on top-level instances constructed from fastapi.FastAPI."""
+    factories: set[str] = set()
+    modules: set[str] = set()
+    applications: set[str] = set()
+    routes: dict[ast.AST, list[tuple[str, str, ast.Call]]] = {}
+
+    def forget(name: str) -> None:
+        factories.discard(name)
+        modules.discard(name)
+        applications.discard(name)
+
+    for statement in tree.body:
+        if isinstance(statement, ast.ImportFrom):
+            for alias in statement.names:
+                local = alias.asname or alias.name
+                forget(local)
+                if statement.module == "fastapi" and alias.name == "FastAPI" and statement.level == 0:
+                    factories.add(local)
+        elif isinstance(statement, ast.Import):
+            for alias in statement.names:
+                local = alias.asname or alias.name.split(".", 1)[0]
+                forget(local)
+                if alias.name == "fastapi":
+                    modules.add(local)
+        elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            value = statement.value
+            callee = value.func if isinstance(value, ast.Call) else None
+            proven_factory = (
+                isinstance(callee, ast.Name) and callee.id in factories
+            ) or (
+                isinstance(callee, ast.Attribute) and callee.attr == "FastAPI"
+                and isinstance(callee.value, ast.Name) and callee.value.id in modules
+            )
+            targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+            for target in targets:
+                if not isinstance(target, ast.Name):
+                    continue
+                forget(target.id)
+                if proven_factory and len(targets) == 1:
+                    applications.add(target.id)
+        elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for decorator in statement.decorator_list:
+                if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
+                    continue
+                receiver = decorator.func.value
+                method = _PYTHON_FASTAPI_METHODS.get(decorator.func.attr)
+                if not isinstance(receiver, ast.Name) or receiver.id not in applications or method is None:
+                    continue
+                path = decorator.args[0] if decorator.args else None
+                if isinstance(path, ast.Constant) and isinstance(path.value, str) and path.value.startswith("/"):
+                    function_routes = routes.setdefault(statement, [])
+                    if not any(route_method == method and route_path == path.value
+                               for route_method, route_path, _ in function_routes):
+                        function_routes.append((method, path.value, decorator))
+            forget(statement.name)
+        elif isinstance(statement, ast.ClassDef):
+            forget(statement.name)
+        elif isinstance(statement, (ast.AugAssign, ast.Delete)):
+            targets = [statement.target] if isinstance(statement, ast.AugAssign) else statement.targets
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    forget(target.id)
+    return routes
+
+
+class _PythonAnalyzer:
+    """Analyze explicit Python CLI entrypoints and proven FastAPI routes."""
 
     def analyze(self, path: Path, root: Path) -> AnalysisResult:
         text = path.read_text(encoding="utf-8", errors="ignore")
@@ -1563,13 +1630,19 @@ class _PythonCliAnalyzer:
         except SyntaxError:
             return AnalysisResult()
         result = AnalysisResult()
-        for function in (node for node in tree.body if isinstance(node, ast.FunctionDef)):
+        routes = _python_fastapi_routes(tree)
+        for function in (node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))):
             symbol = f"{path.stem}.{function.name}"
             evidence = Evidence(path.relative_to(root).as_posix(), function.lineno, function.end_lineno or function.lineno)
             result.symbols.append(Symbol(symbol, path.stem, function.name, evidence))
             if function.name == "main":
                 result.entrypoints.append(EntryPoint("cli", "COMMAND", path.stem, symbol, evidence))
-            for call in (node for node in ast.walk(function) if isinstance(node, ast.Call)):
+            for method, route, decorator in routes.get(function, []):
+                route_evidence = Evidence(
+                    path.relative_to(root).as_posix(), decorator.lineno, decorator.end_lineno or decorator.lineno,
+                )
+                result.entrypoints.append(EntryPoint("http", method, route, symbol, route_evidence))
+            for call in (node for statement in function.body for node in ast.walk(statement) if isinstance(node, ast.Call)):
                 target = _python_call_name(call.func)
                 if target:
                     result.edges.append(
@@ -3421,7 +3494,7 @@ class StaticAnalysisEngine:
                 ("*.js", "*.jsx", "*.ts", "*.tsx", "*.graphql", "*.gql", "*.prisma"),
             ),
             "node-js": (_NodeGraphqlAnalyzer(Language(tree_sitter_javascript.language())), ("*.js", "*.jsx", "*.graphql", "*.gql", "*.prisma")),
-            "python": (_PythonCliAnalyzer(), ("*.py",)),
+            "python": (_PythonAnalyzer(), ("*.py",)),
         }
         self._frontends: dict[str, LanguageFrontend] = {
             stack: AnalyzerFrontend(patterns, analyzer.analyze, frozenset({"messaging"}))

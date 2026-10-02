@@ -49,6 +49,34 @@ def test_static_analysis_dogfoods_the_project_cli_entrypoint():
     assert any(edge.source == "cli.main" and edge.target == "cli.build_parser" for edge in result.edges)
 
 
+@pytest.mark.anyio
+async def test_cli_to_mcp_exposes_fastapi_route_flow(tmp_path: Path, fake_backends):
+    root = tmp_path / "orders"
+    root.mkdir()
+    (root / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
+    (root / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "app = FastAPI()\n"
+        "@app.get('/orders')\n"
+        "async def list_orders():\n"
+        "    return await repository.list_orders()\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "orders.db"
+
+    assert cli._cmd_index(_parse([
+        "index", str(root), "--db", str(db_path), "--service", "orders-python",
+    ])) == 0
+    async with stdio_client(server_params(db_path)) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        result = content_json(await session.call_tool("describe_entrypoint", {
+            "service": "orders-python", "kind": "http", "method": "GET", "name": "/orders",
+        }))
+
+    assert result["entrypoint"]["symbol"] == "main.list_orders"
+    assert any(edge["to"] == "repository.list_orders" for edge in result["flow"])
+
+
 @pytest.fixture
 def fake_backends(monkeypatch):
     """Patches cli.resolve_backend to hand out a fresh FakeOrchestratorBackend per

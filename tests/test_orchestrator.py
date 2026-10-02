@@ -697,7 +697,7 @@ def test_reindexing_unchanged_static_inputs_skips_ast_analysis(tmp_path: Path, m
     assert len(analyzed) == first_run_count
 
 
-def test_reindexing_refreshes_previous_mongoose_analysis_version(tmp_path: Path, monkeypatch):
+def test_reindexing_refreshes_previous_static_analysis_version(tmp_path: Path, monkeypatch):
     root = tmp_path / "orders"
     root.mkdir()
     (root / "package.json").write_text('{"scripts": {"start": "node index.js"}}', encoding="utf-8")
@@ -715,7 +715,7 @@ def test_reindexing_refreshes_previous_mongoose_analysis_version(tmp_path: Path,
     detector = detector_for(root)
     first = index_service(conn, "orders", root, detector, FakeOrchestratorBackend())
     conn.execute(
-        "UPDATE static_analysis_snapshots SET analysis_version = '69' WHERE service_id = ?",
+        "UPDATE static_analysis_snapshots SET analysis_version = '70' WHERE service_id = ?",
         (first.service_id,),
     )
     original_analyze = orchestrator.StaticAnalysisEngine.analyze

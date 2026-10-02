@@ -9,6 +9,70 @@ INVENTORY_TS_SAMPLE = Path(__file__).resolve().parents[1] / "verify/language_cor
 PAYMENTS_JS_SAMPLE = Path(__file__).resolve().parents[1] / "verify/sample_project/payments-service"
 
 
+def test_python_fastapi_analyzer_links_literal_async_route_to_calls(tmp_path: Path):
+    (tmp_path / "api.py").write_text(
+        "from fastapi import FastAPI\n"
+        "app = FastAPI()\n"
+        "@app.get('/orders')\n"
+        "async def list_orders():\n"
+        "    return await service.list_orders()\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert [(entry.kind, entry.method, entry.name, entry.symbol) for entry in result.entrypoints] == [
+        ("http", "GET", "/orders", "api.list_orders"),
+    ]
+    assert ("api.list_orders", "service.list_orders") in {
+        (edge.source, edge.target) for edge in result.edges
+    }
+
+
+def test_python_fastapi_analyzer_requires_proven_app_and_literal_route(tmp_path: Path):
+    (tmp_path / "api.py").write_text(
+        "from other import FastAPI\n"
+        "fake = FastAPI()\n"
+        "@fake.get('/fake')\n"
+        "def fake_route(): pass\n"
+        "from fastapi import FastAPI as API\n"
+        "app = API()\n"
+        "@app.get(dynamic_path)\n"
+        "def dynamic_route(): pass\n"
+        "app = replacement\n"
+        "@app.get('/reassigned')\n"
+        "def reassigned_route(): pass\n"
+        "class API: pass\n"
+        "other = API()\n"
+        "@other.get('/shadowed-factory')\n"
+        "def shadowed_route(): pass\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert [entry for entry in result.entrypoints if entry.kind == "http"] == []
+
+
+def test_python_fastapi_analyzer_deduplicates_identical_route_decorators(tmp_path: Path):
+    (tmp_path / "api.py").write_text(
+        "from fastapi import FastAPI\n"
+        "app = FastAPI()\n"
+        "@app.get('/menus')\n"
+        "@app.get('/menus')\n"
+        "@app.post('/menus')\n"
+        "def handle(): pass\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert [(entry.method, entry.name, entry.symbol) for entry in result.entrypoints] == [
+        ("GET", "/menus", "api.handle"),
+        ("POST", "/menus", "api.handle"),
+    ]
+
+
 def test_kotlin_local_constructor_is_not_an_invocation_but_unknown_call_remains(tmp_path: Path):
     (tmp_path / "Handler.kt").write_text(
         '''data class Local(val id: String)
