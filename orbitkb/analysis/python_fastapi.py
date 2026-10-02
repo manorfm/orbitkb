@@ -5,6 +5,8 @@ import ast
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from orbitkb.analysis.python_symbols import module_name
+
 METHODS = {name: name.upper() for name in ("get", "post", "put", "patch", "delete", "head", "options")}
 
 
@@ -62,7 +64,9 @@ def _join(*parts: str) -> str:
     return "/" + "/".join(part.strip("/") for part in parts if part.strip("/"))
 
 
-def _route_decorators(function: ast.FunctionDef | ast.AsyncFunctionDef, file: Path, owner: str = "") -> list[Route]:
+def _route_decorators(
+    function: ast.FunctionDef | ast.AsyncFunctionDef, file: Path, root: Path, owner: str = "",
+) -> list[Route]:
     routes = []
     for decorator in function.decorator_list:
         if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
@@ -72,12 +76,12 @@ def _route_decorators(function: ast.FunctionDef | ast.AsyncFunctionDef, file: Pa
         path = _literal_path(decorator.args[0] if decorator.args else None)
         if not isinstance(receiver, ast.Name) or method is None or path is None:
             continue
-        symbol = f"{file.stem}.{owner}{function.name}"
+        symbol = f"{module_name(file, root)}.{owner}{function.name}"
         routes.append(Route(file, decorator.lineno, method, path, symbol, receiver.id))
     return routes
 
 
-def parse_module(file: Path) -> ModuleRoutes:
+def parse_module(file: Path, root: Path) -> ModuleRoutes:
     """Record top-level bindings only; a reassigned or dynamic router is ignored."""
     result = ModuleRoutes()
     try:
@@ -150,7 +154,7 @@ def parse_module(file: Path) -> ModuleRoutes:
             for function in functions:
                 if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
-                for route in _route_decorators(function, file, owner):
+                for route in _route_decorators(function, file, root, owner):
                     if route.router in apps:
                         result.direct.append(Route(file, route.line, route.method, route.path, route.symbol))
                     elif route.router in result.routers:
@@ -184,8 +188,8 @@ def _import_source(file: Path, binding: ImportBinding, root: Path) -> Path | Non
 
 def proven_routes(files: list[Path], root: Path) -> list[Route]:
     """Resolve direct routes and routers imported from local modules, once."""
-    modules = {path.resolve(): parse_module(path) for path in files if path.suffix == ".py"}
     root = root.resolve()
+    modules = {path.resolve(): parse_module(path.resolve(), root) for path in files if path.suffix == ".py"}
 
     def mounted_router(mount: Mount, file: Path) -> tuple[Path, str] | None:
         if mount.imported_from:

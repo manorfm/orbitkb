@@ -77,6 +77,41 @@ async def test_cli_to_mcp_exposes_fastapi_route_flow(tmp_path: Path, fake_backen
     assert any(edge["to"] == "repository.list_orders" for edge in result["flow"])
 
 
+def test_python_fastapi_public_flows_do_not_mix_same_named_modules(tmp_path: Path, fake_backends):
+    root = tmp_path / "service"
+    root.mkdir()
+    (root / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
+    for package in ("catalog", "inventory"):
+        folder = root / package
+        folder.mkdir()
+        (folder / "__init__.py").write_text("", encoding="utf-8")
+        (folder / "routes.py").write_text(
+            "from fastapi import APIRouter\nrouter = APIRouter()\n"
+            f"@router.get('/{package}')\n"
+            f"def handle(): return {package}_service.fetch()\n",
+            encoding="utf-8",
+        )
+    (root / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from catalog.routes import router as catalog_router\n"
+        "from inventory.routes import router as inventory_router\n"
+        "app = FastAPI()\n"
+        "app.include_router(catalog_router)\n"
+        "app.include_router(inventory_router)\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "service.db"
+
+    assert cli._cmd_index(_parse([
+        "index", str(root), "--db", str(db_path), "--service", "service-python",
+    ])) == 0
+    conn = open_db(db_path)
+    for package in ("catalog", "inventory"):
+        result = queries.describe_entrypoint(conn, "service-python", "http", "GET", f"/{package}")
+        assert result["entrypoint"]["symbol"] == f"{package}.routes.handle"
+        assert {edge["to"] for edge in result["flow"]} == {f"{package}_service.fetch"}
+
+
 @pytest.fixture
 def fake_backends(monkeypatch):
     """Patches cli.resolve_backend to hand out a fresh FakeOrchestratorBackend per

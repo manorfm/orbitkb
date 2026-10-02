@@ -95,6 +95,7 @@ from orbitkb.analysis.node_mongoose import (
 )
 from orbitkb.analysis.node_router_mounts import resolve_node_router_mounts
 from orbitkb.analysis.python_fastapi import proven_routes
+from orbitkb.analysis.python_symbols import module_name as python_module_name
 from orbitkb.analysis.resolution import BoundedFlowResolver
 from orbitkb.analysis.route_paths import join_route as _join_route
 from orbitkb.discovery.go_imports import (
@@ -143,7 +144,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "74"
+STATIC_ANALYSIS_INPUT_VERSION = "75"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -1559,6 +1560,7 @@ class _PythonAnalyzer:
         except SyntaxError:
             return AnalysisResult()
         result = AnalysisResult()
+        module = python_module_name(path, root)
         functions = [
             (function, "")
             for function in tree.body if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -1572,9 +1574,9 @@ class _PythonAnalyzer:
                     for decorator in method.decorator_list)
         )
         for function, owner in functions:
-            symbol = f"{path.stem}.{owner}{function.name}"
+            symbol = f"{module}.{owner}{function.name}"
             evidence = Evidence(path.relative_to(root).as_posix(), function.lineno, function.end_lineno or function.lineno)
-            result.symbols.append(Symbol(symbol, path.stem, f"{owner}{function.name}", evidence))
+            result.symbols.append(Symbol(symbol, module, f"{owner}{function.name}", evidence))
             if not owner and function.name == "main":
                 result.entrypoints.append(EntryPoint("cli", "COMMAND", path.stem, symbol, evidence))
             for call in (node for statement in function.body for node in ast.walk(statement) if isinstance(node, ast.Call)):

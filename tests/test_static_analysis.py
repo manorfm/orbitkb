@@ -171,7 +171,7 @@ def test_python_fastapi_analyzer_resolves_relative_router_import_from_package(tm
     result = StaticAnalysisEngine().analyze(tmp_path, "python")
 
     assert [(entry.method, entry.name, entry.symbol) for entry in result.entrypoints] == [
-        ("GET", "/api/v1/items", "routes.items"),
+        ("GET", "/api/v1/items", "api.routes.items"),
     ]
 
 
@@ -273,6 +273,39 @@ def test_python_fastapi_analyzer_snapshots_child_at_parent_mount(tmp_path: Path)
     assert [(entry.method, entry.name) for entry in result.entrypoints] == [
         ("GET", "/parent/before"),
     ]
+
+
+def test_python_fastapi_analyzer_keeps_same_named_handlers_in_distinct_packages(tmp_path: Path):
+    for package, call in (("catalog", "catalog_service.list_items"), ("inventory", "inventory_service.list_items")):
+        folder = tmp_path / package
+        folder.mkdir()
+        (folder / "__init__.py").write_text("", encoding="utf-8")
+        (folder / "routes.py").write_text(
+            "from fastapi import APIRouter\nrouter = APIRouter()\n"
+            "@router.get('/items')\n"
+            f"def list_items(): return {call}()\n",
+            encoding="utf-8",
+        )
+    (tmp_path / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from catalog.routes import router as catalog_router\n"
+        "from inventory.routes import router as inventory_router\n"
+        "app = FastAPI()\n"
+        "app.include_router(catalog_router, prefix='/catalog')\n"
+        "app.include_router(inventory_router, prefix='/inventory')\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert {(entry.name, entry.symbol) for entry in result.entrypoints} == {
+        ("/catalog/items", "catalog.routes.list_items"),
+        ("/inventory/items", "inventory.routes.list_items"),
+    }
+    assert {(edge.source, edge.target) for edge in result.edges if edge.source.endswith(".list_items")} == {
+        ("catalog.routes.list_items", "catalog_service.list_items"),
+        ("inventory.routes.list_items", "inventory_service.list_items"),
+    }
 
 
 def test_kotlin_local_constructor_is_not_an_invocation_but_unknown_call_remains(tmp_path: Path):
