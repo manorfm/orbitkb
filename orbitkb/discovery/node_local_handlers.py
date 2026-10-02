@@ -526,12 +526,7 @@ def _mongoose_factory_bindings(tree: Node, source: bytes) -> set[str]:
             if alias_node is None:
                 continue
             alias = _text(alias_node, source)
-            if not any(
-                node.type == "variable_declarator"
-                and (name := node.child_by_field_name("name")) is not None
-                and name.type == "identifier" and _text(name, source) == alias
-                for node in _walk_nodes(tree)
-            ):
+            if _unshadowed_import_alias(tree, source, alias):
                 factories.add(alias)
     return factories
 
@@ -593,11 +588,35 @@ def local_mongoose_model_declarations(path: Path) -> dict[str, tuple[str, str | 
     return proven_local_mongoose_model_declarations(_parse(path, source), source)
 
 
+def _default_mongoose_model_export(tree: Node, source: bytes) -> tuple[str, str | None, int] | None:
+    defaults = [
+        statement for statement in tree.named_children
+        if statement.type == "export_statement" and any(child.type == "default" for child in statement.children)
+    ]
+    if len(defaults) != 1:
+        return None
+    value = defaults[0].child_by_field_name("value")
+    if value is None:
+        return None
+    if value.type == "identifier":
+        return proven_local_mongoose_model_declarations(tree, source).get(_text(value, source))
+    model = _mongoose_model_call(value, source, _mongoose_factory_bindings(tree, source))
+    return (*model, value.start_point.row + 1) if model is not None else None
+
+
+def proven_default_mongoose_model_export(path: Path) -> tuple[str, str | None, int] | None:
+    """Return a directly default-exported, source-proven Mongoose model."""
+    source = path.read_bytes()
+    return _default_mongoose_model_export(_parse(path, source), source)
+
+
 def _exported_mongoose_models(path: Path) -> dict[str, str]:
     source = path.read_bytes()
     tree = _parse(path, source)
     models = proven_local_mongoose_model_declarations(tree, source)
     exported: dict[str, str] = {}
+    if (default := _default_mongoose_model_export(tree, source)) is not None:
+        exported["default"] = default[0]
     for statement in tree.named_children:
         if statement.type != "export_statement":
             continue
@@ -630,7 +649,7 @@ def _unshadowed_import_alias(tree: Node, source: bytes, alias: str) -> bool:
 
 
 def proven_local_esm_mongoose_models(tree: Node, source: bytes, path: Path, root: Path) -> dict[str, str]:
-    """Resolve direct named imports of source-proven local Mongoose models."""
+    """Resolve direct named/default imports of source-proven local Mongoose models."""
     candidates: list[tuple[str, str]] = []
     for statement in tree.named_children:
         if statement.type != "import_statement" or any(child.type == "type" for child in statement.children):
@@ -644,6 +663,10 @@ def proven_local_esm_mongoose_models(tree: Node, source: bytes, path: Path, root
             continue
         exports = _exported_mongoose_models(imported)
         for names in clause.named_children:
+            if names.type == "identifier":
+                if (model := exports.get("default")) is not None:
+                    candidates.append((_text(names, source), model))
+                continue
             if names.type != "named_imports":
                 continue
             for specifier in names.named_children:

@@ -655,20 +655,24 @@ async def test_cli_to_mcp_exposes_entity_manager_persistence_operations(tmp_path
 
 
 @pytest.mark.anyio
-async def test_cli_to_mcp_exposes_mongoose_persistence_operations(tmp_path: Path, fake_backends):
+@pytest.mark.parametrize("default_export", [False, True])
+async def test_cli_to_mcp_exposes_mongoose_persistence_operations(tmp_path: Path, fake_backends, default_export):
     root = tmp_path / "orders"
     root.mkdir()
+    export_line = (
+        'export default mongoose.model("Order", orderSchema, "orders");'
+        if default_export else 'export const Order = mongoose.model("Order", orderSchema, "orders");'
+    )
     (root / "order.model.ts").write_text(
-        '''import mongoose from "mongoose";
-export const Order = mongoose.model("Order", orderSchema, "orders");
-''',
+        f'import mongoose from "mongoose";\n{export_line}\n',
         encoding="utf-8",
     )
+    import_line = 'import Order from "./order.model";' if default_export else 'import { Order } from "./order.model";'
     (root / "resolvers.ts").write_text(
-        '''import { Order } from "./order.model";
-export const resolvers = {
-  Mutation: { createOrder: (_: unknown, input: CreateOrderInput) => Order.create(input) },
-};
+        f'''{import_line}
+export const resolvers = {{
+  Mutation: {{ createOrder: (_: unknown, input: CreateOrderInput) => Order.create(input) }},
+}};
 ''',
         encoding="utf-8",
     )

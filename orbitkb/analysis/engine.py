@@ -119,6 +119,7 @@ from orbitkb.discovery.node_local_handlers import (
     anonymous_default_function,
     local_mongoose_model_declarations,
     proven_commonjs_mongoose_model_export,
+    proven_default_mongoose_model_export,
     proven_local_commonjs_flow_imports,
     proven_local_commonjs_mongoose_models,
     proven_local_esm_mongoose_models,
@@ -4474,6 +4475,8 @@ def _persistence_facts(files: list[Path], root: Path) -> list[PersistenceFact]:
                 facts.append(PersistenceFact(match.group(1), "sql_table", match.group(1), _line_evidence(path, root, source, match.start())))
         if path.suffix in {".js", ".ts"}:
             models = list(local_mongoose_model_declarations(path).values())
+            if (default := proven_default_mongoose_model_export(path)) is not None:
+                models.append(default)
             if path.suffix == ".js" and (exported := proven_commonjs_mongoose_model_export(path)) is not None:
                 models.append(exported)
             for name, collection, line in models:

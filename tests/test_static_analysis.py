@@ -4184,6 +4184,89 @@ def test_node_analyzer_does_not_link_unexported_esm_mongoose_model(tmp_path: Pat
     }
 
 
+def test_node_analyzer_links_direct_default_mongoose_model_import(tmp_path: Path):
+    (tmp_path / "payment.model.ts").write_text(
+        "import mongoose from 'mongoose';\n"
+        "export default mongoose.model<Payment>('Payment', schema, 'payments');\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "payments.ts").write_text(
+        "import PaymentModel from './payment.model';\n"
+        "function refund(id: string) { return PaymentModel.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert [(fact.name, fact.kind, fact.owner) for fact in result.persistence_facts] == [
+        ("payments", "document", "Payment"),
+    ]
+    assert ("PaymentModel.findById", "reads", "Payment") in {
+        (edge.target, edge.kind, edge.model_name) for edge in result.edges
+    }
+
+
+def test_node_analyzer_links_default_export_of_stable_mongoose_model(tmp_path: Path):
+    (tmp_path / "payment.model.js").write_text(
+        "import mongoose from 'mongoose';\n"
+        "const Transaction = mongoose.model('Payment', schema);\n"
+        "export default Transaction;\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "payments.js").write_text(
+        "import PaymentModel from './payment.model.js';\n"
+        "function refund(id) { return PaymentModel.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert ("PaymentModel.findById", "Payment") in {
+        (edge.target, edge.model_name) for edge in result.edges
+    }
+
+
+def test_node_analyzer_does_not_link_fake_default_mongoose_model(tmp_path: Path):
+    (tmp_path / "payment.model.ts").write_text(
+        "const mongoose = fakeFactory;\n"
+        "export default mongoose.model('Payment', schema);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "payments.ts").write_text(
+        "import PaymentModel from './payment.model';\n"
+        "function refund(id: string) { return PaymentModel.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert result.persistence_facts == []
+    assert ("PaymentModel.findById", None) in {
+        (edge.target, edge.model_name) for edge in result.edges
+    }
+
+
+def test_node_analyzer_does_not_link_reassigned_default_mongoose_factory(tmp_path: Path):
+    (tmp_path / "payment.model.js").write_text(
+        "import mongoose from 'mongoose';\n"
+        "mongoose = fakeFactory;\n"
+        "export default mongoose.model('Payment', schema);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "payments.js").write_text(
+        "import PaymentModel from './payment.model.js';\n"
+        "function refund(id) { return PaymentModel.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert result.persistence_facts == []
+    assert ("PaymentModel.findById", None) in {
+        (edge.target, edge.model_name) for edge in result.edges
+    }
+
+
 def test_node_analyzer_does_not_link_fake_local_mongoose_factory(tmp_path: Path):
     (tmp_path / "payments.js").write_text(
         "const mongoose = fakeFactory;\n"
