@@ -1113,9 +1113,12 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
         result.message_contracts.extend(_node_kafka_publish_contracts(tree, source, path, root))
         kafka_consumer = _node_kafka_consumer_handler(tree, source)
         if kafka_consumer is not None:
-            topic, call_node, handler = kafka_consumer
+            topic, subscribe_node, call_node, handler = kafka_consumer
             symbol = f"message.consume:{topic}"
             result.entrypoints.append(EntryPoint("message", "CONSUME", topic, symbol, _evidence(path, root, call_node)))
+            result.message_contracts.append(MessageContract(
+                "consumes", topic, None, None, _evidence(path, root, subscribe_node),
+            ))
             function = _Function(topic, symbol, handler, call_node)
             result.symbols.append(_symbol(function, path, root, imports=imports))
             function_edges, function_cloud_facts = self._edges_for_node(
@@ -1659,7 +1662,7 @@ class _NodeTopicCall:
     sink_parameter: int | None = None
 
 
-def _node_kafka_producers(tree: Node, source: bytes) -> set[str]:
+def _node_kafka_clients(tree: Node, source: bytes, client_method: str) -> set[str]:
     declarations = [node for statement in tree.named_children
                     if statement.type == "lexical_declaration"
                     and _text(statement, source).lstrip().startswith("const ")
@@ -1699,7 +1702,7 @@ def _node_kafka_producers(tree: Node, source: bytes) -> set[str]:
         constructor = value.child_by_field_name("constructor")
         if constructor is not None and _text(constructor, source) == "Kafka":
             clients.add(_text(name, source))
-    producers = set()
+    clients_of_kind = set()
     for declaration in declarations:
         name = declaration.child_by_field_name("name")
         value = declaration.child_by_field_name("value")
@@ -1712,11 +1715,15 @@ def _node_kafka_producers(tree: Node, source: bytes) -> set[str]:
         member = callee.child_by_field_name("property")
         arguments = value.child_by_field_name("arguments")
         if receiver is not None and member is not None and arguments is not None and (
-            _text(receiver, source) in clients and _text(member, source) == "producer"
-            and not arguments.named_children
+            _text(receiver, source) in clients and _text(member, source) == client_method
+            and (client_method != "producer" or not arguments.named_children)
         ):
-            producers.add(_text(name, source))
-    return producers
+            clients_of_kind.add(_text(name, source))
+    return clients_of_kind
+
+
+def _node_kafka_producers(tree: Node, source: bytes) -> set[str]:
+    return _node_kafka_clients(tree, source, "producer")
 
 
 def _node_declared_parameters(function: _Function, source: bytes) -> tuple[str | None, ...]:
@@ -1871,33 +1878,48 @@ def _node_forwarded_kafka_topic_contracts(
     ))
 
 
-# A consumer's `subscribe({ topic: "orders" })` registers interest; the
-# actual handler is a *separate* `run({ eachMessage: async (...) => {...} })`
-# call — unlike RabbitMQ's Node `.consume(channel, handler)`, these two calls
-# aren't structurally linked by argument position. Only pairs them when
-# exactly one `.subscribe({topic})` exists in the file, so there is no
-# ambiguity about which topic a `.run()` handler belongs to — never a guess.
-_NODE_KAFKA_SUBSCRIBE_RE = re.compile(r"\.\s*subscribe\s*\(\s*\{[^{}]*?\btopic\s*:\s*['\"]([^'\"]+)['\"]", re.DOTALL)
+def _node_call_scope(node: Node) -> tuple[int, int]:
+    current = node.parent
+    while current is not None and current.type not in {
+        "function_declaration", "function_expression", "arrow_function", "method_definition", "program",
+    }:
+        current = current.parent
+    return (current.start_byte, current.end_byte) if current is not None else (0, 0)
 
 
-def _node_kafka_consumer_handler(tree: Node, source: bytes) -> tuple[str, Node, Node] | None:
-    """(topic, run_call_node, handler_node) for the file's single
-    `consumer.run({ eachMessage/eachBatch: handler })` call, paired with the
-    file's single `.subscribe({ topic })` — only when there is exactly one of
-    each, so the pairing is never ambiguous about which topic a handler
-    belongs to."""
-    topics = _NODE_KAFKA_SUBSCRIBE_RE.findall(source.decode("utf-8", errors="ignore"))
-    if len(topics) != 1:
-        return None
+def _node_kafka_consumer_handler(tree: Node, source: bytes) -> tuple[str, Node, Node, Node] | None:
+    """Pair one literal subscription and one handler on the same Kafka consumer."""
+    consumers = _node_kafka_clients(tree, source, "consumer")
+    subscriptions: list[tuple[str, str | None, Node]] = []
+    handlers: list[tuple[str, Node, Node | None]] = []
     for node in _walk(tree):
         if node.type != "call_expression":
             continue
         callee = node.child_by_field_name("function")
         arguments = node.child_by_field_name("arguments")
-        if callee is None or arguments is None or not _text(callee, source).endswith(".run"):
+        if callee is None or callee.type != "member_expression" or arguments is None:
             continue
+        receiver = callee.child_by_field_name("object")
+        member = callee.child_by_field_name("property")
+        if receiver is None or member is None or _text(receiver, source) not in consumers:
+            continue
+        method = _text(member, source)
         args = arguments.named_children
-        if not args or args[0].type != "object":
+        if method == "subscribe":
+            topics = (
+                [
+                    _string(field.child_by_field_name("value"), source)
+                    for field in args[0].named_children
+                    if field.type == "pair" and _text(field.child_by_field_name("key"), source) == "topic"
+                ]
+                if len(args) == 1 and args[0].type == "object" else []
+            )
+            subscriptions.append((_text(receiver, source), topics[0] if len(topics) == 1 else None, node))
+            continue
+        if method != "run":
+            continue
+        if len(args) != 1 or args[0].type != "object":
+            handlers.append((_text(receiver, source), node, None))
             continue
         handler_property = next(
             (
@@ -1907,11 +1929,23 @@ def _node_kafka_consumer_handler(tree: Node, source: bytes) -> tuple[str, Node, 
             None,
         )
         if handler_property is None:
+            handlers.append((_text(receiver, source), node, None))
             continue
         handler = handler_property.child_by_field_name("value")
         if handler is None or handler.type not in {"arrow_function", "function_expression"}:
+            handlers.append((_text(receiver, source), node, None))
             continue
-        return topics[0], node, handler
+        handlers.append((_text(receiver, source), node, handler))
+    if len(subscriptions) == len(handlers) == 1 and (
+        subscriptions[0][0] == handlers[0][0]
+        and subscriptions[0][1] is not None and handlers[0][2] is not None
+        and _node_call_scope(subscriptions[0][2]) == _node_call_scope(handlers[0][1])
+        and subscriptions[0][2].start_byte < handlers[0][1].start_byte
+    ):
+        _, topic, subscribe_node = subscriptions[0]
+        _, run_node, handler = handlers[0]
+        assert topic is not None and handler is not None
+        return topic, subscribe_node, run_node, handler
     return None
 
 

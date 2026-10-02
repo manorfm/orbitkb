@@ -133,5 +133,11 @@ def test_node_service_topology_shows_only_proven_message_channels(tmp_path):
     assert 'channel_payments_service_payment_completed(("channel: payment.completed"))' in diagram
     assert diagram.count('svc_payments_service -.->|publish| channel_payments_service_payment_failed') == 1
     assert diagram.count('svc_payments_service -.->|publish| channel_payments_service_payment_completed') == 1
-    assert 'order.cancelled' not in diagram
+    assert 'channel_payments_service_order_cancelled(("channel: order.cancelled"))' in diagram
+    assert 'channel_payments_service_order_cancelled -.->|consume| svc_payments_service' in diagram
     assert 'Kafka' not in diagram
+    messaging = queries.describe_messages(conn, "payments-service")
+    assert ("consumes", "order.cancelled") in {
+        (contract["direction"], contract["exchange"])
+        for contract in messaging["static_contracts"]
+    }

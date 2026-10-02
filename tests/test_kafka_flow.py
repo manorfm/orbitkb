@@ -166,7 +166,10 @@ def test_node_analyzer_ignores_an_unrelated_send_call(tmp_path: Path):
 
 def test_node_analyzer_exposes_kafka_consumer_and_its_bounded_handler_flow(tmp_path: Path):
     (tmp_path / "consumer.ts").write_text(
-        '''async function run() {
+        '''import { Kafka } from "kafkajs";
+const kafka = new Kafka({ brokers: ["localhost:9092"] });
+const consumer = kafka.consumer({ groupId: "orders" });
+async function run() {
   await consumer.subscribe({ topic: "orders.created", fromBeginning: true });
   await consumer.run({
     eachMessage: async ({ message }) => {
@@ -186,6 +189,58 @@ def test_node_analyzer_exposes_kafka_consumer_and_its_bounded_handler_flow(tmp_p
     symbol = "message.consume:orders.created"
     assert result.contracts[symbol]["transport"] == "kafka"
     assert any(edge.source == symbol and edge.target == "orderService.handle" for edge in result.edges)
+    assert [(item.direction, item.channel, item.evidence.start_line) for item in result.message_contracts] == [
+        ("consumes", "orders.created", 5),
+    ]
+
+
+def test_node_analyzer_does_not_treat_unrelated_subscribe_as_kafka(tmp_path: Path):
+    (tmp_path / "consumer.ts").write_text(
+        '''const consumer = newsletterClient;
+await consumer.subscribe({ topic: "orders.created" });
+await consumer.run({ eachMessage: async ({ message }) => { await handle(message); } });
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert result.message_contracts == []
+    assert not any(entry.kind == "message" for entry in result.entrypoints)
+
+
+def test_node_analyzer_does_not_pair_different_kafka_consumers(tmp_path: Path):
+    (tmp_path / "consumer.ts").write_text(
+        '''import { Kafka } from "kafkajs";
+const kafka = new Kafka({ brokers: ["localhost:9092"] });
+const first = kafka.consumer({ groupId: "first" });
+const second = kafka.consumer({ groupId: "second" });
+await first.subscribe({ topic: "orders.created" });
+await second.run({ eachMessage: async ({ message }) => { await handle(message); } });
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert result.message_contracts == []
+    assert not any(entry.kind == "message" for entry in result.entrypoints)
+
+
+def test_node_analyzer_does_not_pair_subscription_and_handler_in_separate_functions(tmp_path: Path):
+    (tmp_path / "consumer.ts").write_text(
+        '''import { Kafka } from "kafkajs";
+const kafka = new Kafka({ brokers: ["localhost:9092"] });
+const consumer = kafka.consumer({ groupId: "orders" });
+async function subscribe() { await consumer.subscribe({ topic: "orders.created" }); }
+async function start() {
+  await consumer.run({ eachMessage: async ({ message }) => { await handle(message); } });
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert result.message_contracts == []
+    assert not any(entry.kind == "message" for entry in result.entrypoints)
 
 
 def test_python_kafka_producer_call_already_gets_a_generic_publishes_edge(tmp_path: Path):
@@ -209,7 +264,10 @@ def test_node_analyzer_skips_kafka_consumer_pairing_when_multiple_subscriptions_
     """Two `.subscribe({topic})` calls in the same file make pairing a
     `.run()` handler to a specific topic ambiguous -- skipped, not guessed."""
     (tmp_path / "consumer.ts").write_text(
-        '''async function run() {
+        '''import { Kafka } from "kafkajs";
+const kafka = new Kafka({ brokers: ["localhost:9092"] });
+const consumer = kafka.consumer({ groupId: "orders" });
+async function run() {
   await consumer.subscribe({ topic: "orders.created" });
   await consumer.subscribe({ topic: "payments.created" });
   await consumer.run({ eachMessage: async ({ message }) => { await orderService.handle(message); } });
@@ -221,3 +279,22 @@ def test_node_analyzer_skips_kafka_consumer_pairing_when_multiple_subscriptions_
     result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
 
     assert result.entrypoints == []
+
+
+def test_node_analyzer_skips_literal_topic_when_consumer_also_subscribes_dynamically(tmp_path: Path):
+    (tmp_path / "consumer.ts").write_text(
+        '''import { Kafka } from "kafkajs";
+const kafka = new Kafka({ brokers: ["localhost:9092"] });
+const consumer = kafka.consumer({ groupId: "orders" });
+async function run(topic) {
+  await consumer.subscribe({ topic: "orders.created" });
+  await consumer.subscribe({ topic });
+  await consumer.run({ eachMessage: async ({ message }) => { await handle(message); } });
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert result.message_contracts == []
+    assert not any(entry.kind == "message" for entry in result.entrypoints)

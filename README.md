@@ -207,6 +207,11 @@ The supported deterministic subset is intentionally focused:
 | Persistence and messaging | Postgres/Mongo evidence, RabbitMQ bindings and contracts, Kafka producer/consumer contracts | Only literal, source-proven configuration is exposed; Kafka consumer detection is Go/JVM/Node only, no Python. |
 | Cloud/infra | AWS (SQS, SNS, S3, EventBridge, Kinesis), Azure (Blob Storage, Service Bus, Event Hub) and GCP (Pub/Sub) call sites (Go, Java, Kotlin, Node/TS; Python is AWS-only via `boto3`), plus Terraform/CloudFormation/plain Kubernetes declarations, parsed with real grammars (`python-hcl2`, `cfn-flip`) — never keyword matching. A cloud call also produces a `FlowEdge`, visible in `trace_flow`/`describe_entrypoint`, for every language except Python. | GCS, Dockerfile, and unrendered Helm templates are not resolved; Azure Service Bus code facts can't distinguish queue from topic (defaults to queue — see `describe_cloud_dependencies`). |
 
+For Node/TypeScript, a Kafka consumer with one literal `subscribe` topic and
+one `run` handler on the same `kafkajs` consumer in the same scope produces
+a source-backed consume contract. The topology shows the topic as a channel;
+ambiguous subscriptions or handlers are omitted.
+
 For Node/TypeScript, direct Axios calls in named functions and class methods
 can expose an external host and path when the URL is literal or combines a
 top-level constant URL with a literal path. Dynamic URLs, userinfo, query
