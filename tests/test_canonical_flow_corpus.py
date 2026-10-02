@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 from orbitkb.analysis.engine import StaticAnalysisEngine
@@ -149,3 +150,70 @@ def test_node_service_topology_shows_only_proven_message_channels(tmp_path):
         ("consumes", "order.cancelled", 21),
     ]
     assert consumption["message_operations"] == []
+
+
+def test_node_consumer_reaches_refund_from_proven_bootstrap_argument(tmp_path):
+    analysis = StaticAnalysisEngine().analyze(NODE_CORPUS, "node-js")
+    conn = open_db(tmp_path / "payments-consumer-flow.db")
+    service_id = services.ensure_service(conn, "payments-service", str(NODE_CORPUS), "node-js")
+    flows.replace_analysis(conn, service_id, analysis)
+
+    detail = queries.describe_entrypoint(conn, "payments-service", "message", "CONSUME", "order.cancelled")
+
+    assert ("message.consume:order.cancelled", "PaymentService.refundCustomer") in {
+        (edge["from"], edge["to"]) for edge in detail["flow"]
+    }
+    assert [(call["source"], call["host"], call["path"]) for call in detail["external_http_calls"]] == [
+        ("card_gateway.client.refund", "card-gateway.vendor.io", "/v1/refund"),
+    ]
+
+
+def test_node_consumer_keeps_receiver_unresolved_when_bootstrap_arguments_conflict(tmp_path):
+    project = tmp_path / "payments-service"
+    shutil.copytree(NODE_CORPUS, project)
+    server = project / "server.js"
+    source = server.read_text()
+    source = source.replace(
+        "const paymentService = require('./services/payment.service');",
+        "const paymentService = require('./services/payment.service');\n"
+        "const otherService = require('./services/other.service');",
+    ).replace(
+        "await startOrderCancelledConsumer(paymentService);",
+        "await startOrderCancelledConsumer(paymentService);\n"
+        "  await startOrderCancelledConsumer(otherService);",
+    )
+    server.write_text(source)
+    (project / "services/other.service.js").write_text(
+        "class OtherService { refundCustomer() { return null; } }\n"
+        "module.exports = new OtherService();\n",
+    )
+    analysis = StaticAnalysisEngine().analyze(project, "node-js")
+    conn = open_db(tmp_path / "ambiguous-consumer.db")
+    service_id = services.ensure_service(conn, "payments-service", str(project), "node-js")
+    flows.replace_analysis(conn, service_id, analysis)
+
+    detail = queries.describe_entrypoint(conn, "payments-service", "message", "CONSUME", "order.cancelled")
+
+    assert ("message.consume:order.cancelled", "paymentService.refundCustomer") in {
+        (edge["from"], edge["to"]) for edge in detail["flow"]
+    }
+    assert detail["external_http_calls"] == []
+
+
+def test_node_consumer_keeps_receiver_unresolved_when_another_caller_has_unknown_argument(tmp_path):
+    project = tmp_path / "payments-service"
+    shutil.copytree(NODE_CORPUS, project)
+    (project / "extra.js").write_text(
+        "import { startOrderCancelledConsumer } from './events/kafka';\n"
+        "startOrderCancelledConsumer(otherService);\n",
+    )
+    analysis = StaticAnalysisEngine().analyze(project, "node-js")
+    conn = open_db(tmp_path / "unknown-consumer.db")
+    service_id = services.ensure_service(conn, "payments-service", str(project), "node-js")
+    flows.replace_analysis(conn, service_id, analysis)
+
+    detail = queries.describe_entrypoint(conn, "payments-service", "message", "CONSUME", "order.cancelled")
+
+    assert ("message.consume:order.cancelled", "paymentService.refundCustomer") in {
+        (edge["from"], edge["to"]) for edge in detail["flow"]
+    }

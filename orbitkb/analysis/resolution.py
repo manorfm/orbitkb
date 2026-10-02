@@ -123,8 +123,8 @@ class BoundedFlowResolver:
                 simple_type = parameter_type.split("<", 1)[0].rsplit(".", 1)[-1]
                 parameter_candidate = f"{simple_type}.{method}"
                 if parameter_candidate in implementations:
-                    # A simple JVM type name can still refer to an imported class
-                    # outside this index, so this link is a possible local path.
+                    # A parameter type or argument binding can still be ambiguous
+                    # outside this bounded flow, so this remains a possible path.
                     return replace(edge, target=parameter_candidate, confidence="medium")
         owner = edge.source.split(".", 1)[0]
         injected_type = injections.get(f"{owner}.{receiver}") if separator else None

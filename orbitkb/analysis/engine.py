@@ -1782,7 +1782,7 @@ def _node_declared_parameters(function: _Function, source: bytes) -> tuple[str |
     return tuple(names)
 
 
-def _node_topic_parameters(function: _Function, source: bytes) -> tuple[str | None, ...]:
+def _node_unmodified_parameters(function: _Function, source: bytes) -> tuple[str | None, ...]:
     names = _node_declared_parameters(function, source)
     reassigned = set()
     for node in _walk(function.body):
@@ -1862,7 +1862,7 @@ def _node_forwarded_kafka_topic_contracts(
         tree = parser.parse(source).root_node
         producers = _node_kafka_producers(tree, source)
         for function in (*_node_named_functions(tree, source, path.stem), *_node_class_functions(tree, source)):
-            parameters = _node_topic_parameters(function, source)
+            parameters = _node_unmodified_parameters(function, source)
             functions.setdefault(function.symbol, []).append(parameters)
             for node in _walk(function.body):
                 if node.type != "call_expression":
@@ -1912,6 +1912,98 @@ def _node_forwarded_kafka_topic_contracts(
         if index < len(call.arguments)
         if (argument := call.arguments[index]) is not None and argument[0] == "literal"
     ))
+
+
+def _node_bind_consumer_argument_types(
+    result: AnalysisResult, files: list[Path], root: Path, stack: str,
+) -> None:
+    """Bind a consumer receiver only when observed bootstrap arguments agree."""
+    if not any(entry.kind == "message" and entry.method == "CONSUME" for entry in result.entrypoints):
+        return
+    language = (Language(tree_sitter_javascript.language()) if stack == "node-js"
+                else Language(tree_sitter_typescript.language_typescript()))
+    parser = Parser(language)
+    parsed: list[tuple[Path, bytes, Node, dict[str, str], dict[str, str]]] = []
+    definitions: dict[str, list[tuple[Path, bytes, _Function]]] = {}
+    for path in files:
+        if path.suffix not in {".js", ".jsx", ".ts", ".tsx"}:
+            continue
+        source = path.read_bytes()
+        tree = parser.parse(source).root_node
+        commonjs_imports = proven_local_commonjs_flow_imports(tree, source, path, root)
+        groups: dict[str, set[str]] = {}
+        instance_groups: dict[str, set[str]] = {}
+        for alias, target in commonjs_imports:
+            instance_groups.setdefault(alias, set()).add(target)
+        for alias, target in (*commonjs_imports, *_node_named_imports(source.decode("utf-8", errors="ignore"))):
+            groups.setdefault(alias, set()).add(target)
+        imports = {alias: next(iter(targets)) for alias, targets in groups.items() if len(targets) == 1}
+        instances = {alias: next(iter(targets)) for alias, targets in instance_groups.items() if len(targets) == 1}
+        parsed.append((path, source, tree, imports, instances))
+        for function in _node_named_functions(tree, source, path.stem):
+            definitions.setdefault(function.symbol, []).append((path, source, function))
+
+    consumers: dict[str, tuple[Path, bytes, _Function, tuple[EntryPoint, ...]]] = {}
+    for symbol, declarations in definitions.items():
+        if len(declarations) != 1:
+            continue
+        path, source, function = declarations[0]
+        evidence = _evidence(path, root, function.declaration)
+        entrypoints = tuple(
+            entry for entry in result.entrypoints
+            if entry.kind == "message" and entry.method == "CONSUME"
+            and entry.evidence.file_path == evidence.file_path
+            and evidence.start_line <= entry.evidence.start_line <= entry.evidence.end_line <= evidence.end_line
+        )
+        if entrypoints:
+            consumers[symbol] = (path, source, function, entrypoints)
+    if not consumers:
+        return
+
+    owner_files: dict[str, set[str]] = {}
+    symbol_counts: dict[str, int] = {}
+    for symbol in result.symbols:
+        owner_files.setdefault(symbol.owner, set()).add(symbol.evidence.file_path)
+        symbol_counts[symbol.name] = symbol_counts.get(symbol.name, 0) + 1
+    observed: dict[tuple[str, str], list[str | None]] = {}
+    for path, source, tree, imports, instances in parsed:
+        for call in _walk(tree):
+            if call.type != "call_expression":
+                continue
+            callee = call.child_by_field_name("function")
+            arguments = call.child_by_field_name("arguments")
+            if callee is None or callee.type != "identifier" or arguments is None:
+                continue
+            alias = _text(callee, source)
+            target = imports.get(alias) or f"{path.stem}.{alias}"
+            if target not in consumers or _node_local_name_shadows_call(call, source, alias):
+                continue
+            _, target_source, function, _ = consumers[target]
+            parameters = _node_unmodified_parameters(function, target_source)
+            args = arguments.named_children
+            for index, parameter in enumerate(parameters):
+                if parameter is None:
+                    continue
+                argument = args[index] if index < len(args) else None
+                argument_name = _text(argument, source) if argument is not None and argument.type == "identifier" else None
+                owner = instances.get(argument_name) if argument_name is not None else None
+                if (argument_name is None or _node_local_name_shadows_call(call, source, argument_name)
+                        or len(owner_files.get(owner, ())) != 1 or "." in owner):
+                    owner = None
+                observed.setdefault((target, parameter), []).append(owner)
+
+    bound: dict[str, list[tuple[str, str]]] = {}
+    for (target, parameter), candidates in observed.items():
+        if candidates and candidates[0] is not None and set(candidates) == {candidates[0]}:
+            _, _, _, entrypoints = consumers[target]
+            for symbol in (target, *(entry.symbol for entry in entrypoints)):
+                if symbol_counts.get(symbol) == 1:
+                    bound.setdefault(symbol, []).append((parameter, candidates[0]))
+    if bound:
+        result.symbols = [
+            replace(symbol, parameters=(*symbol.parameters, *bound.get(symbol.name, ())))
+            for symbol in result.symbols
+        ]
 
 
 def _node_call_scope(node: Node) -> tuple[int, int]:
@@ -3380,6 +3472,8 @@ class StaticAnalysisEngine:
         result.persistence_facts.extend(_persistence_facts(files, root))
         result.migration_facts.extend(_migration_facts(_migration_files(root), root))
         result.cloud_facts.extend(detect_cloud_facts(files, root))
+        if stack in {"node-ts", "node-js"}:
+            _node_bind_consumer_argument_types(result, files, root, stack)
         result = BoundedFlowResolver().resolve(result)
         if stack in {"node-ts", "node-js"}:
             result.message_contracts.extend(_node_forwarded_kafka_topic_contracts(result, files, root, stack))

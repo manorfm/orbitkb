@@ -213,6 +213,9 @@ a source-backed consume contract. The topology shows the topic as a channel;
 ambiguous subscriptions or handlers are omitted.
 Direct Kafka publish contracts require a producer constructed from an imported
 `kafkajs` client, a literal topic, and an unshadowed producer receiver.
+When bootstrap code passes one proven local CommonJS class instance to a
+consumer function, the bounded message flow can follow calls on that parameter.
+Conflicting or unknown arguments keep the receiver unresolved.
 
 For Node/TypeScript, direct Axios calls in named functions and class methods
 can expose an external host and path when the URL is literal or combines a
