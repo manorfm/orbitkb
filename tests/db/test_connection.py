@@ -9,6 +9,31 @@ def test_schema_initializes(tmp_path: Path):
     assert row["value"] == SCHEMA_VERSION
 
 
+def test_schema_expands_persistence_kind_without_losing_existing_facts(tmp_path: Path):
+    path = tmp_path / "older-persistence.db"
+    conn = open_db(path)
+    conn.execute("DROP TABLE static_persistence_facts")
+    conn.execute("""CREATE TABLE static_persistence_facts (
+        id INTEGER PRIMARY KEY, service_id INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+        name TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('sql_table', 'document')),
+        owner TEXT NOT NULL, file_path TEXT NOT NULL, start_line INTEGER NOT NULL,
+        end_line INTEGER NOT NULL, updated_at TEXT NOT NULL
+    )""")
+    conn.execute("INSERT INTO services (name, root_path, stack, updated_at) VALUES ('orders', '/tmp/orders', 'node-js', 'now')")
+    conn.execute("""INSERT INTO static_persistence_facts
+        (service_id, name, kind, owner, file_path, start_line, end_line, updated_at)
+        VALUES (1, 'orders', 'document', 'Order', 'model.js', 2, 2, 'now')""")
+    conn.commit()
+    conn.close()
+
+    upgraded = open_db(path)
+
+    assert tuple(upgraded.execute("SELECT name, kind FROM static_persistence_facts").fetchone()) == ("orders", "document")
+    upgraded.execute("""INSERT INTO static_persistence_facts
+        (service_id, name, kind, owner, file_path, start_line, end_line, updated_at)
+        VALUES (1, 'LedgerEntry', 'mongoose_model', 'LedgerEntry', 'ledger.js', 3, 3, 'now')""")
+
+
 def test_schema_adds_component_digest_without_inventing_existing_input(tmp_path: Path):
     path = tmp_path / "older-components.db"
     conn = open_db(path)

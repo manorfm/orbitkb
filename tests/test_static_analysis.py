@@ -3980,6 +3980,25 @@ def test_node_analyzer_extracts_literal_mongoose_collection_ownership(tmp_path: 
     ]
 
 
+def test_node_analyzer_records_mongoose_model_without_guessing_collection(tmp_path: Path):
+    (tmp_path / "order.model.js").write_text(
+        "const mongoose = require('mongoose');\n"
+        "module.exports = mongoose.model('Order', schema);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "fake.model.js").write_text(
+        "const mongoose = fakeFactory;\n"
+        "module.exports = mongoose.model('Fake', schema);\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert [(fact.name, fact.kind, fact.owner) for fact in result.persistence_facts] == [
+        ("Order", "mongoose_model", "Order"),
+    ]
+
+
 def test_node_analyzer_classifies_explicit_mongoose_model_operations(tmp_path: Path):
     (tmp_path / "orders.ts").write_text(
         '''const Order = mongoose.model("Order", orderSchema, "orders");

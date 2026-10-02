@@ -117,6 +117,7 @@ from orbitkb.discovery.node_imports import parse_node_named_imports
 from orbitkb.discovery.node_local_handlers import (
     anonymous_commonjs_function,
     anonymous_default_function,
+    proven_commonjs_mongoose_model_export,
     proven_local_commonjs_flow_imports,
     proven_local_commonjs_mongoose_models,
     proven_local_handler_imports,
@@ -4465,6 +4466,12 @@ def _persistence_facts(files: list[Path], root: Path) -> list[PersistenceFact]:
         for match in re.finditer(r'\bmongoose\.model\s*(?:<[^>]+>)?\s*\(\s*["\']([^"\']+)["\']\s*,\s*[^,]+,\s*["\']([^"\']+)["\']', source):
             owner, collection = match.groups()
             facts.append(PersistenceFact(collection, "document", owner, _line_evidence(path, root, source, match.start())))
+        if path.suffix == ".js" and (model := proven_commonjs_mongoose_model_export(path)) is not None:
+            name, line = model
+            if not any(fact.owner == name and fact.evidence.file_path == path.relative_to(root).as_posix() for fact in facts):
+                facts.append(PersistenceFact(
+                    name, "mongoose_model", name, Evidence(path.relative_to(root).as_posix(), line, line),
+                ))
         facts.extend(_prisma_persistence_facts(source, path, root))
     return facts
 

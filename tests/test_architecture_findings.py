@@ -701,6 +701,17 @@ def test_aggregate_ownership_overlap_preserves_each_declared_owner_and_evidence(
     assert exposed["remediation"] == finding["detail"]["remediation"]
 
 
+def test_aggregate_ownership_does_not_equate_logical_mongoose_model_names(tmp_path: Path):
+    conn = open_db(tmp_path / "models.db")
+    first = services_repo.ensure_service(conn, "orders", "/tmp/orders", "node-js")
+    second = services_repo.ensure_service(conn, "fulfillment", "/tmp/fulfillment", "node-js")
+    model = PersistenceFact("Order", "mongoose_model", "Order", Evidence("model.js", 2, 2))
+    flows_repo.replace_analysis(conn, first, AnalysisResult(persistence_facts=[model]))
+    flows_repo.replace_analysis(conn, second, AnalysisResult(persistence_facts=[model]))
+
+    assert find_aggregate_ownership_overlap(conn) == []
+
+
 def test_message_consumer_without_source_proven_recovery_policy_is_a_hypothesis(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     service_id = services_repo.ensure_service(conn, "billing", "/tmp/billing", "node-ts")

@@ -302,6 +302,7 @@ def find_aggregate_ownership_overlap(conn: sqlite3.Connection) -> list[dict]:
         SELECT f.name, f.kind, f.owner, f.file_path, f.start_line, f.end_line,
                f.service_id
         FROM static_persistence_facts f
+        WHERE f.kind IN ('sql_table', 'document')
         ORDER BY LOWER(f.name), f.kind, f.service_id, f.owner, f.file_path, f.start_line
         """
     ).fetchall()

@@ -479,37 +479,42 @@ def _stable_const_binding(tree: Node, source: bytes, name: str) -> Node | None:
     return bindings[0].child_by_field_name("value")
 
 
-def _commonjs_exported_mongoose_model(path: Path) -> bool:
+def proven_commonjs_mongoose_model_export(path: Path) -> tuple[str, int] | None:
+    """Return the literal model name and source line of a direct CommonJS export."""
     source = path.read_bytes()
     tree = _parse(path, source)
     values = _commonjs_assignment_values(tree, source)
     if len(values) != 1 or values[0] is None or values[0].type != "call_expression":
-        return False
+        return None
     if _commonjs_property_assignments(tree, source) or _has_commonjs_export_mutation_or_escape(tree, source):
-        return False
+        return None
     call = values[0]
     function = call.child_by_field_name("function")
     arguments = call.child_by_field_name("arguments")
     if function is None or function.type != "member_expression" or arguments is None:
-        return False
+        return None
     receiver = function.child_by_field_name("object")
     method = function.child_by_field_name("property")
     if receiver is None or receiver.type != "identifier" or method is None or _text(method, source) != "model":
-        return False
+        return None
     args = arguments.named_children
     if len(args) < 2 or args[0].type != "string":
-        return False
+        return None
+    model_name = _text(args[0], source)[1:-1]
+    if not model_name or "\\" in model_name:
+        return None
     binding = _stable_const_binding(tree, source, _text(receiver, source))
     if binding is None or binding.type != "call_expression":
-        return False
+        return None
     require = binding.child_by_field_name("function")
     require_args = binding.child_by_field_name("arguments")
-    return (
+    proven = (
         require is not None and _text(require, source) == "require"
         and require_args is not None and len(require_args.named_children) == 1
         and require_args.named_children[0].type == "string"
         and _text(require_args.named_children[0], source)[1:-1] == "mongoose"
     )
+    return (model_name, call.start_point.row + 1) if proven else None
 
 
 def proven_local_commonjs_mongoose_models(tree: Node, source: bytes, path: Path, root: Path) -> frozenset[str]:
@@ -519,7 +524,7 @@ def proven_local_commonjs_mongoose_models(tree: Node, source: bytes, path: Path,
         if name.type != "identifier":
             continue
         alias = _text(name, source)
-        if _stable_const_binding(tree, source, alias) is not None and _commonjs_exported_mongoose_model(imported):
+        if _stable_const_binding(tree, source, alias) is not None and proven_commonjs_mongoose_model_export(imported):
             models.add(alias)
     return frozenset(models)
 

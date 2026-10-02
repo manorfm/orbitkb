@@ -154,9 +154,18 @@ def test_node_service_topology_shows_only_proven_message_channels(tmp_path):
 
 def test_node_consumer_reaches_refund_from_proven_bootstrap_argument(tmp_path):
     analysis = StaticAnalysisEngine().analyze(NODE_CORPUS, "node-js")
+    assert {(fact.name, fact.kind) for fact in analysis.persistence_facts} >= {
+        ("Transaction", "mongoose_model"),
+        ("LedgerEntry", "mongoose_model"),
+    }
     conn = open_db(tmp_path / "payments-consumer-flow.db")
     service_id = services.ensure_service(conn, "payments-service", str(NODE_CORPUS), "node-js")
     flows.replace_analysis(conn, service_id, analysis)
+    persistence = queries.describe_persistence(conn, "payments-service")
+    assert {(fact["name"], fact["kind"]) for fact in persistence["static_facts"]} >= {
+        ("Transaction", "mongoose_model"),
+        ("LedgerEntry", "mongoose_model"),
+    }
 
     detail = queries.describe_entrypoint(conn, "payments-service", "message", "CONSUME", "order.cancelled")
 

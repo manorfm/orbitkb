@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS static_persistence_facts (
     id          INTEGER PRIMARY KEY,
     service_id  INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
     name        TEXT NOT NULL,
-    kind        TEXT NOT NULL CHECK (kind IN ('sql_table', 'document')),
+    kind        TEXT NOT NULL,
     owner       TEXT NOT NULL,
     file_path   TEXT NOT NULL,
     start_line  INTEGER NOT NULL,

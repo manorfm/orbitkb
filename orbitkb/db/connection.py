@@ -4,7 +4,7 @@ import sqlite3
 from importlib import resources
 from pathlib import Path
 
-SCHEMA_VERSION = "50"
+SCHEMA_VERSION = "51"
 DEFAULT_DB_PATH = Path.home() / ".orbitkb" / "orbitkb.db"
 
 
@@ -64,6 +64,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     _migrate_configuration_binding_kind_if_needed(conn)
     _migrate_entrypoint_kind_if_needed(conn)
     _migrate_architecture_findings_if_needed(conn)
+    _migrate_persistence_fact_kind_if_needed(conn)
     row = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
     if row is None:
         conn.execute(
@@ -108,6 +109,35 @@ def _migrate_configuration_binding_kind_if_needed(conn: sqlite3.Connection) -> N
         ALTER TABLE static_configuration_bindings_replacement RENAME TO static_configuration_bindings;
         CREATE INDEX idx_static_configuration_bindings_service
             ON static_configuration_bindings(service_id);
+        """
+    )
+
+
+def _migrate_persistence_fact_kind_if_needed(conn: sqlite3.Connection) -> None:
+    """Preserve existing facts while allowing source-proven logical model kinds."""
+    table_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'static_persistence_facts'"
+    ).fetchone()["sql"]
+    if "kind IN (" not in table_sql:
+        return
+    conn.executescript(
+        """
+        CREATE TABLE static_persistence_facts_replacement (
+            id INTEGER PRIMARY KEY,
+            service_id INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            owner TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            start_line INTEGER NOT NULL,
+            end_line INTEGER NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        INSERT INTO static_persistence_facts_replacement
+            SELECT id, service_id, name, kind, owner, file_path, start_line, end_line, updated_at
+            FROM static_persistence_facts;
+        DROP TABLE static_persistence_facts;
+        ALTER TABLE static_persistence_facts_replacement RENAME TO static_persistence_facts;
         """
     )
 
