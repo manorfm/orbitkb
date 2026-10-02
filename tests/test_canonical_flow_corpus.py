@@ -103,3 +103,19 @@ def test_node_route_reports_only_reachable_external_http_destinations(tmp_path):
         ("card_gateway.client.refund", "POST", "card-gateway.vendor.io", "/v1/refund"),
     }
     assert charge["service_calls"] == []
+
+
+def test_node_service_topology_shows_proven_http_hosts_as_external_nodes(tmp_path):
+    analysis = StaticAnalysisEngine().analyze(NODE_CORPUS, "node-js")
+    conn = open_db(tmp_path / "payments-topology.db")
+    service_id = services.ensure_service(conn, "payments-service", str(NODE_CORPUS), "node-js")
+    flows.replace_analysis(conn, service_id, analysis)
+
+    diagram = queries.describe_service_topology(conn, "payments-service", hops=0)["mermaid"]
+
+    assert 'ext_card_gateway_vendor_io(("card-gateway.vendor.io"))' in diagram
+    assert 'ext_notify_hub_vendor_io(("notify-hub.vendor.io"))' in diagram
+    assert 'svc_payments_service -.->|HTTPS POST /v1/charge| ext_card_gateway_vendor_io' in diagram
+    assert 'svc_payments_service -.->|HTTPS POST /v1/refund| ext_card_gateway_vendor_io' in diagram
+    assert 'svc_payments_service -.->|HTTPS POST /v1/send| ext_notify_hub_vendor_io' in diagram
+    assert 'svc_card_gateway_vendor_io' not in diagram

@@ -22,7 +22,7 @@
     "payments-service/apis/post-charge.md": "5acddd6b641b7c15e2a9bc5a5d268421d177d8a838ffb71379b267c76ecec453",
     "payments-service/apis/post-payments-id-refund.md": "b003ebe5b2e171cb6ddedb58f015d8723a1251794be7db760cd1812493e25d7b",
     "payments-service/index.md": "b031408d75d67526fc0ecca4aac816df0a205cd28bfbdbfe4095a190181b2687",
-    "topology.mmd": "9f0ffb8fdeccd6d62ffa6cce8d74a4464d19b6c6867d50fe373be08d1b5c3577"
+    "topology.mmd": "52c1b0cff45673dcfea1dd25919a0392768f793bae3d6ef6982b1ff44eb1276a"
   },
   "integration_fixture": {
     "exports": {
@@ -294,7 +294,7 @@
         }
       ],
       "long_desc": "Mock long description.",
-      "mermaid": "graph TD\n  svc_payments_service[\"payments-service\"]",
+      "mermaid": "graph TD\n  svc_payments_service[\"payments-service\"]\n  ext_card_gateway_vendor_io((\"card-gateway.vendor.io\"))\n  svc_payments_service -.->|HTTPS POST /v1/charge| ext_card_gateway_vendor_io\n  svc_payments_service -.->|HTTPS POST /v1/refund| ext_card_gateway_vendor_io\n  ext_notify_hub_vendor_io((\"notify-hub.vendor.io\"))\n  svc_payments_service -.->|HTTPS POST /v1/send| ext_notify_hub_vendor_io",
       "messages": [],
       "name": "payments-service",
       "persists": [],

@@ -18,6 +18,7 @@ from orbitkb.db.repositories import messages as messages_repo
 from orbitkb.db.repositories import persistence as persistence_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
+from orbitkb.domain.canonical import FactStatus
 from orbitkb.export.dependencies import unresolved_declared_http_targets
 from orbitkb.export.messaging import has_confirmed_redis_publication
 from orbitkb.export.paths import service_output_dirs
@@ -107,7 +108,9 @@ def generate_topology_diagram(
     subgraph reachable within `hops` steps of them): each as a node, external
     vendors as rounded nodes, service_calls as solid edges, message links as dashed
     edges. Source-proven HTTP calls without a reconciled destination retain a
-    declared target node, marked unresolved. A confirmed Redis Pub/Sub
+    declared target node, marked unresolved. Proven external HTTP calls add
+    host nodes with method and path, without becoming internal service links.
+    A confirmed Redis Pub/Sub
     publication adds a broker node scoped to its producer service; the source
     does not prove a channel or shared instance. A confirmed call on an injected
     Mongo template adds a per-service MongoDB node, without assigning a collection
@@ -180,6 +183,20 @@ def generate_topology_diagram(
         ):
             target_id = external_node(f"{target} (declared target)")
             lines.append(f"  {from_id} -.->|http (unresolved)| {target_id}")
+        if snapshot is not None:
+            http_targets = {
+                (fact.attributes["scheme"], fact.attributes["host"], fact.attributes["port"],
+                 fact.attributes["method"], fact.attributes["path"])
+                for fact in snapshot.facts
+                if fact.kind == "external_http_call" and fact.status is FactStatus.CONFIRMED
+            }
+            for scheme, host, port, method, target_path in sorted(
+                http_targets, key=lambda target: (target[1], target[2] or 0, target[0], target[3], target[4]),
+            ):
+                host_label = f"{host}:{port}" if port is not None else host
+                target_id = external_node(host_label)
+                label = f"{scheme.upper()} {method} {target_path}"
+                lines.append(f"  {from_id} -.->|{_mermaid_label(label)}| {target_id}")
 
     for fact in flows_repo.list_all_static_cloud_facts(conn):
         from_id = service_ids.get(fact["from_id"])

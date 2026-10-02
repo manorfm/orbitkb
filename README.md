@@ -362,6 +362,9 @@ or shared Redis instance.
 Source-proven HTTP calls from canonical or legacy static facts also appear
 with their declared target marked `unresolved` when no existing service call
 has established the destination.
+Confirmed outbound HTTP requests to literal external URLs appear as vendor host
+nodes, with method and path on their edges. Repeated requests share the host
+node, and these requests do not imply a link to another indexed service.
 Confirmed calls on an injected Spring Mongo template add a per-service MongoDB
 node labeled `accesses`; the diagram does not infer the collection or operation
 direction from `MongoTemplate.execute`.

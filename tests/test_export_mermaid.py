@@ -5,6 +5,7 @@ from orbitkb.analysis.models import (
     AnalysisResult,
     CloudFact,
     Evidence,
+    ExternalHttpCall,
     FlowEdge,
     Injection,
     StaticServiceCall,
@@ -190,6 +191,32 @@ def test_generate_topology_diagram_includes_cloud_nodes(tmp_path: Path):
 
     assert "sqs" in diagram
     assert "orders-queue" in diagram
+
+
+def test_topology_deduplicates_proven_http_targets_and_respects_service_scope(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    orders_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "node-js")
+    other_id = services_repo.ensure_service(conn, "other-service", "/tmp/other", "node-js")
+    call = ExternalHttpCall(
+        "Orders.submit", "https", "vendor.example", 8443, "POST", "/v1/items",
+        Evidence("Orders.ts", 3, 3),
+    )
+    flows_repo.replace_analysis(conn, orders_id, AnalysisResult(external_http_calls=[
+        call,
+        ExternalHttpCall(call.source, call.scheme, call.host, call.port, call.method,
+                         call.path, Evidence("Orders.ts", 8, 8)),
+    ]))
+    flows_repo.replace_analysis(conn, other_id, AnalysisResult(external_http_calls=[
+        ExternalHttpCall("Other.send", "http", "other.example", None, "GET", "/status",
+                         Evidence("Other.ts", 4, 4)),
+    ]))
+
+    diagram = generate_topology_diagram(conn, root_service_ids={orders_id}, hops=0)
+
+    assert diagram.count('ext_vendor_example_8443(("vendor.example:8443"))') == 1
+    assert diagram.count('svc_orders_service -.->|HTTPS POST /v1/items| ext_vendor_example_8443') == 1
+    assert "other.example" not in diagram
+    assert "svc_vendor_example_8443" not in diagram
 
 
 def test_topology_shows_only_confirmed_redis_publishers_without_a_channel(tmp_path: Path):

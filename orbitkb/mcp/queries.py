@@ -383,8 +383,8 @@ def describe_service_topology(
     who it calls, who calls it, and its queues/DBs -- scoped to `hops` steps out
     (default 1) rather than export's whole-system topology.mmd, since a single
     service's context rarely needs the entire indexed system's graph. Built purely
-    from the same service_calls/messages/persistence facts describe_service and
-    get_relationships already read, just rendered as a diagram instead of a list.
+    from indexed service calls, messages, persistence, and proven external HTTP
+    destinations, rendered as a diagram instead of a list.
     """
     row, service_error = _resolve_service(conn, service, repository)
     if service_error:
