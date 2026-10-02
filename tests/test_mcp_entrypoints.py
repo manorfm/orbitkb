@@ -111,6 +111,24 @@ def test_describe_entrypoint_reports_only_reachable_message_destinations(tmp_pat
     ]
 
 
+def test_describe_entrypoint_uses_a_proven_contract_when_call_name_is_generic(tmp_path):
+    conn = open_db(tmp_path / "generic-message-call.db")
+    service_id = services.ensure_service(conn, "orders", "/repos/orders", "node-js")
+    evidence = Evidence("events.js", 7, 7)
+    flows.replace_analysis(conn, service_id, AnalysisResult(
+        entrypoints=[EntryPoint("http", "POST", "/orders", "Orders.create", Evidence("routes.js", 1, 1))],
+        edges=[FlowEdge("Orders.create", "Events.emit", "invokes", evidence)],
+        message_contracts=[MessageContract("publishes", "orders.created", None, None, evidence)],
+    ))
+
+    detail = queries.describe_entrypoint(conn, "orders", "http", "post", "/orders")
+
+    assert [(item["target"], item["direction"], item["channel"], item["status"])
+            for item in detail["message_operations"]] == [
+        ("Events.emit", "publishes", "orders.created", "confirmed"),
+    ]
+
+
 def test_describe_entrypoint_does_not_assign_a_channel_to_ambiguous_same_line_calls(tmp_path):
     conn = open_db(tmp_path / "ambiguous-messages.db")
     service_id = services.ensure_service(conn, "orders", "/repos/orders", "node-js")

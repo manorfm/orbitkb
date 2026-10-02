@@ -455,6 +455,16 @@ def proven_local_commonjs_flow_imports(tree: Node, source: bytes, path: Path, ro
     """Bind relative require aliases to proven local class methods or object functions."""
     imports: list[tuple[str, str]] = []
     for name, imported in _relative_commonjs_requires(tree, source, path, root):
+        if name.type == "object_pattern":
+            declaration = name.parent.parent if name.parent is not None else None
+            if declaration is None or declaration.type != "lexical_declaration" or not _text(
+                declaration, source
+            ).lstrip().startswith("const "):
+                continue
+            exports = _commonjs_named_exports(imported)
+            for local_name, function_name in _commonjs_destructured_handlers(name, exports, source).items():
+                imports.append((local_name, f"{imported.stem}.{function_name}"))
+            continue
         if name.type != "identifier":
             continue
         alias = _text(name, source)

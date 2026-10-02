@@ -131,7 +131,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "67"
+STATIC_ANALYSIS_INPUT_VERSION = "68"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -1645,6 +1645,222 @@ def _node_kafka_publish_contracts(tree: Node, source: bytes, path: Path, root: P
     return contracts
 
 
+@dataclass(frozen=True)
+class _NodeTopicCall:
+    source: str
+    target: str
+    evidence: Evidence
+    arguments: tuple[tuple[str, str] | None, ...]
+    sink_parameter: int | None = None
+
+
+def _node_kafka_producers(tree: Node, source: bytes) -> set[str]:
+    declarations = [node for statement in tree.named_children
+                    if statement.type == "lexical_declaration"
+                    and _text(statement, source).lstrip().startswith("const ")
+                    for node in statement.named_children if node.type == "variable_declarator"]
+    kafka_imported = False
+    for statement in tree.named_children:
+        if statement.type != "import_statement":
+            continue
+        module = statement.child_by_field_name("source")
+        if module is not None and _string(module, source) == "kafkajs" and re.search(
+            r"\{\s*Kafka\s*\}", _text(statement, source)
+        ):
+            kafka_imported = True
+    for declaration in declarations:
+        name = declaration.child_by_field_name("name")
+        value = declaration.child_by_field_name("value")
+        if name is None or value is None or name.type != "object_pattern" or value.type != "call_expression":
+            continue
+        callee = value.child_by_field_name("function")
+        arguments = value.child_by_field_name("arguments")
+        if callee is None or _text(callee, source) != "require" or arguments is None:
+            continue
+        args = arguments.named_children
+        if len(args) == 1 and _string(args[0], source) == "kafkajs" and any(
+            field.type == "shorthand_property_identifier_pattern" and _text(field, source) == "Kafka"
+            for field in name.named_children
+        ):
+            kafka_imported = True
+    if not kafka_imported:
+        return set()
+    clients = set()
+    for declaration in declarations:
+        name = declaration.child_by_field_name("name")
+        value = declaration.child_by_field_name("value")
+        if name is None or name.type != "identifier" or value is None or value.type != "new_expression":
+            continue
+        constructor = value.child_by_field_name("constructor")
+        if constructor is not None and _text(constructor, source) == "Kafka":
+            clients.add(_text(name, source))
+    producers = set()
+    for declaration in declarations:
+        name = declaration.child_by_field_name("name")
+        value = declaration.child_by_field_name("value")
+        if name is None or name.type != "identifier" or value is None or value.type != "call_expression":
+            continue
+        callee = value.child_by_field_name("function")
+        if callee is None or callee.type != "member_expression":
+            continue
+        receiver = callee.child_by_field_name("object")
+        member = callee.child_by_field_name("property")
+        arguments = value.child_by_field_name("arguments")
+        if receiver is not None and member is not None and arguments is not None and (
+            _text(receiver, source) in clients and _text(member, source) == "producer"
+            and not arguments.named_children
+        ):
+            producers.add(_text(name, source))
+    return producers
+
+
+def _node_topic_parameters(function: _Function, source: bytes) -> tuple[str | None, ...]:
+    declaration = function.declaration
+    if declaration.type == "variable_declarator":
+        declaration = declaration.child_by_field_name("value") or declaration
+    parameters = declaration.child_by_field_name("parameters")
+    if parameters is None:
+        return ()
+    names = []
+    for parameter in parameters.named_children:
+        if parameter.type == "identifier":
+            names.append(_text(parameter, source))
+        elif parameter.type in {"required_parameter", "optional_parameter"} and (
+            parameter.named_children and parameter.named_children[0].type == "identifier"
+        ):
+            names.append(_text(parameter.named_children[0], source))
+        else:
+            names.append(None)
+    reassigned = set()
+    for node in _walk(function.body):
+        if node.type in {"assignment_expression", "augmented_assignment_expression"}:
+            target = node.child_by_field_name("left")
+        elif node.type == "update_expression":
+            target = node.named_children[0] if node.named_children else None
+        else:
+            continue
+        if target is not None and target.type == "identifier":
+            reassigned.add(_text(target, source))
+    return tuple(name if name not in reassigned else None for name in names)
+
+
+def _node_topic_argument(node: Node, source: bytes) -> tuple[str, str] | None:
+    if node.type == "identifier":
+        return ("parameter", _text(node, source))
+    if node.type == "string":
+        value = _string(node, source)
+        if value is not None and "\\" not in value:
+            return ("literal", value)
+    return None
+
+
+def _node_kafka_sink_parameter(
+    node: Node, source: bytes, producers: set[str], parameters: tuple[str | None, ...],
+) -> int | None:
+    callee = node.child_by_field_name("function")
+    arguments = node.child_by_field_name("arguments")
+    if callee is None or arguments is None or callee.type != "member_expression":
+        return None
+    receiver = callee.child_by_field_name("object")
+    member = callee.child_by_field_name("property")
+    if receiver is None or member is None or _text(receiver, source) not in producers or _text(member, source) != "send":
+        return None
+    args = arguments.named_children
+    if len(args) != 1 or args[0].type != "object":
+        return None
+    fields: dict[str, Node] = {}
+    for field in args[0].named_children:
+        if field.type == "shorthand_property_identifier":
+            key, value = _text(field, source), field
+        elif field.type == "pair":
+            key_node = field.child_by_field_name("key")
+            value = field.child_by_field_name("value")
+            if key_node is None or key_node.type not in {"property_identifier", "string"} or value is None:
+                return None
+            key = _text(key_node, source).strip("\"'")
+        else:
+            return None
+        if key in fields:
+            return None
+        fields[key] = value
+    topic = fields.get("topic")
+    if topic is None or "messages" not in fields or topic.type not in {"identifier", "shorthand_property_identifier"}:
+        return None
+    name = _text(topic, source)
+    return parameters.index(name) if name in parameters else None
+
+
+def _node_forwarded_kafka_topic_contracts(
+    result: AnalysisResult, files: list[Path], root: Path, stack: str,
+) -> list[MessageContract]:
+    """Follow literal topic arguments only through proven local calls to a Kafka send."""
+    language = (Language(tree_sitter_javascript.language()) if stack == "node-js"
+                else Language(tree_sitter_typescript.language_typescript()))
+    parser = Parser(language)
+    edge_index: dict[tuple[str, Evidence], list[FlowEdge]] = {}
+    for edge in result.edges:
+        edge_index.setdefault((edge.source, edge.evidence), []).append(edge)
+    functions: dict[str, list[tuple[str | None, ...]]] = {}
+    calls: list[_NodeTopicCall] = []
+    for path in files:
+        if path.suffix not in {".js", ".jsx", ".ts", ".tsx"}:
+            continue
+        source = path.read_bytes()
+        tree = parser.parse(source).root_node
+        producers = _node_kafka_producers(tree, source)
+        for function in (*_node_named_functions(tree, source, path.stem), *_node_class_functions(tree, source)):
+            parameters = _node_topic_parameters(function, source)
+            functions.setdefault(function.symbol, []).append(parameters)
+            for node in _walk(function.body):
+                if node.type != "call_expression":
+                    continue
+                arguments = node.child_by_field_name("arguments")
+                if arguments is None:
+                    continue
+                evidence = _evidence(path, root, node)
+                edges = edge_index.get((function.symbol, evidence), ())
+                if len(edges) != 1 or edges[0].origin != "static" or edges[0].confidence != "high":
+                    continue
+                calls.append(_NodeTopicCall(
+                    function.symbol, edges[0].target, evidence,
+                    tuple(_node_topic_argument(arg, source) for arg in arguments.named_children),
+                    _node_kafka_sink_parameter(node, source, producers, parameters),
+                ))
+    parameters_by_symbol = {symbol: declarations[0] for symbol, declarations in functions.items()
+                            if len(declarations) == 1}
+    topic_parameters: dict[str, set[int]] = {}
+    for call in calls:
+        if call.sink_parameter is not None and call.source in parameters_by_symbol:
+            topic_parameters.setdefault(call.source, set()).add(call.sink_parameter)
+    changed = True
+    while changed:
+        changed = False
+        for call in calls:
+            if call.source not in parameters_by_symbol or len(topic_parameters.get(call.target, ())) != 1:
+                continue
+            index = next(iter(topic_parameters[call.target]))
+            argument = call.arguments[index] if index < len(call.arguments) else None
+            if argument is None or argument[0] != "parameter":
+                continue
+            parameters = parameters_by_symbol[call.source]
+            if argument[1] not in parameters:
+                continue
+            own_index = parameters.index(argument[1])
+            known = topic_parameters.setdefault(call.source, set())
+            if own_index not in known:
+                known.add(own_index)
+                changed = True
+    return list(dict.fromkeys(
+        MessageContract("publishes", argument[1], None, None, call.evidence)
+        for call in calls
+        if call.source in parameters_by_symbol and call.target in parameters_by_symbol
+        and len(topic_parameters.get(call.target, ())) == 1
+        for index in topic_parameters[call.target]
+        if index < len(call.arguments)
+        if (argument := call.arguments[index]) is not None and argument[0] == "literal"
+    ))
+
+
 # A consumer's `subscribe({ topic: "orders" })` registers interest; the
 # actual handler is a *separate* `run({ eachMessage: async (...) => {...} })`
 # call — unlike RabbitMQ's Node `.consume(channel, handler)`, these two calls
@@ -2959,6 +3175,8 @@ class StaticAnalysisEngine:
         result.migration_facts.extend(_migration_facts(_migration_files(root), root))
         result.cloud_facts.extend(detect_cloud_facts(files, root))
         result = BoundedFlowResolver().resolve(result)
+        if stack in {"node-ts", "node-js"}:
+            result.message_contracts.extend(_node_forwarded_kafka_topic_contracts(result, files, root, stack))
         adapter = self._framework_adapters.get(stack)
         if adapter is not None:
             adapter.enrich(result, files, root)

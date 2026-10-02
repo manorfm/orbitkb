@@ -609,25 +609,25 @@ def _reachable_message_operations(traversal: TraversalResult) -> list[dict]:
                   if boundary.reason in {"unresolved", "external_call", "redis_publish"}}
     operations = []
     for edge in edges:
-        direction = edge.attributes.get("relation")
-        if direction not in {"publishes", "consumes"}:
-            continue
+        relation = edge.attributes.get("relation")
         target = edge.attributes["target"]
-        matching = {
-            contract.subject.channel
-            for contract in contracts
-            if contract.attributes.get("direction") == direction
-            and any(source in edge.sources for source in contract.sources)
-        }
-        if edge.id not in unresolved and not matching:
-            continue
-        channel = next(iter(matching)) if len(matching) == 1 else None
-        source = edge.sources[0]
-        operations.append({
-            "source": edge.subject.name, "target": target, "direction": direction,
-            "channel": channel, "status": "confirmed" if channel is not None else "unknown",
-            "evidence": {"file": source.file_path, "start_line": source.start_line, "end_line": source.end_line},
-        })
+        for source in edge.sources:
+            matching = {
+                (contract.attributes["direction"], contract.subject.channel)
+                for contract in contracts
+                if source in contract.sources
+                and relation in {"invokes", contract.attributes.get("direction")}
+            }
+            if relation not in {"publishes", "consumes"} and len(matching) != 1:
+                continue
+            if edge.id not in unresolved and not matching:
+                continue
+            direction, channel = next(iter(matching)) if len(matching) == 1 else (relation, None)
+            operations.append({
+                "source": edge.subject.name, "target": target, "direction": direction,
+                "channel": channel, "status": "confirmed" if channel is not None else "unknown",
+                "evidence": {"file": source.file_path, "start_line": source.start_line, "end_line": source.end_line},
+            })
     return operations
 
 

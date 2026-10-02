@@ -62,7 +62,23 @@ def test_node_route_public_flow_reaches_service_client_and_message_publisher(tmp
     assert ("PaymentService.chargeCustomer", "PaymentService.publishPaymentEvent") in pairs
     assert ("PaymentService.publishPaymentEvent", "kafka.publish") in pairs
     assert not any(source == "PaymentService.refundCustomer" for source, _ in pairs)
-    assert [(operation["source"], operation["target"], operation["channel"], operation["status"])
-            for operation in detail["message_operations"]] == [
-        ("kafka.publish", "producer.send", None, "unknown"),
+    assert ("kafka.publish", "producer.send", None, "unknown") in [
+        (operation["source"], operation["target"], operation["channel"], operation["status"])
+        for operation in detail["message_operations"]
     ]
+
+
+def test_node_route_resolves_only_its_literal_kafka_topics(tmp_path):
+    analysis = StaticAnalysisEngine().analyze(NODE_CORPUS, "node-js")
+    conn = open_db(tmp_path / "payments-topics.db")
+    service_id = services.ensure_service(conn, "payments-service", str(NODE_CORPUS), "node-js")
+    flows.replace_analysis(conn, service_id, analysis)
+
+    charge = queries.describe_entrypoint(conn, "payments-service", "http", "POST", "/charge")
+    refund = queries.describe_entrypoint(conn, "payments-service", "http", "POST", "/payments/:id/refund")
+
+    assert [item["channel"] for item in charge["message_operations"]
+            if item["status"] == "confirmed"] == [
+        "payment.failed", "payment.failed", "payment.completed",
+    ]
+    assert refund["message_operations"] == []

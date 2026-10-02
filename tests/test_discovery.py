@@ -442,7 +442,9 @@ module.exports = { send };
 module.exports.send = 123;
 ''', encoding="utf-8")
     (tmp_path / "service.js").write_text('''const gateway = require("./client");
+const { send } = require("./client");
 function run() { gateway.send(); }
+function runDestructured() { send(); }
 module.exports = run;
 ''', encoding="utf-8")
 
@@ -450,6 +452,114 @@ module.exports = run;
 
     assert any(edge.source == "service.run" and edge.target == "gateway.send" for edge in analysis.edges)
     assert not any(edge.source == "service.run" and edge.target == "client.send" for edge in analysis.edges)
+    assert not any(edge.source == "service.runDestructured" and edge.target == "client.send"
+                   and edge.confidence == "high" for edge in analysis.edges)
+
+
+def test_node_destructured_commonjs_function_import_has_proven_flow_target(tmp_path: Path):
+    (tmp_path / "publisher.js").write_text('''function publish(topic) {}
+module.exports = { publish };
+''', encoding="utf-8")
+    (tmp_path / "service.js").write_text('''const { publish: emit } = require("./publisher");
+function run() { emit("orders.created"); }
+''', encoding="utf-8")
+
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert any(edge.source == "service.run" and edge.target == "publisher.publish"
+               and edge.confidence == "high" for edge in analysis.edges)
+
+
+def test_node_reassigned_destructured_import_is_not_a_proven_flow_target(tmp_path: Path):
+    (tmp_path / "publisher.js").write_text('''function publish(topic) {}
+module.exports = { publish };
+''', encoding="utf-8")
+    (tmp_path / "service.js").write_text('''let { publish } = require("./publisher");
+publish = () => {};
+function run() { publish("orders.created"); }
+''', encoding="utf-8")
+
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert not any(edge.source == "service.run" and edge.target == "publisher.publish"
+                   and edge.confidence == "high" for edge in analysis.edges)
+
+
+def test_node_topic_forwarding_requires_a_kafka_producer_and_literal_argument(tmp_path: Path):
+    (tmp_path / "fake.js").write_text('''const producer = { send() {} };
+function emit(topic) { producer.send({ topic, messages: [] }); }
+function run() { emit("not.kafka"); }
+''', encoding="utf-8")
+    (tmp_path / "dynamic.js").write_text('''const { Kafka } = require("kafkajs");
+const kafka = new Kafka({ brokers: [] });
+const producer = kafka.producer();
+function emit(topic) { producer.send({ topic, messages: [] }); }
+function run(topic) { emit(topic); }
+''', encoding="utf-8")
+    (tmp_path / "mutated.js").write_text('''const { Kafka } = require("kafkajs");
+const kafka = new Kafka({ brokers: [] });
+const producer = kafka.producer();
+function publish(topic) { producer.send({ topic, messages: [] }); }
+module.exports = { publish };
+module.exports.publish = 123;
+''', encoding="utf-8")
+    (tmp_path / "caller.js").write_text('''const { publish } = require("./mutated");
+function run() { publish("not.proven"); }
+''', encoding="utf-8")
+    (tmp_path / "nested.js").write_text('''const { Kafka } = require("kafkajs");
+const kafka = new Kafka({ brokers: [] });
+const producer = kafka.producer();
+function unused(topic) {
+  function later() { producer.send({ topic, messages: [] }); }
+}
+function run() { unused("not.published"); }
+''', encoding="utf-8")
+    (tmp_path / "reassigned.js").write_text('''const { Kafka } = require("kafkajs");
+const kafka = new Kafka({ brokers: [] });
+let producer = kafka.producer();
+producer = { send() {} };
+class Reassigned {
+  emit(topic) { producer.send({ topic, messages: [] }); }
+  run() { this.emit("not.kafka.anymore"); }
+}
+''', encoding="utf-8")
+    (tmp_path / "spread.js").write_text('''const { Kafka } = require("kafkajs");
+const kafka = new Kafka({ brokers: [] });
+const producer = kafka.producer();
+class Spread {
+  emit(topic, options) { producer.send({ topic, messages: [], ...options }); }
+  run() { this.emit("not.proven.with.spread", {}); }
+}
+''', encoding="utf-8")
+    (tmp_path / "rebound_topic.js").write_text('''const { Kafka } = require("kafkajs");
+const kafka = new Kafka({ brokers: [] });
+const producer = kafka.producer();
+class ReboundTopic {
+  emit(topic) { topic = "actual"; producer.send({ topic, messages: [] }); }
+  run() { this.emit("not.actual"); }
+}
+''', encoding="utf-8")
+
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert analysis.message_contracts == []
+
+
+def test_typescript_forwards_literal_topic_through_typed_method(tmp_path: Path):
+    (tmp_path / "events.ts").write_text('''import { Kafka } from "kafkajs";
+const kafka = new Kafka({ brokers: [] });
+const producer = kafka.producer();
+class Events {
+  emit(topic: string) { producer.send({ topic, messages: [] }); }
+  run() { this.emit("orders.created"); }
+}
+''', encoding="utf-8")
+
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert [(contract.channel, contract.evidence.start_line) for contract in analysis.message_contracts] == [
+        ("orders.created", 6),
+    ]
 
 
 def test_node_self_calls_resolve_only_methods_of_the_same_class(tmp_path: Path):
