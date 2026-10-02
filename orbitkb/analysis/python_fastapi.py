@@ -5,7 +5,11 @@ import ast
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from orbitkb.analysis.python_symbols import imported_module_path, module_name
+from orbitkb.analysis.python_symbols import (
+    imported_module_path,
+    imported_submodule_path,
+    module_name,
+)
 
 METHODS = {name: name.upper() for name in ("get", "post", "put", "patch", "delete", "head", "options")}
 
@@ -35,6 +39,7 @@ class Mount:
     line: int
     imported_from: ImportBinding | None
     on_app: bool
+    router_attribute: str | None = None
 
 
 @dataclass
@@ -141,13 +146,23 @@ def parse_module(file: Path, root: Path) -> ModuleRoutes:
             if (isinstance(call.func, ast.Attribute) and call.func.attr == "include_router"
                     and isinstance(call.func.value, ast.Name)
                     and (call.func.value.id in apps or call.func.value.id in result.routers)
-                    and call.args and isinstance(call.args[0], ast.Name)):
+                    and call.args):
                 prefix = _prefix(call)
-                name = call.args[0].id
-                if prefix is not None and (name in result.routers or name in result.imports):
+                argument = call.args[0]
+                name = argument.id if isinstance(argument, ast.Name) else None
+                router_attribute = None
+                if isinstance(argument, ast.Attribute) and isinstance(argument.value, ast.Name):
+                    name = argument.value.id
+                    router_attribute = argument.attr
+                if router_attribute is not None:
+                    valid_router = name in result.imports
+                else:
+                    valid_router = name in result.routers or name in result.imports
+                if prefix is not None and valid_router:
                     owner = call.func.value.id
                     result.mounts.append(Mount(owner, name, prefix, call.lineno,
-                                               result.imports.get(name), owner in apps))
+                                               result.imports.get(name), owner in apps,
+                                               router_attribute))
         elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             functions = statement.body if isinstance(statement, ast.ClassDef) else [statement]
             owner = f"{statement.name}." if isinstance(statement, ast.ClassDef) else ""
@@ -181,8 +196,12 @@ def proven_routes(files: list[Path], root: Path) -> list[Route]:
 
     def mounted_router(mount: Mount, file: Path) -> tuple[Path, str] | None:
         if mount.imported_from:
-            source = _import_source(file, mount.imported_from, root)
-            return (source, mount.imported_from.name) if source is not None else None
+            binding = mount.imported_from
+            if mount.router_attribute:
+                source = imported_submodule_path(file, root, binding.module, binding.level, binding.name)
+                return (source, mount.router_attribute) if source is not None else None
+            source = _import_source(file, binding, root)
+            return (source, binding.name) if source is not None else None
         return file, mount.router
 
     def router_routes(file: Path, name: str, before: int | None,

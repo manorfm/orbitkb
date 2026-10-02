@@ -58,7 +58,7 @@ def _bound_names(node: ast.AST) -> set[str]:
     return collector.names
 
 
-def _imported_submodule(file: Path, root: Path, module: str | None, level: int, name: str) -> Path | None:
+def imported_submodule_path(file: Path, root: Path, module: str | None, level: int, name: str) -> Path | None:
     """Accept a package child only when its initializer does not supply that name."""
     root = root.resolve()
     if level:
@@ -134,8 +134,8 @@ def stable_local_imports(tree: ast.Module, file: Path, root: Path) -> dict[str, 
                 for alias in statement.names:
                     if alias.name == "*":
                         continue
-                    submodule = _imported_submodule(file, root, statement.module,
-                                                   statement.level, alias.name)
+                    submodule = imported_submodule_path(file, root, statement.module,
+                                                       statement.level, alias.name)
                     if submodule is not None:
                         candidates[alias.asname or alias.name] = module_name(submodule, root)
         for name in _bound_names(statement):

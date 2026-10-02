@@ -112,6 +112,44 @@ def test_python_fastapi_public_flows_do_not_mix_same_named_modules(tmp_path: Pat
         assert {edge["to"] for edge in result["flow"]} == {f"{package}_service.fetch"}
 
 
+def test_python_package_router_mount_is_visible_in_public_flow(tmp_path: Path, fake_backends):
+    root = tmp_path / "service"
+    package = root / "api"
+    package.mkdir(parents=True)
+    (root / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "routes.py").write_text(
+        "from fastapi import APIRouter\n"
+        "from .service import process\n"
+        "router = APIRouter(prefix='/v1')\n"
+        "@router.post('/items')\ndef create(): return process()\n",
+        encoding="utf-8",
+    )
+    (package / "service.py").write_text(
+        "def process(): return repository.save()\n", encoding="utf-8",
+    )
+    (root / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from api import routes as handlers\n"
+        "app = FastAPI()\n"
+        "app.include_router(handlers.router, prefix='/api')\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "service.db"
+
+    assert cli._cmd_index(_parse([
+        "index", str(root), "--db", str(db_path), "--service", "service-python",
+    ])) == 0
+    conn = open_db(db_path)
+    result = queries.describe_entrypoint(conn, "service-python", "http", "POST", "/api/v1/items")
+
+    assert result["entrypoint"]["symbol"] == "api.routes.create"
+    assert {(edge["from"], edge["to"]) for edge in result["flow"]} == {
+        ("api.routes.create", "api.service.process"),
+        ("api.service.process", "repository.save"),
+    }
+
+
 def test_python_public_flow_reaches_explicitly_imported_local_function(tmp_path: Path, fake_backends):
     root = tmp_path / "service"
     root.mkdir()

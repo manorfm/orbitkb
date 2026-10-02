@@ -175,6 +175,61 @@ def test_python_fastapi_analyzer_resolves_relative_router_import_from_package(tm
     ]
 
 
+def test_python_fastapi_mounts_router_on_submodule_imported_from_package(tmp_path: Path):
+    package = tmp_path / "api"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "routes.py").write_text(
+        "from fastapi import APIRouter\n"
+        "router = APIRouter(prefix='/v1')\n"
+        "@router.get('/items')\ndef items(): return repository.list_items()\n",
+        encoding="utf-8",
+    )
+    (package / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from . import routes as endpoint_routes\n"
+        "app = FastAPI()\n"
+        "app.include_router(endpoint_routes.router, prefix='/relative')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from api import routes\n"
+        "app = FastAPI()\n"
+        "app.include_router(routes.router, prefix='/absolute')\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert {(entry.method, entry.name, entry.symbol) for entry in result.entrypoints} == {
+        ("GET", "/relative/v1/items", "api.routes.items"),
+        ("GET", "/absolute/v1/items", "api.routes.items"),
+    }
+
+
+def test_python_fastapi_rejects_ambiguous_or_unimported_package_router(tmp_path: Path):
+    package = tmp_path / "api"
+    package.mkdir()
+    (package / "__init__.py").write_text("routes = replacement\n", encoding="utf-8")
+    (package / "routes.py").write_text(
+        "from fastapi import APIRouter\n"
+        "router = APIRouter()\n"
+        "@router.get('/items')\ndef items(): pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from api import routes as imported_routes\n"
+        "app = FastAPI()\n"
+        "app.include_router(imported_routes.router)\n"
+        "app.include_router(routes.router)\n",
+        encoding="utf-8",
+    )
+
+    assert StaticAnalysisEngine().analyze(tmp_path, "python").entrypoints == []
+
+
 def test_python_fastapi_analyzer_only_includes_local_routes_registered_before_mount(tmp_path: Path):
     (tmp_path / "main.py").write_text(
         "from fastapi import FastAPI, APIRouter\n"
