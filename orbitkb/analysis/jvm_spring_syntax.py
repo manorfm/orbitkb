@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 
 from orbitkb.analysis.configuration_syntax import PROPERTY_CONFIGURATION_KEY
+from orbitkb.analysis.jvm_scanner import split_top_level
+from orbitkb.discovery.scan_helpers import find_matching_paren
 
 SPRING_ROUTE_ANNOTATION_TO_METHOD: dict[str, str] = {
     "GetMapping": "GET",
@@ -14,9 +17,47 @@ SPRING_ROUTE_ANNOTATION_TO_METHOD: dict[str, str] = {
     "DeleteMapping": "DELETE",
 }
 
-def spring_route_prefix(annotations: str) -> str | None:
-    match = re.search(r'@RequestMapping\s*\(\s*(?:value\s*=\s*)?"([^"]+)"', annotations)
-    return match.group(1) if match else None
+def spring_annotation_calls(modifiers: str) -> Iterator[tuple[str, str]]:
+    """Yield annotation calls, skipping `@` text inside another annotation's arguments."""
+    cursor = 0
+    while cursor < len(modifiers):
+        annotation = re.search(r"@[A-Za-z_]\w*", modifiers[cursor:])
+        if annotation is None:
+            return
+        annotation_name = annotation.group()[1:]
+        after_name = cursor + annotation.end()
+        argument_start = after_name
+        while argument_start < len(modifiers) and modifiers[argument_start] in " \t":
+            argument_start += 1
+        if argument_start >= len(modifiers) or modifiers[argument_start] != "(":
+            yield annotation_name, ""
+            cursor = after_name
+            continue
+        argument_end = find_matching_paren(modifiers, argument_start)
+        if argument_end == -1:
+            return
+        yield annotation_name, modifiers[argument_start : argument_end + 1]
+        cursor = argument_end + 1
+
+
+def spring_route_prefix(annotations: str) -> tuple[str | None, bool]:
+    """Return a literal class/interface prefix and whether a declared path is unresolved."""
+    for annotation_name, arguments in spring_annotation_calls(annotations):
+        if annotation_name == "RequestMapping":
+            for index, part in enumerate(split_top_level(arguments[1:-1])):
+                key, separator, value = part.partition("=")
+                if separator:
+                    if key.strip() not in {"value", "path"}:
+                        continue
+                elif index == 0:
+                    value = key
+                else:
+                    continue
+                literal = re.fullmatch(r'\s*"([^"\n]*)"\s*', value)
+                if literal is None or "${" in literal.group(1) or "#{" in literal.group(1):
+                    return None, True
+                return literal.group(1), False
+    return None, False
 
 
 def kotlin_supertypes(class_text: str) -> tuple[str, ...]:

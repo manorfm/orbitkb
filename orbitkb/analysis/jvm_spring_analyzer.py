@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import re
 import types
-from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,6 +42,7 @@ from orbitkb.analysis.jvm_security_analyzer import method_security_requirement
 from orbitkb.analysis.jvm_spring_syntax import (
     SPRING_ROUTE_ANNOTATION_TO_METHOD,
     kotlin_supertypes,
+    spring_annotation_calls,
     spring_route_prefix,
 )
 from orbitkb.analysis.models import (
@@ -59,7 +59,6 @@ from orbitkb.analysis.models import (
 from orbitkb.analysis.route_paths import join_route
 
 _REQUEST_HEADER_RE = re.compile(r'@RequestHeader\s*\(\s*(?:(?:name|value)\s*=\s*)?"(?P<name>[^"]+)"')
-_HANDLER_MAPPING_RE = re.compile(r"@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\b")
 _RESPONSE_HEADER_CALL_RE = re.compile(r'\.header\s*\(\s*"(?P<name>[^"]+)"')
 _SCHEDULED_CRON_RE = re.compile(r'^\(\s*cron\s*=\s*"([^"\n]+)"')
 _DIRECT_LOCAL_CALL_RE = re.compile(
@@ -77,27 +76,6 @@ _NAMED_RESPONSE_HEADER_BUILDERS = {
     "location": "Location",
     "contentType": "Content-Type",
 }
-
-
-def _method_annotations(modifiers: str) -> Iterator[tuple[str, str]]:
-    cursor = 0
-    while cursor < len(modifiers):
-        annotation = re.search(r"@[A-Za-z_]\w*", modifiers[cursor:])
-        if annotation is None:
-            return
-        annotation_name = annotation.group()[1:]
-        after_name = cursor + annotation.end()
-        argument_start = after_name
-        while argument_start < len(modifiers) and modifiers[argument_start] in " \t":
-            argument_start += 1
-        if argument_start >= len(modifiers) or modifiers[argument_start] != "(":
-            cursor = after_name
-            continue
-        argument_end = find_matching_paren(modifiers, argument_start)
-        if argument_end == -1:
-            return
-        yield annotation_name, modifiers[argument_start : argument_end + 1]
-        cursor = argument_end + 1
 
 
 def _add_scheduled_job(
@@ -424,24 +402,31 @@ def _kotlin_top_level_extensions(
     return symbols, edges, boundaries
 
 
-def _spring_handler_route(modifiers: str, prefix: str | None) -> tuple[str, str] | None:
-    mapping = _HANDLER_MAPPING_RE.search(modifiers)
-    if mapping is None:
-        return None
-    after = mapping.end()
-    while after < len(modifiers) and modifiers[after].isspace():
-        after += 1
-    path = ""
-    if after < len(modifiers) and modifiers[after] == "(":
-        closing = find_matching_paren(modifiers, after)
-        if closing < 0:
-            return None
-        arguments = modifiers[after + 1 : closing]
-        literal = re.search(r'(?:^|,)\s*(?:(?:value|path)\s*=\s*)?"([^"]*)"', arguments)
-        if literal:
-            path = literal.group(1)
-    method = SPRING_ROUTE_ANNOTATION_TO_METHOD[mapping.group(1)]
-    return method, join_route(prefix, path) or "/"
+def _spring_handler_route(
+    annotations: tuple[tuple[str, str], ...], prefix: str | None,
+) -> tuple[str, str] | None:
+    for annotation_name, arguments in annotations:
+        method = SPRING_ROUTE_ANNOTATION_TO_METHOD.get(annotation_name)
+        if method is None:
+            continue
+        path = ""
+        if arguments:
+            for index, part in enumerate(split_top_level(arguments[1:-1])):
+                key, separator, value = part.partition("=")
+                if separator:
+                    if key.strip() not in {"value", "path"}:
+                        continue
+                elif index == 0:
+                    value = key
+                else:
+                    continue
+                literal = re.fullmatch(r'\s*"([^"\n]*)"\s*', value)
+                if literal is None or "${" in literal.group(1) or "#{" in literal.group(1):
+                    return None
+                path = literal.group(1)
+                break
+        return method, join_route(prefix, path) or "/"
+    return None
 
 
 def _boundaries_for_text(symbol: str, text: str, evidence: Evidence) -> list[FlowBoundary]:
@@ -469,7 +454,7 @@ class _KotlinSpringAnalyzer:
             implements = kotlin_supertypes(class_match.header)
             annotations = class_match.annotations
             configuration_prefix = engine._spring_configuration_properties_prefix(annotations)
-            route_prefix = spring_route_prefix(annotations)
+            route_prefix, unresolved_route_prefix = spring_route_prefix(annotations)
             qualifiers = engine._qualifiers(annotations)
             primary = "@Primary" in annotations
             class_body_text = text[class_match.body_start : class_match.body_end + 1]
@@ -528,7 +513,7 @@ class _KotlinSpringAnalyzer:
                     symbol, function_match.text, web_client_receivers, path, root, line_evidence,
                 ))
                 modifier_text = function_match.modifiers
-                annotations = tuple(_method_annotations(modifier_text))
+                annotations = tuple(spring_annotation_calls(modifier_text))
                 _add_scheduled_job(result, annotations, symbol, function_match.name, evidence)
                 if requirement := method_security_requirement(symbol, modifier_text, evidence):
                     result.security_requirements.append(requirement)
@@ -544,7 +529,7 @@ class _KotlinSpringAnalyzer:
                 result.error_contracts.extend(engine._spring_error_contracts(
                     symbol, function_match.text, modifier_text, evidence, kotlin=True,
                 ))
-                if handler_route := _spring_handler_route(modifier_text, route_prefix):
+                if not unresolved_route_prefix and (handler_route := _spring_handler_route(annotations, route_prefix)):
                     http_method, route = handler_route
                     result.entrypoints.append(EntryPoint("http", http_method, route, symbol, evidence))
                     result.contracts[symbol] = engine._spring_http_contract(function_match.text, modifier_text, kotlin=True)
@@ -568,7 +553,7 @@ class _JavaSpringAnalyzer:
             implements = engine._java_interfaces(class_match.header)
             annotations = class_match.annotations
             configuration_prefix = engine._spring_configuration_properties_prefix(annotations)
-            route_prefix = spring_route_prefix(annotations)
+            route_prefix, unresolved_route_prefix = spring_route_prefix(annotations)
             qualifiers = engine._qualifiers(annotations)
             primary = "@Primary" in annotations
             class_body_text = text[class_match.body_start : class_match.body_end + 1]
@@ -627,7 +612,7 @@ class _JavaSpringAnalyzer:
                     symbol, function_match.text, web_client_receivers, path, root, line_evidence,
                 ))
                 modifier_text = function_match.modifiers
-                annotations = tuple(_method_annotations(modifier_text))
+                annotations = tuple(spring_annotation_calls(modifier_text))
                 _add_scheduled_job(result, annotations, symbol, function_match.name, evidence)
                 if requirement := method_security_requirement(symbol, modifier_text, evidence):
                     result.security_requirements.append(requirement)
@@ -643,7 +628,7 @@ class _JavaSpringAnalyzer:
                 result.error_contracts.extend(engine._spring_error_contracts(
                     symbol, function_match.text, modifier_text, evidence, kotlin=False,
                 ))
-                if handler_route := _spring_handler_route(modifier_text, route_prefix):
+                if not unresolved_route_prefix and (handler_route := _spring_handler_route(annotations, route_prefix)):
                     http_method, route = handler_route
                     result.entrypoints.append(EntryPoint("http", http_method, route, symbol, evidence))
                     result.contracts[symbol] = engine._spring_http_contract(function_match.text, modifier_text)

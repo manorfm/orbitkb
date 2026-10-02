@@ -94,11 +94,15 @@ def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], tuple[str, str,
         for client_match in _FEIGN_CLIENT_PATTERN.finditer(source):
             service = client_match.group("service")
             client = client_match.group("client")
-            route_prefix = spring_route_prefix(client_match.group("annotations"))
+            route_prefix, unresolved_route_prefix = spring_route_prefix(client_match.group("annotations"))
+            if unresolved_route_prefix:
+                continue
             brace_open = client_match.end() - 1
             brace_close = find_matching_brace(source, brace_open)
             body = source[brace_open + 1 : brace_close]
             for method_match in _FEIGN_METHOD_PATTERN.finditer(body):
+                if "${" in method_match.group("path") or "#{" in method_match.group("path"):
+                    continue
                 endpoints[(client, method_match.group("method"))] = (
                     service,
                     SPRING_ROUTE_ANNOTATION_TO_METHOD[method_match.group("mapping")],

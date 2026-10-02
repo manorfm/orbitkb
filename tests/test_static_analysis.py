@@ -5859,3 +5859,113 @@ def test_spring_listeners_preserve_literal_array_channels(tmp_path: Path):
         ("orders.primary", "JavaConsumer.rabbit"),
         ("events.primary", "KotlinConsumer.kafka"),
     ]
+
+
+def test_spring_http_routes_ignore_mapping_names_inside_other_annotation_values(tmp_path: Path):
+    (tmp_path / "CatalogController.kt").write_text(
+        '''@Label("""@RequestMapping("/ghost-prefix")""")
+class CatalogController {
+  @Label("""@GetMapping("/ghost-method")""")
+  fun plain() { }
+
+  @GetMapping(path = "/items")
+  fun items() { }
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(entry.method, entry.name, entry.symbol) for entry in result.entrypoints if entry.kind == "http"] == [
+        ("GET", "/items", "CatalogController.items"),
+    ]
+
+
+def test_spring_http_routes_do_not_claim_dynamic_paths_as_root_or_literal(tmp_path: Path):
+    (tmp_path / "CatalogController.java").write_text(
+        '''class CatalogController {
+  @GetMapping(path = "${routes.items}")
+  void configured() { }
+
+  @GetMapping(path = ITEM_PATH)
+  void constant() { }
+
+  @GetMapping
+  void root() { }
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(entry.method, entry.name, entry.symbol) for entry in result.entrypoints if entry.kind == "http"] == [
+        ("GET", "/", "CatalogController.root"),
+    ]
+
+
+def test_spring_http_routes_do_not_claim_path_when_class_prefix_is_dynamic(tmp_path: Path):
+    (tmp_path / "CatalogControllers.java").write_text(
+        '''@RequestMapping("${api.base}")
+class ConfiguredController {
+  @GetMapping("/items")
+  void items() { }
+}
+
+@RequestMapping("/public")
+class PublicController {
+  @GetMapping("/items")
+  void items() { }
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(entry.method, entry.name, entry.symbol) for entry in result.entrypoints if entry.kind == "http"] == [
+        ("GET", "/public/items", "PublicController.items"),
+    ]
+
+
+def test_spring_feign_does_not_claim_path_when_interface_prefix_is_dynamic(tmp_path: Path):
+    (tmp_path / "InventoryClient.java").write_text(
+        '''@FeignClient(name = "inventory")
+@RequestMapping("${inventory.api.base}")
+interface InventoryClient {
+  @GetMapping("/items")
+  Item getItem();
+}
+''', encoding="utf-8",
+    )
+    (tmp_path / "CatalogService.java").write_text(
+        '''class CatalogService {
+  private InventoryClient inventoryClient;
+  Item getItem() { return inventoryClient.getItem(); }
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert result.static_service_calls == []
+
+
+def test_spring_feign_does_not_claim_dynamic_method_path(tmp_path: Path):
+    (tmp_path / "InventoryClient.java").write_text(
+        '''@FeignClient(name = "inventory")
+interface InventoryClient {
+  @GetMapping("${inventory.items.path}")
+  Item getItem();
+}
+''', encoding="utf-8",
+    )
+    (tmp_path / "CatalogService.java").write_text(
+        '''class CatalogService {
+  private InventoryClient inventoryClient;
+  Item getItem() { return inventoryClient.getItem(); }
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert result.static_service_calls == []
