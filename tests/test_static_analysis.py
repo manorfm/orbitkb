@@ -308,6 +308,89 @@ def test_python_fastapi_analyzer_keeps_same_named_handlers_in_distinct_packages(
     }
 
 
+def test_python_analyzer_links_only_the_explicit_local_function_import(tmp_path: Path):
+    package = tmp_path / "api"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "service.py").write_text(
+        "def process(): return repository.save()\n", encoding="utf-8",
+    )
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "__init__.py").write_text("", encoding="utf-8")
+    (other / "service.py").write_text(
+        "def process(): return unrelated.delete()\n", encoding="utf-8",
+    )
+    (package / "routes.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from .service import process as run\n"
+        "app = FastAPI()\n"
+        "@app.post('/items')\n"
+        "def create(): return run()\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert [(edge.source, edge.target, edge.confidence) for edge in result.edges
+            if edge.source == "api.routes.create"] == [
+        ("api.routes.create", "api.service.process", "high"),
+    ]
+
+
+def test_python_analyzer_does_not_link_shadowed_function_import(tmp_path: Path):
+    (tmp_path / "service.py").write_text("def process(): pass\n", encoding="utf-8")
+    (tmp_path / "main.py").write_text(
+        "from service import process as run\n"
+        "def before(run): return run()\n"
+        "run = replacement\n"
+        "def after(): return run()\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert {(edge.source, edge.target) for edge in result.edges if edge.source.startswith("main.")} == {
+        ("main.before", "run"), ("main.after", "run"),
+    }
+
+
+def test_python_analyzer_does_not_fallback_to_function_shadowed_by_parameter(tmp_path: Path):
+    (tmp_path / "service.py").write_text("def run(): pass\n", encoding="utf-8")
+    (tmp_path / "main.py").write_text(
+        "from service import run\n"
+        "def handle(run): return run()\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert [(edge.source, edge.target) for edge in result.edges if edge.source == "main.handle"] == [
+        ("main.handle", "run"),
+    ]
+
+
+def test_python_analyzer_does_not_rebind_external_or_reassigned_import_to_local_function(tmp_path: Path):
+    (tmp_path / "service.py").write_text("def run(): pass\n", encoding="utf-8")
+    (tmp_path / "external.py").write_text(
+        "from third_party import run\n"
+        "def handle(): return run()\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "reassigned.py").write_text(
+        "from service import run\n"
+        "run = replacement\n"
+        "def handle(): return run()\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert {(edge.source, edge.target) for edge in result.edges if edge.source.endswith(".handle")} == {
+        ("external.handle", "run"), ("reassigned.handle", "run"),
+    }
+
+
 def test_kotlin_local_constructor_is_not_an_invocation_but_unknown_call_remains(tmp_path: Path):
     (tmp_path / "Handler.kt").write_text(
         '''data class Local(val id: String)

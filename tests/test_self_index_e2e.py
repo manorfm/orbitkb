@@ -112,6 +112,33 @@ def test_python_fastapi_public_flows_do_not_mix_same_named_modules(tmp_path: Pat
         assert {edge["to"] for edge in result["flow"]} == {f"{package}_service.fetch"}
 
 
+def test_python_public_flow_reaches_explicitly_imported_local_function(tmp_path: Path, fake_backends):
+    root = tmp_path / "service"
+    root.mkdir()
+    (root / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
+    (root / "main.py").write_text(
+        "from fastapi import FastAPI\nfrom service import process as run\n"
+        "app = FastAPI()\n@app.post('/items')\n"
+        "def create(): return run()\n",
+        encoding="utf-8",
+    )
+    (root / "service.py").write_text(
+        "def process(): return repository.save()\n", encoding="utf-8",
+    )
+    db_path = tmp_path / "service.db"
+
+    assert cli._cmd_index(_parse([
+        "index", str(root), "--db", str(db_path), "--service", "service-python",
+    ])) == 0
+    conn = open_db(db_path)
+    result = queries.describe_entrypoint(conn, "service-python", "http", "POST", "/items")
+
+    assert {(edge["from"], edge["to"]) for edge in result["flow"]} == {
+        ("main.create", "service.process"),
+        ("service.process", "repository.save"),
+    }
+
+
 @pytest.fixture
 def fake_backends(monkeypatch):
     """Patches cli.resolve_backend to hand out a fresh FakeOrchestratorBackend per

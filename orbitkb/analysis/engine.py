@@ -95,7 +95,18 @@ from orbitkb.analysis.node_mongoose import (
 )
 from orbitkb.analysis.node_router_mounts import resolve_node_router_mounts
 from orbitkb.analysis.python_fastapi import proven_routes
-from orbitkb.analysis.python_symbols import module_name as python_module_name
+from orbitkb.analysis.python_symbols import (
+    local_bindings as python_local_bindings,
+)
+from orbitkb.analysis.python_symbols import (
+    module_import_names as python_module_import_names,
+)
+from orbitkb.analysis.python_symbols import (
+    module_name as python_module_name,
+)
+from orbitkb.analysis.python_symbols import (
+    stable_function_imports as python_stable_function_imports,
+)
 from orbitkb.analysis.resolution import BoundedFlowResolver
 from orbitkb.analysis.route_paths import join_route as _join_route
 from orbitkb.discovery.go_imports import (
@@ -144,7 +155,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "75"
+STATIC_ANALYSIS_INPUT_VERSION = "76"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -1561,6 +1572,8 @@ class _PythonAnalyzer:
             return AnalysisResult()
         result = AnalysisResult()
         module = python_module_name(path, root)
+        imports = python_stable_function_imports(tree, path, root)
+        imported_names = python_module_import_names(tree)
         functions = [
             (function, "")
             for function in tree.body if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -1576,7 +1589,12 @@ class _PythonAnalyzer:
         for function, owner in functions:
             symbol = f"{module}.{owner}{function.name}"
             evidence = Evidence(path.relative_to(root).as_posix(), function.lineno, function.end_lineno or function.lineno)
-            result.symbols.append(Symbol(symbol, module, f"{owner}{function.name}", evidence))
+            local_names = python_local_bindings(function)
+            visible_imports = tuple(sorted((name, target) for name, target in imports.items()
+                                           if name not in local_names))
+            result.symbols.append(Symbol(symbol, module, f"{owner}{function.name}", evidence,
+                                         imports=visible_imports,
+                                         bound_names=tuple(sorted(local_names | imported_names))))
             if not owner and function.name == "main":
                 result.entrypoints.append(EntryPoint("cli", "COMMAND", path.stem, symbol, evidence))
             for call in (node for statement in function.body for node in ast.walk(statement) if isinstance(node, ast.Call)):

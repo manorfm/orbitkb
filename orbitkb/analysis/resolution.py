@@ -109,12 +109,15 @@ class BoundedFlowResolver:
         # compact operation projection exposed to agents.
         if edge.kind in {"injects", "reads", "writes"}:
             return edge
-        if edge.target in implementations:
-            return replace(edge, confidence="medium") if edge.target in overloaded else edge
         source_symbol = symbols.get(edge.source)
+        bound_locally = source_symbol is not None and edge.target.partition(".")[0] in source_symbol.bound_names
+        if not bound_locally and edge.target in implementations:
+            return replace(edge, confidence="medium") if edge.target in overloaded else edge
         imported_target = BoundedFlowResolver._imported_target(source_symbol, edge.target)
         if imported_target in implementations:
             return BoundedFlowResolver._link(edge, imported_target, overloaded)
+        if bound_locally:
+            return edge
         receiver, separator, method = edge.target.rpartition(".")
         receiver = receiver.removeprefix("this.")
         if separator and source_symbol is not None and edge.source not in overloaded:

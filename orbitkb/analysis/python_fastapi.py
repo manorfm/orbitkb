@@ -5,7 +5,7 @@ import ast
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from orbitkb.analysis.python_symbols import module_name
+from orbitkb.analysis.python_symbols import imported_module_path, module_name
 
 METHODS = {name: name.upper() for name in ("get", "post", "put", "patch", "delete", "head", "options")}
 
@@ -171,19 +171,7 @@ def parse_module(file: Path, root: Path) -> ModuleRoutes:
 
 
 def _import_source(file: Path, binding: ImportBinding, root: Path) -> Path | None:
-    if binding.level:
-        package = file.parent
-        for depth in range(binding.level):
-            if not (package / "__init__.py").is_file():
-                return None
-            if depth + 1 < binding.level:
-                package = package.parent
-        base = package
-    else:
-        base = root
-    source = base.joinpath(*binding.module.split(".")).with_suffix(".py") if binding.module else base / "__init__.py"
-    source = source.resolve()
-    return source if source.is_relative_to(root) else None
+    return imported_module_path(file, root, binding.module, binding.level)
 
 
 def proven_routes(files: list[Path], root: Path) -> list[Route]:

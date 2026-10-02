@@ -59,6 +59,7 @@ class Symbol:
     parameters: tuple[tuple[str, str], ...] = ()
     return_type: str | None = None
     local_assignments: tuple[tuple[str, str, int], ...] = ()
+    bound_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
