@@ -58,6 +58,40 @@ def _bound_names(node: ast.AST) -> set[str]:
     return collector.names
 
 
+def _imported_submodule(file: Path, root: Path, module: str | None, level: int, name: str) -> Path | None:
+    """Accept a package child only when its initializer does not supply that name."""
+    root = root.resolve()
+    if level:
+        initializer = imported_module_path(file, root, "", level)
+        if initializer is None:
+            return None
+        package = initializer.parent
+    else:
+        package = root
+    for part in module.split(".") if module else ():
+        package = (package / part).resolve()
+        initializer = (package / "__init__.py").resolve()
+        if not initializer.is_relative_to(root) or not initializer.is_file():
+            return None
+    if package == root:
+        return None
+    initializer = (package / "__init__.py").resolve()
+    if not initializer.is_relative_to(root) or not initializer.is_file():
+        return None
+    try:
+        tree = ast.parse(initializer.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, SyntaxError):
+        return None
+    for statement in tree.body:
+        bindings = _bound_names(statement)
+        if name in bindings or "__getattr__" in bindings:
+            return None
+        if isinstance(statement, ast.ImportFrom) and any(alias.name == "*" for alias in statement.names):
+            return None
+    source = (package / f"{name}.py").resolve()
+    return source if source.is_relative_to(root) and source.is_file() else None
+
+
 def stable_local_imports(tree: ast.Module, file: Path, root: Path) -> dict[str, str]:
     """Keep direct local imports whose bound names are never reassigned."""
     imports: dict[str, str] = {}
@@ -89,12 +123,21 @@ def stable_local_imports(tree: ast.Module, file: Path, root: Path) -> dict[str, 
                 imports[alias.name if dotted else name] = module_name(source, root)
             continue
         candidates: dict[str, str] = {}
-        if isinstance(statement, ast.ImportFrom) and statement.module:
-            source = imported_module_path(file, root, statement.module, statement.level)
+        if isinstance(statement, ast.ImportFrom):
+            source = (imported_module_path(file, root, statement.module, statement.level)
+                      if statement.module else None)
             if source is not None:
                 module = module_name(source, root)
                 candidates = {alias.asname or alias.name: f"{module}.{alias.name}"
                               for alias in statement.names if alias.name != "*"}
+            else:
+                for alias in statement.names:
+                    if alias.name == "*":
+                        continue
+                    submodule = _imported_submodule(file, root, statement.module,
+                                                   statement.level, alias.name)
+                    if submodule is not None:
+                        candidates[alias.asname or alias.name] = module_name(submodule, root)
         for name in _bound_names(statement):
             if name in bindings:
                 invalidate(name)

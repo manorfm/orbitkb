@@ -183,6 +183,36 @@ def test_python_module_import_links_only_the_imported_module_flow(tmp_path: Path
     }
 
 
+def test_python_package_submodule_import_reaches_local_flow(tmp_path: Path, fake_backends):
+    root = tmp_path / "service"
+    package = root / "api"
+    package.mkdir(parents=True)
+    (root / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "service.py").write_text(
+        "def process(): return repository.save()\n", encoding="utf-8",
+    )
+    (root / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from api import service as svc\n"
+        "app = FastAPI()\n"
+        "@app.post('/items')\ndef create(): return svc.process()\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "service.db"
+
+    assert cli._cmd_index(_parse([
+        "index", str(root), "--db", str(db_path), "--service", "service-python",
+    ])) == 0
+    conn = open_db(db_path)
+    result = queries.describe_entrypoint(conn, "service-python", "http", "POST", "/items")
+
+    assert {(edge["from"], edge["to"]) for edge in result["flow"]} == {
+        ("main.create", "api.service.process"),
+        ("api.service.process", "repository.save"),
+    }
+
+
 def test_python_unimported_qualified_call_does_not_traverse_local_homonym(tmp_path: Path, fake_backends):
     root = tmp_path / "service"
     root.mkdir()

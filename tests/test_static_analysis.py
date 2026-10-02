@@ -414,6 +414,48 @@ def test_python_analyzer_resolves_module_alias_and_exact_dotted_import(tmp_path:
     }
 
 
+def test_python_analyzer_resolves_submodule_imported_from_package(tmp_path: Path):
+    package = tmp_path / "api"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "service.py").write_text("def process(): pass\n", encoding="utf-8")
+    (package / "routes.py").write_text(
+        "from . import service as svc\n"
+        "def relative(): return svc.process()\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "main.py").write_text(
+        "from api import service as svc\n"
+        "def absolute(): return svc.process()\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert {(edge.source, edge.target, edge.confidence, edge.boundary_kind)
+            for edge in result.edges if edge.source in {"api.routes.relative", "main.absolute"}} == {
+        ("api.routes.relative", "api.service.process", "high", None),
+        ("main.absolute", "api.service.process", "high", None),
+    }
+
+
+def test_python_analyzer_does_not_assume_package_attribute_is_submodule(tmp_path: Path):
+    package = tmp_path / "api"
+    package.mkdir()
+    (package / "__init__.py").write_text("service = replacement\n", encoding="utf-8")
+    (package / "service.py").write_text("def process(): pass\n", encoding="utf-8")
+    (package / "routes.py").write_text(
+        "from . import service as svc\n"
+        "def handle(): return svc.process()\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert [(edge.target, edge.boundary_kind) for edge in result.edges
+            if edge.source == "api.routes.handle"] == [("svc.process", "unresolved_call")]
+
+
 def test_python_analyzer_rejects_unimported_dotted_module_and_shadowed_alias(tmp_path: Path):
     package = tmp_path / "api"
     package.mkdir()
