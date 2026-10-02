@@ -5,17 +5,18 @@
   "properties": {
     "capabilities": {
       "type": "array",
-      "minItems": 3,
+      "minItems": 5,
       "items": {
         "type": "object",
-        "required": ["stack", "languages", "entrypoint_kinds", "error_contract_protocols", "known_unknowns"],
+        "required": ["stack", "languages", "entrypoint_kinds", "error_contract_protocols", "known_unknowns", "messaging_analysis"],
         "additionalProperties": false,
         "properties": {
-          "stack": {"type": "string", "enum": ["node-ts", "jvm-spring", "go"]},
+          "stack": {"type": "string", "enum": ["node-ts", "node-js", "jvm-spring", "go", "python"]},
           "languages": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-          "entrypoint_kinds": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["http", "graphql", "grpc"]}},
-          "error_contract_protocols": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["http", "graphql"]}},
-          "known_unknowns": {"type": "array", "items": {"type": "string", "minLength": 1}}
+          "entrypoint_kinds": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["http", "graphql", "grpc", "cli"]}},
+          "error_contract_protocols": {"type": "array", "items": {"type": "string", "enum": ["http", "graphql"]}},
+          "known_unknowns": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "messaging_analysis": {"type": "string", "enum": ["supported", "unsupported"]}
         }
       }
     },

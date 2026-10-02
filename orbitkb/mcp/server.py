@@ -28,7 +28,7 @@ def build_server(db_path: Path | None = None, backend: LLMBackend | None = None)
 
     @mcp.tool()
     def describe_indexing_capabilities() -> dict:
-        """Return conservative static-analysis coverage for the initial stacks.
+        """Return conservative static-analysis coverage for built-in stacks.
 
         Consult this before planning an unfamiliar stack or framework. Listed facts
         are deterministic; dynamic behavior and unlisted framework paths remain

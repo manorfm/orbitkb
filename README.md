@@ -163,6 +163,7 @@ Start broad, then narrow the request.
 | Understand a request path or its static error mapping | `list_entrypoints` | `describe_entrypoint` |
 | Inspect data or events | `describe_persistence`, `describe_messages` | `get_relationships` |
 | Inspect runtime configuration use | `describe_configuration` | `describe_entrypoint`, `list_security_findings` |
+
 | Inspect Kubernetes configuration sources | `describe_runtime_configuration` | `describe_configuration`, `describe_entrypoint` |
 | Inspect feature-flag reads | `describe_feature_flags` | `describe_entrypoint`, `list_security_findings` |
 | Inspect cloud/infra dependencies | `describe_cloud_dependencies` | `find_architecture_smells` |
@@ -173,6 +174,11 @@ Start broad, then narrow the request.
 | Review advisory plan closure | `review_change_closure` | `describe_change_unit`, `assess_working_change` |
 | Find architectural risks | `find_architecture_smells` | evidence and remediation in the finding |
 | Compare runtime and static paths | `describe_runtime_divergence` | `describe_entrypoint` |
+
+`describe_indexing_capabilities` lists Go, Java/Kotlin Spring, JavaScript, TypeScript,
+and Python stacks. Each entry states supported entrypoint and error contract
+types, known limits, and whether message contracts are analyzed. Python reports
+messaging analysis as `unsupported` and has no static error contract protocol.
 
 All MCP responses are structured JSON and use progressive disclosure: list a bounded
 set, select one item, then ask for detail. The full per-tool contract — exact response

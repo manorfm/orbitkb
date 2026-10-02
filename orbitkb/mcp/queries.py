@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from orbitkb.analysis.engine import StaticAnalysisEngine
+from orbitkb.analysis.frontends import BUILTIN_MESSAGING_STACKS
 from orbitkb.analysis.smells import find_entrypoint_smells
 from orbitkb.db.repositories import apis as apis_repo
 from orbitkb.db.repositories import architecture as architecture_repo
@@ -142,6 +143,13 @@ _INDEXING_CAPABILITIES = [
         "known_unknowns": ["dynamic_routes", "global_error_middleware"],
     },
     {
+        "stack": "node-js",
+        "languages": ["javascript"],
+        "entrypoint_kinds": ["http", "graphql"],
+        "error_contract_protocols": ["http", "graphql"],
+        "known_unknowns": ["dynamic_routes", "global_error_middleware"],
+    },
+    {
         "stack": "jvm-spring",
         "languages": ["java", "kotlin"],
         "entrypoint_kinds": ["http", "grpc"],
@@ -154,6 +162,13 @@ _INDEXING_CAPABILITIES = [
         "entrypoint_kinds": ["http", "grpc"],
         "error_contract_protocols": ["http"],
         "known_unknowns": ["dynamic_statuses", "custom_response_writers"],
+    },
+    {
+        "stack": "python",
+        "languages": ["python"],
+        "entrypoint_kinds": ["http", "cli"],
+        "error_contract_protocols": [],
+        "known_unknowns": ["dynamic_routes", "indirect_router_exports", "flask_django_routes"],
     },
 ]
 _RUNTIME_FILTER_DIMENSION_PRIORITY = {
@@ -273,9 +288,14 @@ def _resolve_static_service_call_target(
 
 
 def describe_indexing_capabilities() -> dict:
-    """Return the conservative, initial static-analysis capability contract."""
+    """Return conservative static-analysis coverage for built-in frontends."""
     return {
-        "capabilities": _INDEXING_CAPABILITIES,
+        "capabilities": [
+            {**capability, "messaging_analysis": (
+                "supported" if capability["stack"] in BUILTIN_MESSAGING_STACKS else "unsupported"
+            )}
+            for capability in _INDEXING_CAPABILITIES
+        ],
         "guarantee": "listed facts are deterministic; unlisted behavior remains unknown",
     }
 

@@ -8,6 +8,8 @@ from typing import Callable, Protocol
 
 from orbitkb.analysis.models import AnalysisResult
 
+BUILTIN_MESSAGING_STACKS = frozenset({"go", "jvm-spring", "node-ts", "node-js"})
+
 
 class LanguageFrontend(Protocol):
     file_patterns: tuple[str, ...]

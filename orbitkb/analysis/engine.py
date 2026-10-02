@@ -44,6 +44,7 @@ from orbitkb.analysis.configuration_syntax import (
 )
 from orbitkb.analysis.depth import DepthProvider, NoopDepthProvider
 from orbitkb.analysis.frontends import (
+    BUILTIN_MESSAGING_STACKS,
     AnalyzerFrontend,
     CombinedFrameworkAdapter,
     FlowClassifier,
@@ -3454,11 +3455,10 @@ class StaticAnalysisEngine:
             "node-js": (_NodeGraphqlAnalyzer(Language(tree_sitter_javascript.language())), ("*.js", "*.jsx", "*.graphql", "*.gql", "*.prisma")),
             "python": (_PythonAnalyzer(), ("*.py",)),
         }
-        messaging_frontends = frozenset({"go", "jvm-spring", "node-ts", "node-js"})
         self._frontends: dict[str, LanguageFrontend] = {
             stack: AnalyzerFrontend(
                 patterns, analyzer.analyze,
-                frozenset({"messaging"}) if stack in messaging_frontends else frozenset(),
+                frozenset({"messaging"}) if stack in BUILTIN_MESSAGING_STACKS else frozenset(),
             )
             for stack, (analyzer, patterns) in analyzers.items()
         }

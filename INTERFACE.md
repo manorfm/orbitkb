@@ -59,9 +59,10 @@ reanalyzes the service.
    `run:` commands only, excluding multiline, dynamic and secret-bearing steps.
 6. Call `list_services(repository?)`; use its repository field to qualify
    `describe_service` whenever the same service name exists in more than one repository.
-7. Call `describe_indexing_capabilities()` before planning an unfamiliar stack. It is
-   the compact initial capability matrix for Node/TypeScript, Java/Kotlin Spring and
-   Go; only listed facts are deterministic and dynamic/framework-global paths remain
+7. Call `describe_indexing_capabilities()` before planning an unfamiliar stack. It lists
+   Node/TypeScript, Node/JavaScript, Java/Kotlin Spring, Go and Python with supported
+   entrypoint kinds, error contract protocols, messaging analysis status and known
+   limits. Only listed facts are deterministic; dynamic/framework-global paths remain
    unknown.
 8. Call `list_entrypoints(service)` to choose an HTTP, GraphQL, gRPC, message, CLI or
    job entrypoint. A `grpc` entrypoint sourced from Protobuf describes only its declared
