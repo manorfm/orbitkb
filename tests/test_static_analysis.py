@@ -5700,3 +5700,83 @@ def test_spring_scheduled_job_does_not_claim_dynamic_cron_as_literal(tmp_path: P
     result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
 
     assert [entry for entry in result.entrypoints if entry.kind == "job"] == []
+
+
+def test_spring_scheduled_job_ignores_annotation_text_in_comments_and_strings(tmp_path: Path):
+    (tmp_path / "ReportJob.java").write_text(
+        '''class ReportJob {
+  // @Scheduled(cron = "0 0 * * * *")
+  void commented() { }
+
+  String example = "@Scheduled(cron = \\\"0 0 * * * *\\\") void phantom()";
+  void plain() { }
+
+  @Scheduled(cron = "0 */5 * * * *")
+  void actual() { }
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(entry.name, entry.symbol) for entry in result.entrypoints if entry.kind == "job"] == [
+        ("actual", "ReportJob.actual"),
+    ]
+    assert "ReportJob.commented" not in result.contracts
+    assert "ReportJob.plain" not in result.contracts
+
+
+def test_spring_scheduled_annotation_does_not_cross_another_declaration(tmp_path: Path):
+    (tmp_path / "ReportJob.kt").write_text(
+        '''class ReportJob {
+  @Scheduled(cron = "0 0 * * * *")
+  val description = "daily"
+  fun plain() { }
+
+  @Scheduled(
+    cron = "0 */5 * * * *"
+  )
+  fun actual() { }
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(entry.name, entry.symbol) for entry in result.entrypoints if entry.kind == "job"] == [
+        ("actual", "ReportJob.actual"),
+    ]
+    assert result.contracts["ReportJob.actual"]["schedule"] == "0 */5 * * * *"
+
+
+def test_spring_scheduled_job_ignores_annotation_name_inside_another_annotation_value(tmp_path: Path):
+    (tmp_path / "ReportJob.kt").write_text(
+        '''class ReportJob {
+  @Label("""@Scheduled(cron = "0 0 * * * *")""")
+  fun plain() { }
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [entry for entry in result.entrypoints if entry.kind == "job"] == []
+
+
+def test_spring_scheduled_job_belongs_to_annotated_class_when_names_repeat(tmp_path: Path):
+    (tmp_path / "Jobs.java").write_text(
+        '''class DailyJob {
+  @Scheduled(cron = "0 0 * * * *")
+  void run() { }
+}
+class ManualJob {
+  void run() { }
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(entry.name, entry.symbol) for entry in result.entrypoints if entry.kind == "job"] == [
+        ("run", "DailyJob.run"),
+    ]

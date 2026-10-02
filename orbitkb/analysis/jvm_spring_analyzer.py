@@ -60,6 +60,7 @@ from orbitkb.analysis.route_paths import join_route
 _REQUEST_HEADER_RE = re.compile(r'@RequestHeader\s*\(\s*(?:(?:name|value)\s*=\s*)?"(?P<name>[^"]+)"')
 _HANDLER_MAPPING_RE = re.compile(r"@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\b")
 _RESPONSE_HEADER_CALL_RE = re.compile(r'\.header\s*\(\s*"(?P<name>[^"]+)"')
+_SCHEDULED_CRON_RE = re.compile(r'^\(\s*cron\s*=\s*"([^"\n]+)"')
 _DIRECT_LOCAL_CALL_RE = re.compile(
     r"(?m)^[ \t]*val[ \t]+(?P<name>[A-Za-z_]\w*)[ \t]*=[ \t]*"
     r"(?P<callee>[A-Za-z_]\w*\.[A-Za-z_]\w*)[ \t]*\("
@@ -75,6 +76,35 @@ _NAMED_RESPONSE_HEADER_BUILDERS = {
     "location": "Location",
     "contentType": "Content-Type",
 }
+
+
+def _add_scheduled_job(result: AnalysisResult, modifiers: str, symbol: str, name: str, evidence: Evidence) -> None:
+    cursor = 0
+    while cursor < len(modifiers):
+        annotation = re.search(r"@[A-Za-z_]\w*", modifiers[cursor:])
+        if annotation is None:
+            return
+        annotation_name = annotation.group()[1:]
+        after_name = cursor + annotation.end()
+        argument_start = after_name
+        while argument_start < len(modifiers) and modifiers[argument_start] in " \t":
+            argument_start += 1
+        if argument_start >= len(modifiers) or modifiers[argument_start] != "(":
+            cursor = after_name
+            continue
+        argument_end = find_matching_paren(modifiers, argument_start)
+        if argument_end == -1:
+            return
+        if annotation_name == "Scheduled":
+            match = _SCHEDULED_CRON_RE.match(modifiers[argument_start : argument_end + 1])
+            if match is None or "${" in match.group(1) or "#{" in match.group(1):
+                return
+            result.entrypoints.append(EntryPoint("job", "SCHEDULED", name, symbol, evidence))
+            result.contracts[symbol] = {
+                "schedule": match.group(1), "concurrency": "unknown", "idempotency": "unknown",
+            }
+            return
+        cursor = argument_end + 1
 
 
 def _endpoint_headers(method: str, path: str, function_match: FunctionMatch, evidence: Evidence) -> list[ApiHeader]:
@@ -444,6 +474,7 @@ class _KotlinSpringAnalyzer:
                     symbol, function_match.text, web_client_receivers, path, root, line_evidence,
                 ))
                 modifier_text = function_match.modifiers
+                _add_scheduled_job(result, modifier_text, symbol, function_match.name, evidence)
                 if requirement := method_security_requirement(symbol, modifier_text, evidence):
                     result.security_requirements.append(requirement)
                 result.resilience_policies.extend(engine._spring_resilience_policies(
@@ -548,6 +579,7 @@ class _JavaSpringAnalyzer:
                     symbol, function_match.text, web_client_receivers, path, root, line_evidence,
                 ))
                 modifier_text = function_match.modifiers
+                _add_scheduled_job(result, modifier_text, symbol, function_match.name, evidence)
                 if requirement := method_security_requirement(symbol, modifier_text, evidence):
                     result.security_requirements.append(requirement)
                 result.resilience_policies.extend(engine._spring_resilience_policies(

@@ -180,7 +180,7 @@ and Python stacks. Each entry states supported entrypoint and error contract
 types, known limits, and whether message contracts are analyzed. Python reports
 messaging analysis as `unsupported` and has no static error contract protocol.
 Go, Node and Spring expose source-proven message consumers; Spring also exposes
-`@Scheduled(cron = "...")` jobs with literal cron values. Property placeholders
+`@Scheduled(cron = "...")` jobs with literal cron values attached to methods. Property placeholders
 and expressions are omitted; job concurrency and idempotency remain `unknown`.
 Dynamic message channels remain unknown.
 
