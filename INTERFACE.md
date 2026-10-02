@@ -63,7 +63,8 @@ reanalyzes the service.
    Node/TypeScript, Node/JavaScript, Java/Kotlin Spring, Go and Python with supported
    entrypoint kinds, error contract protocols, messaging analysis status and known
    limits. Literal message consumers are listed for Go, Node and Spring; only Spring
-   lists literal scheduled jobs. Dynamic channels and schedules remain unknown.
+   lists jobs with literal `@Scheduled(cron = "...")`. Property placeholders and
+   expressions are omitted; concurrency and idempotency remain `unknown`.
 8. Call `list_entrypoints(service)` to choose an HTTP, GraphQL, gRPC, message, CLI or
    job entrypoint. A `grpc` entrypoint sourced from Protobuf describes only its declared
    wire signature; handler and client linkage is resolved only under the specific

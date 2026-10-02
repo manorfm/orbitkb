@@ -81,6 +81,33 @@ def test_describe_entrypoint_returns_the_reachable_bounded_flow(tmp_path):
     ])
 
 
+def test_scheduled_job_public_query_retains_literal_cron_and_unknown_policies(tmp_path):
+    (tmp_path / "ReconciliationJob.java").write_text(
+        '''class ReconciliationJob {
+  @Scheduled(cron = "0 */5 * * * *")
+  void reconcile() { ledger.sync(); }
+}
+''', encoding="utf-8",
+    )
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+    conn = open_db(tmp_path / "jobs.db")
+    service_id = services.ensure_service(conn, "jobs", str(tmp_path), "jvm-spring")
+    flows.replace_analysis(conn, service_id, analysis)
+
+    listing = queries.list_entrypoints(conn, "jobs")
+    detail = queries.describe_entrypoint(conn, "jobs", "job", "SCHEDULED", "reconcile")
+
+    assert [(entry["kind"], entry["method"], entry["name"]) for entry in listing["entrypoints"]] == [
+        ("job", "SCHEDULED", "reconcile"),
+    ]
+    assert detail["contract"] == {
+        "schedule": "0 */5 * * * *", "concurrency": "unknown", "idempotency": "unknown",
+    }
+    assert [(edge["from"], edge["to"]) for edge in detail["flow"]] == [
+        ("ReconciliationJob.reconcile", "ledger.sync"),
+    ]
+
+
 def test_describe_entrypoint_reports_only_reachable_message_destinations(tmp_path):
     conn = open_db(tmp_path / "message-operations.db")
     service_id = services.ensure_service(conn, "orders", "/repos/orders", "node-js")

@@ -156,7 +156,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "81"
+STATIC_ANALYSIS_INPUT_VERSION = "82"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -3752,7 +3752,7 @@ def _spring_resilience_policies(
 def _extract_scheduled_jobs(result: AnalysisResult, files: list[Path], root: Path) -> None:
     """Add JVM scheduled entrypoints only when annotation and method are explicit."""
     pattern = re.compile(
-        r'@Scheduled\s*\(\s*(?:cron\s*=\s*)?["\']([^"\']+)["\'][^)]*\)\s*'
+        r'@Scheduled\s*\(\s*cron\s*=\s*["\']([^"\']+)["\'][^)]*\)\s*'
         r'(?:public\s+|private\s+|protected\s+)?(?:fun\s+)?[\w<>?\[\]\s]+\s+(\w+)\s*\(', re.MULTILINE,
     )
     for path in files:
@@ -3760,6 +3760,9 @@ def _extract_scheduled_jobs(result: AnalysisResult, files: list[Path], root: Pat
             continue
         source = path.read_text(encoding="utf-8", errors="ignore")
         for match in pattern.finditer(source):
+            schedule = match.group(1)
+            if "${" in schedule or "#{" in schedule:
+                continue
             method = match.group(2)
             candidates = [symbol for symbol in result.symbols if symbol.name.endswith(f".{method}") and symbol.evidence.file_path == path.relative_to(root).as_posix()]
             if len(candidates) != 1:
@@ -3767,7 +3770,7 @@ def _extract_scheduled_jobs(result: AnalysisResult, files: list[Path], root: Pat
             symbol = candidates[0]
             evidence = Evidence(path.relative_to(root).as_posix(), source.count("\n", 0, match.start()) + 1, source.count("\n", 0, match.end()) + 1)
             result.entrypoints.append(EntryPoint("job", "SCHEDULED", method, symbol.name, evidence))
-            result.contracts[symbol.name] = {"schedule": match.group(1), "concurrency": "unknown", "idempotency": "unknown"}
+            result.contracts[symbol.name] = {"schedule": schedule, "concurrency": "unknown", "idempotency": "unknown"}
 
 
 def _enrich_contract_fields(contracts: dict[str, dict], files: list[Path]) -> None:
