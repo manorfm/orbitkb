@@ -382,6 +382,30 @@ def test_node_sample_routes_reach_the_exported_service_instance():
         edge.source == "card_gateway.client.charge" and edge.target == "axios.post"
         for edge in analysis.edges
     )
+    route_edges = [edge for edge in analysis.edges if edge.source == "payments.routes.http.post:/charge"]
+    assert not any(edge.target.endswith((".then", ".catch", ".finally")) for edge in route_edges)
+    assert any(edge.target == "res.json" for edge in route_edges)
+    assert any(edge.target == "console.error" for edge in route_edges)
+
+
+def test_node_flow_keeps_callback_calls_and_direct_then_method(tmp_path: Path):
+    (tmp_path / "server.js").write_text('''const express = require("express");
+const app = express();
+app.get("/orders", (req, res) => {
+  const promise = loadOrder();
+  promise.then(order => res.json(order));
+  loadOrder().then(order => res.json(order)).catch(err => console.error(err));
+});
+''', encoding="utf-8")
+
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+    targets = [edge.target for edge in analysis.edges if edge.source == "server.http.get:/orders"]
+
+    assert "promise.then" in targets
+    assert "loadOrder" in targets
+    assert "res.json" in targets
+    assert "console.error" in targets
+    assert not any(target.startswith("loadOrder().") for target in targets)
 
 
 def test_node_route_does_not_resolve_an_unproven_commonjs_service_instance(tmp_path: Path):

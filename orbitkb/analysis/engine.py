@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import ClassVar, Mapping
@@ -130,7 +131,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "65"
+STATIC_ANALYSIS_INPUT_VERSION = "66"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -496,11 +497,16 @@ class _FileAnalyzer:
         return self._tree.root_node
 
     @staticmethod
-    def _edges_for(function: _Function, path: Path, root: Path, source: bytes) -> list[FlowEdge]:
+    def _edges_for(
+        function: _Function, path: Path, root: Path, source: bytes,
+        skip_call: Callable[[Node], bool] | None = None,
+    ) -> list[FlowEdge]:
         logger.debug("  analyzing function: %s (%s)", function.symbol, path.name)
         edges = []
         for node in _walk(function.body):
             if node.type not in {"call_expression", "method_invocation"}:
+                continue
+            if skip_call is not None and skip_call(node):
                 continue
             # Grammar field names differ (Kotlin exposes the callee as the first
             # named child while Go/TypeScript call it `function`). Normalize that
@@ -892,6 +898,20 @@ def _go_grpc_client_initializers(
             ))
 
 
+def _node_promise_continuation(node: Node, source: bytes) -> bool:
+    if node.type != "call_expression":
+        return False
+    callee = node.child_by_field_name("function")
+    if callee is None or callee.type != "member_expression":
+        return False
+    receiver = callee.child_by_field_name("object")
+    member = callee.child_by_field_name("property")
+    return (
+        receiver is not None and receiver.type == "call_expression"
+        and member is not None and _text(member, source) in {"then", "catch", "finally"}
+    )
+
+
 class _NodeGraphqlAnalyzer(_FileAnalyzer):
     HTTP_ROUTE_METHODS: ClassVar[frozenset[str]] = frozenset(
         method.lower() for method in _HTTP_METHOD_LITERALS
@@ -1143,7 +1163,9 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
     ) -> tuple[list[FlowEdge], list[CloudFact]]:
         edges: list[FlowEdge] = []
         cloud_facts: list[CloudFact] = []
-        for edge in _FileAnalyzer._edges_for(function, path, root, source):
+        for edge in _FileAnalyzer._edges_for(
+            function, path, root, source, skip_call=lambda node: _node_promise_continuation(node, source),
+        ):
             cloud_kind, cloud_fact = cloud_edge_kind_and_fact(edge.target, edge.evidence, client_declarations)
             kind = (
                 _mongoose_call_kind(edge.target, mongoose_models)
