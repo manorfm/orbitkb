@@ -110,6 +110,10 @@ class BoundedFlowResolver:
         if edge.kind in {"injects", "reads", "writes"}:
             return edge
         source_symbol = symbols.get(edge.source)
+        if edge.boundary_kind == "unresolved_call":
+            imported_target = BoundedFlowResolver._imported_target(source_symbol, edge.target)
+            return (BoundedFlowResolver._link(edge, imported_target, overloaded)
+                    if imported_target in implementations else edge)
         bound_locally = source_symbol is not None and edge.target.partition(".")[0] in source_symbol.bound_names
         if not bound_locally and edge.target in implementations:
             return replace(edge, confidence="medium") if edge.target in overloaded else edge
@@ -168,7 +172,8 @@ class BoundedFlowResolver:
 
     @staticmethod
     def _link(edge: FlowEdge, target: str, overloaded: set[str]) -> FlowEdge:
-        return replace(edge, target=target, confidence="medium" if target in overloaded else "high")
+        return replace(edge, target=target, confidence="medium" if target in overloaded else "high",
+                       boundary_kind=None if edge.boundary_kind == "unresolved_call" else edge.boundary_kind)
 
     @staticmethod
     def _imported_target(symbol: Symbol | None, target: str) -> str | None:
@@ -177,6 +182,9 @@ class BoundedFlowResolver:
         imports = dict(symbol.imports)
         if target in imports:
             return imports[target]
+        for alias in sorted(imports, key=len, reverse=True):
+            if target.startswith(f"{alias}."):
+                return f"{imports[alias]}{target[len(alias):]}"
         receiver, separator, member = target.partition(".")
         module = imports.get(receiver.strip())
         return f"{module}.{member.strip()}" if module and separator else None

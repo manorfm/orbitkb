@@ -391,6 +391,63 @@ def test_python_analyzer_does_not_rebind_external_or_reassigned_import_to_local_
     }
 
 
+def test_python_analyzer_resolves_module_alias_and_exact_dotted_import(tmp_path: Path):
+    package = tmp_path / "api"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "service.py").write_text("def process(): pass\n", encoding="utf-8")
+    (package / "other.py").write_text("def process(): pass\n", encoding="utf-8")
+    (tmp_path / "main.py").write_text(
+        "import api.service as svc\n"
+        "import api.other\n"
+        "def alias(): return svc.process()\n"
+        "def dotted(): return api.other.process()\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert {(edge.source, edge.target, edge.confidence) for edge in result.edges
+            if edge.source in {"main.alias", "main.dotted"}} == {
+        ("main.alias", "api.service.process", "high"),
+        ("main.dotted", "api.other.process", "high"),
+    }
+
+
+def test_python_analyzer_rejects_unimported_dotted_module_and_shadowed_alias(tmp_path: Path):
+    package = tmp_path / "api"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "service.py").write_text("def process(): pass\n", encoding="utf-8")
+    (package / "other.py").write_text("def process(): pass\n", encoding="utf-8")
+    (tmp_path / "svc.py").write_text("def process(): pass\n", encoding="utf-8")
+    (tmp_path / "main.py").write_text(
+        "import api.service\n"
+        "import api.service as svc\n"
+        "def wrong_module(): return api.other.process()\n"
+        "def shadowed(svc): return svc.process()\n"
+        "svc = replacement\n"
+        "def reassigned(): return svc.process()\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "external.py").write_text(
+        "import third_party as svc\n"
+        "def handle(): return svc.process()\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert {(edge.source, edge.target) for edge in result.edges if edge.source.startswith("main.")} == {
+        ("main.wrong_module", "api.other.process"),
+        ("main.shadowed", "svc.process"),
+        ("main.reassigned", "svc.process"),
+    }
+    assert [(edge.target, edge.boundary_kind) for edge in result.edges if edge.source == "external.handle"] == [
+        ("svc.process", "unresolved_call"),
+    ]
+
+
 def test_kotlin_local_constructor_is_not_an_invocation_but_unknown_call_remains(tmp_path: Path):
     (tmp_path / "Handler.kt").write_text(
         '''data class Local(val id: String)

@@ -165,7 +165,9 @@ class KnowledgeNavigator:
                 edge_count += 1
                 facts.setdefault(edge.id, edge)
                 paths.setdefault(edge.id, path)
-                if not target or target not in self._by_symbol:
+                if edge.attributes.get("boundary_kind") == "unresolved_call":
+                    boundaries.append(TraversalBoundary(symbol, target, "unresolved", edge.id))
+                elif not target or target not in self._by_symbol:
                     if edge.id in self._external_edges:
                         reason = "external_call"
                     elif (edge.attributes.get("boundary_kind") == "persistence"

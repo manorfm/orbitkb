@@ -105,7 +105,7 @@ from orbitkb.analysis.python_symbols import (
     module_name as python_module_name,
 )
 from orbitkb.analysis.python_symbols import (
-    stable_function_imports as python_stable_function_imports,
+    stable_local_imports as python_stable_local_imports,
 )
 from orbitkb.analysis.resolution import BoundedFlowResolver
 from orbitkb.analysis.route_paths import join_route as _join_route
@@ -155,7 +155,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "76"
+STATIC_ANALYSIS_INPUT_VERSION = "77"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -1572,7 +1572,7 @@ class _PythonAnalyzer:
             return AnalysisResult()
         result = AnalysisResult()
         module = python_module_name(path, root)
-        imports = python_stable_function_imports(tree, path, root)
+        imports = python_stable_local_imports(tree, path, root)
         imported_names = python_module_import_names(tree)
         functions = [
             (function, "")
@@ -1600,10 +1600,13 @@ class _PythonAnalyzer:
             for call in (node for statement in function.body for node in ast.walk(statement) if isinstance(node, ast.Call)):
                 target = _python_call_name(call.func)
                 if target:
+                    boundary_kind = (
+                        "unresolved_call" if "." in target or target in imported_names else None
+                    )
                     result.edges.append(
                         FlowEdge(symbol, target, _call_kind(target), Evidence(
                             path.relative_to(root).as_posix(), call.lineno, call.end_lineno or call.lineno,
-                        ))
+                        ), boundary_kind=boundary_kind)
                     )
         return result
 

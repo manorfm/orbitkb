@@ -58,28 +58,51 @@ def _bound_names(node: ast.AST) -> set[str]:
     return collector.names
 
 
-def stable_function_imports(tree: ast.Module, file: Path, root: Path) -> dict[str, str]:
-    """Keep only direct local imports whose binding is never reassigned."""
+def stable_local_imports(tree: ast.Module, file: Path, root: Path) -> dict[str, str]:
+    """Keep direct local imports whose bound names are never reassigned."""
     imports: dict[str, str] = {}
-    seen: set[str] = set()
+    bindings: dict[str, str] = {}
+
+    def invalidate(name: str) -> None:
+        imports.pop(name, None)
+        for key in tuple(imports):
+            if key.startswith(f"{name}."):
+                imports.pop(key)
+        bindings[name] = "invalid"
+
     for statement in tree.body:
+        if isinstance(statement, ast.Import):
+            for alias in statement.names:
+                name = alias.asname or alias.name.split(".", 1)[0]
+                dotted = alias.asname is None and "." in alias.name
+                source = imported_module_path(file, root, alias.name, 0)
+                if source is None:
+                    invalidate(name)
+                    continue
+                current = bindings.get(name)
+                if current is not None and not (current == "dotted" and dotted):
+                    invalidate(name)
+                    continue
+                if current == "invalid":
+                    continue
+                bindings[name] = "dotted" if dotted else "direct"
+                imports[alias.name if dotted else name] = module_name(source, root)
+            continue
         candidates: dict[str, str] = {}
         if isinstance(statement, ast.ImportFrom) and statement.module:
             source = imported_module_path(file, root, statement.module, statement.level)
             if source is not None:
                 module = module_name(source, root)
-                candidates = {
-                    alias.asname or alias.name: f"{module}.{alias.name}"
-                    for alias in statement.names if alias.name != "*"
-                }
+                candidates = {alias.asname or alias.name: f"{module}.{alias.name}"
+                              for alias in statement.names if alias.name != "*"}
         for name in _bound_names(statement):
-            if name in seen:
-                imports.pop(name, None)
-            else:
-                candidate = candidates.get(name)
-                if candidate is not None:
-                    imports[name] = candidate
-            seen.add(name)
+            if name in bindings:
+                invalidate(name)
+                continue
+            bindings[name] = "direct"
+            candidate = candidates.get(name)
+            if candidate is not None:
+                imports[name] = candidate
     return imports
 
 

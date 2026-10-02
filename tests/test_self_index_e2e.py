@@ -139,6 +139,75 @@ def test_python_public_flow_reaches_explicitly_imported_local_function(tmp_path:
     }
 
 
+def test_python_module_import_links_only_the_imported_module_flow(tmp_path: Path, fake_backends):
+    root = tmp_path / "service"
+    package = root / "api"
+    package.mkdir(parents=True)
+    (root / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "service.py").write_text(
+        "def process(): return repository.save()\n", encoding="utf-8",
+    )
+    (package / "other.py").write_text(
+        "def process(): return unrelated.delete()\n", encoding="utf-8",
+    )
+    (root / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "import api.service as svc\nimport api.service\n"
+        "app = FastAPI()\n"
+        "@app.get('/good')\ndef good(): return svc.process()\n"
+        "@app.get('/dotted')\ndef dotted(): return api.service.process()\n"
+        "@app.get('/unknown')\ndef unknown(): return api.other.process()\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "service.db"
+
+    assert cli._cmd_index(_parse([
+        "index", str(root), "--db", str(db_path), "--service", "service-python",
+    ])) == 0
+    conn = open_db(db_path)
+    good = queries.describe_entrypoint(conn, "service-python", "http", "GET", "/good")
+    dotted = queries.describe_entrypoint(conn, "service-python", "http", "GET", "/dotted")
+    unknown = queries.describe_entrypoint(conn, "service-python", "http", "GET", "/unknown")
+
+    assert {(edge["from"], edge["to"]) for edge in good["flow"]} == {
+        ("main.good", "api.service.process"),
+        ("api.service.process", "repository.save"),
+    }
+    assert {(edge["from"], edge["to"]) for edge in dotted["flow"]} == {
+        ("main.dotted", "api.service.process"),
+        ("api.service.process", "repository.save"),
+    }
+    assert {(edge["from"], edge["to"]) for edge in unknown["flow"]} == {
+        ("main.unknown", "api.other.process"),
+    }
+
+
+def test_python_unimported_qualified_call_does_not_traverse_local_homonym(tmp_path: Path, fake_backends):
+    root = tmp_path / "service"
+    root.mkdir()
+    (root / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
+    (root / "main.py").write_text(
+        "from fastapi import FastAPI\napp = FastAPI()\n"
+        "@app.get('/unknown')\ndef unknown(): return service.process()\n",
+        encoding="utf-8",
+    )
+    (root / "service.py").write_text(
+        "def process(): return unrelated.delete()\n", encoding="utf-8",
+    )
+    db_path = tmp_path / "service.db"
+
+    assert cli._cmd_index(_parse([
+        "index", str(root), "--db", str(db_path), "--service", "service-python",
+    ])) == 0
+    conn = open_db(db_path)
+    result = queries.describe_entrypoint(conn, "service-python", "http", "GET", "/unknown")
+
+    assert {(edge["from"], edge["to"]) for edge in result["flow"]} == {
+        ("main.unknown", "service.process"),
+    }
+
+
 @pytest.fixture
 def fake_backends(monkeypatch):
     """Patches cli.resolve_backend to hand out a fresh FakeOrchestratorBackend per
