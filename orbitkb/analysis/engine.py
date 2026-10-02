@@ -111,7 +111,7 @@ from orbitkb.discovery.node_imports import parse_node_named_imports
 from orbitkb.discovery.node_local_handlers import (
     anonymous_commonjs_function,
     anonymous_default_function,
-    proven_local_commonjs_instance_imports,
+    proven_local_commonjs_flow_imports,
     proven_local_handler_imports,
 )
 from orbitkb.discovery.node_nest import (
@@ -130,7 +130,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "64"
+STATIC_ANALYSIS_INPUT_VERSION = "65"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -907,7 +907,7 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
         tree = self.parse(source)
         result = AnalysisResult()
         imported_handler_symbols = proven_local_handler_imports(tree, source, path, root)
-        imports = (*_node_named_imports(source_text), *proven_local_commonjs_instance_imports(tree, source, path, root))
+        imports = (*_node_named_imports(source_text), *proven_local_commonjs_flow_imports(tree, source, path, root))
         launchdarkly_clients = _launchdarkly_client_variables(source_text, imports)
         graphql_error_constructors = _graphql_error_constructors(imports)
         mongoose_models = _mongoose_model_variables(source_text)

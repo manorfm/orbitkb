@@ -371,7 +371,15 @@ def test_node_sample_routes_reach_the_exported_service_instance():
         for edge in analysis.edges
     )
     assert any(
-        edge.source == "PaymentService.chargeCustomer" and edge.target == "cardGatewayClient.charge"
+        edge.source == "PaymentService.chargeCustomer" and edge.target == "card_gateway.client.charge"
+        for edge in analysis.edges
+    )
+    assert any(
+        edge.source == "PaymentService.refundCustomer" and edge.target == "card_gateway.client.refund"
+        for edge in analysis.edges
+    )
+    assert any(
+        edge.source == "card_gateway.client.charge" and edge.target == "axios.post"
         for edge in analysis.edges
     )
 
@@ -402,6 +410,22 @@ app.get("/overridden", (req, res) => overridden.run());
         edge.source == "server.http.get:/overridden" and edge.target == "OverriddenService.run"
         for edge in analysis.edges
     )
+
+
+def test_node_flow_does_not_resolve_mutated_commonjs_object_methods(tmp_path: Path):
+    (tmp_path / "client.js").write_text('''function send() {}
+module.exports = { send };
+module.exports.send = 123;
+''', encoding="utf-8")
+    (tmp_path / "service.js").write_text('''const gateway = require("./client");
+function run() { gateway.send(); }
+module.exports = run;
+''', encoding="utf-8")
+
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert any(edge.source == "service.run" and edge.target == "gateway.send" for edge in analysis.edges)
+    assert not any(edge.source == "service.run" and edge.target == "client.send" for edge in analysis.edges)
 
 
 def test_node_route_hints_require_a_locally_created_http_receiver(tmp_path: Path):

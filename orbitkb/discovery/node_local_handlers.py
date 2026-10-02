@@ -451,15 +451,19 @@ def _commonjs_exported_instance(path: Path) -> str | None:
     return class_name if len(classes) == 1 else None
 
 
-def proven_local_commonjs_instance_imports(tree: Node, source: bytes, path: Path, root: Path) -> tuple[tuple[str, str], ...]:
-    """Bind relative require aliases only to a single exported local class instance."""
+def proven_local_commonjs_flow_imports(tree: Node, source: bytes, path: Path, root: Path) -> tuple[tuple[str, str], ...]:
+    """Bind relative require aliases to proven local class methods or object functions."""
     imports: list[tuple[str, str]] = []
     for name, imported in _relative_commonjs_requires(tree, source, path, root):
         if name.type != "identifier":
             continue
+        alias = _text(name, source)
         class_name = _commonjs_exported_instance(imported)
         if class_name is not None:
-            imports.append((_text(name, source), class_name))
+            imports.append((alias, class_name))
+            continue
+        for exported_name, local_name in _commonjs_named_exports(imported).items():
+            imports.append((f"{alias}.{exported_name}", f"{imported.stem}.{local_name}"))
     return tuple(imports)
 
 
