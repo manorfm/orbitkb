@@ -155,7 +155,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "80"
+STATIC_ANALYSIS_INPUT_VERSION = "81"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -3454,8 +3454,12 @@ class StaticAnalysisEngine:
             "node-js": (_NodeGraphqlAnalyzer(Language(tree_sitter_javascript.language())), ("*.js", "*.jsx", "*.graphql", "*.gql", "*.prisma")),
             "python": (_PythonAnalyzer(), ("*.py",)),
         }
+        messaging_frontends = frozenset({"go", "jvm-spring", "node-ts", "node-js"})
         self._frontends: dict[str, LanguageFrontend] = {
-            stack: AnalyzerFrontend(patterns, analyzer.analyze, frozenset({"messaging"}))
+            stack: AnalyzerFrontend(
+                patterns, analyzer.analyze,
+                frozenset({"messaging"}) if stack in messaging_frontends else frozenset(),
+            )
             for stack, (analyzer, patterns) in analyzers.items()
         }
         if frontends:

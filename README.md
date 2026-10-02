@@ -664,6 +664,8 @@ snapshot keeps that capability, and `describe_messages` reports
 `static_analysis_status` as `supported`, `unsupported`, or `unknown` when no
 capability snapshot exists. An empty contract list only means no recognized
 contracts; it does not prove that the service has no messaging integration.
+The Python frontend reports messaging analysis as `unsupported`: it can record
+a generic publish call, but does not extract source-proven message contracts.
 Markdown service pages show the same status and use `(not assessed)` for empty
 publish/consume sections when support is unavailable or unknown.
 The canonical projection converts entrypoints, symbol declarations, injections,

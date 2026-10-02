@@ -19,7 +19,10 @@ from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import canonical_snapshots, messages, services
 from orbitkb.discovery.base import CodeExcerpt, EndpointHint, ServiceHints
 from orbitkb.domain.canonical import ServiceKey
-from orbitkb.domain.sufficiency import SufficiencyStatus
+from orbitkb.domain.sufficiency import (
+    DeterministicSufficiencyEvaluator,
+    SufficiencyStatus,
+)
 from orbitkb.export.markdown import export_markdown
 from orbitkb.generation.mock_backend import MockBackend
 from orbitkb.generation.orchestrator import DiscoveryError, index_path, index_service
@@ -192,19 +195,35 @@ def test_unsupported_messaging_survives_snapshot_and_is_visible_to_readers(tmp_p
     assert messaging.count("- (not assessed)") == 1
 
 
-def test_existing_frontend_declares_messaging_analysis_support(tmp_path: Path):
-    (tmp_path / "main.py").write_text("def main():\n    pass\n", encoding="utf-8")
+def test_python_frontend_does_not_claim_messaging_analysis_from_an_empty_contract_list(tmp_path: Path):
+    (tmp_path / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "app = FastAPI()\n"
+        "@app.get('/items')\ndef items(): return []\n",
+        encoding="utf-8",
+    )
     analysis = StaticAnalysisEngine().analyze(tmp_path, "python")
     snapshot = project_analysis(ServiceKey("python-service"), analysis)
 
     capability = next(fact for fact in snapshot.facts if fact.kind == "analysis_capability")
     assert capability.attributes["dimension"] == "messaging"
-    assert capability.status.value == "confirmed"
+    assert capability.status.value == "unsupported"
+    assert analysis.message_contracts == []
+    capsule = route_capsule(snapshot, "GET", "/items")
+    assert capsule is not None
+    assert DeterministicSufficiencyEvaluator().evaluate(capsule).status("integrations") == (
+        SufficiencyStatus.UNSUPPORTED
+    )
 
     conn = open_db(tmp_path / "test.db")
     service_id = services.ensure_service(conn, "python-service", str(tmp_path), "python")
     canonical_snapshots.replace_snapshot(conn, service_id, snapshot)
-    assert describe_messages(conn, "python-service")["static_analysis_status"] == "supported"
+    assert describe_messages(conn, "python-service")["static_analysis_status"] == "unsupported"
+    export_markdown(conn, tmp_path / "docs")
+    page = (tmp_path / "docs/python-service/index.md").read_text(encoding="utf-8")
+    messaging = page.split("## Messaging", 1)[1].split("## Cloud", 1)[0]
+    assert "Static analysis:** unsupported" in messaging
+    assert "- (not assessed)" in messaging
 
 
 def test_custom_frontend_runs_through_indexing_and_public_queries(tmp_path: Path):
