@@ -135,6 +135,35 @@ def test_python_detector_only_reports_mounted_fastapi_router_with_composed_path(
     ]
 
 
+def test_python_detector_resolves_relative_router_and_respects_local_mount_order(tmp_path: Path):
+    package = tmp_path / "api"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "main.py").write_text(
+        "from fastapi import FastAPI\nfrom .routes import router\n"
+        "app = FastAPI()\napp.include_router(router, prefix='/api')\n",
+        encoding="utf-8",
+    )
+    (package / "routes.py").write_text(
+        "from fastapi import APIRouter\nrouter = APIRouter()\n"
+        "@router.get('/items')\ndef items(): pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "local.py").write_text(
+        "from fastapi import FastAPI, APIRouter\napp = FastAPI()\nrouter = APIRouter()\n"
+        "@router.get('/before')\ndef before(): pass\n"
+        "app.include_router(router, prefix='/local')\n"
+        "@router.get('/after')\ndef after(): pass\n",
+        encoding="utf-8",
+    )
+
+    hints = PythonDetector().collect_hints(tmp_path)
+
+    assert {(endpoint.method, endpoint.path) for endpoint in hints.endpoints} == {
+        ("GET", "/api/items"), ("GET", "/local/before"),
+    }
+
+
 def test_python_endpoint_falls_back_to_file_stem_with_no_enclosing_class():
     """main.py's own /health check is the one endpoint in orders-service with no
     enclosing class (it's a bare `@app.get` in the composition root) — a natural

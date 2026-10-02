@@ -18,14 +18,29 @@ class Route:
     router: str | None = None
 
 
+@dataclass(frozen=True)
+class ImportBinding:
+    module: str
+    name: str
+    level: int
+
+
+@dataclass(frozen=True)
+class Mount:
+    router: str
+    prefix: str
+    line: int
+    imported_from: ImportBinding | None
+
+
 @dataclass
 class ModuleRoutes:
     direct: list[Route] = field(default_factory=list)
     routers: dict[str, tuple[str, list[Route]]] = field(default_factory=dict)
     applications: set[str] = field(default_factory=set)
     imported_app_routes: dict[str, list[Route]] = field(default_factory=dict)
-    mounts: list[tuple[str, str]] = field(default_factory=list)
-    imports: dict[str, tuple[str, str]] = field(default_factory=dict)
+    mounts: list[Mount] = field(default_factory=list)
+    imports: dict[str, ImportBinding] = field(default_factory=dict)
 
 
 def _literal_path(value: ast.expr | None) -> str | None:
@@ -86,8 +101,8 @@ def parse_module(file: Path) -> ModuleRoutes:
                 forget(local)
                 if statement.module == "fastapi" and statement.level == 0 and alias.name in {"FastAPI", "APIRouter"}:
                     factories[local] = alias.name
-                elif statement.module and alias.name != "*":
-                    result.imports[local] = (statement.module, alias.name)
+                elif alias.name != "*" and (statement.module or statement.level):
+                    result.imports[local] = ImportBinding(statement.module or "", alias.name, statement.level)
         elif isinstance(statement, ast.Import):
             for alias in statement.names:
                 local = alias.asname or alias.name.split(".", 1)[0]
@@ -121,8 +136,9 @@ def parse_module(file: Path) -> ModuleRoutes:
                     and isinstance(call.func.value, ast.Name) and call.func.value.id in apps
                     and call.args and isinstance(call.args[0], ast.Name)):
                 prefix = _prefix(call)
-                if prefix is not None:
-                    result.mounts.append((call.args[0].id, prefix))
+                name = call.args[0].id
+                if prefix is not None and (name in result.routers or name in result.imports):
+                    result.mounts.append(Mount(name, prefix, call.lineno, result.imports.get(name)))
         elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             functions = statement.body if isinstance(statement, ast.ClassDef) else [statement]
             owner = f"{statement.name}." if isinstance(statement, ast.ClassDef) else ""
@@ -145,6 +161,22 @@ def parse_module(file: Path) -> ModuleRoutes:
     return result
 
 
+def _import_source(file: Path, binding: ImportBinding, root: Path) -> Path | None:
+    if binding.level:
+        package = file.parent
+        for depth in range(binding.level):
+            if not (package / "__init__.py").is_file():
+                return None
+            if depth + 1 < binding.level:
+                package = package.parent
+        base = package
+    else:
+        base = root
+    source = base.joinpath(*binding.module.split(".")).with_suffix(".py") if binding.module else base / "__init__.py"
+    source = source.resolve()
+    return source if source.is_relative_to(root) else None
+
+
 def proven_routes(files: list[Path], root: Path) -> list[Route]:
     """Resolve direct routes and routers imported from local modules, once."""
     modules = {path.resolve(): parse_module(path) for path in files if path.suffix == ".py"}
@@ -153,25 +185,27 @@ def proven_routes(files: list[Path], root: Path) -> list[Route]:
     for file, module in modules.items():
         routes.extend(module.direct)
         for name, handlers in module.imported_app_routes.items():
-            dotted_module, app_name = module.imports[name]
-            source = (root / Path(*dotted_module.split("."))).with_suffix(".py").resolve()
-            if not source.is_relative_to(root) or app_name not in modules.get(source, ModuleRoutes()).applications:
+            binding = module.imports.get(name)
+            source = _import_source(file, binding, root) if binding else None
+            if source is None or binding.name not in modules.get(source, ModuleRoutes()).applications:
                 continue
             routes.extend(Route(route.file, route.line, route.method, route.path, route.symbol)
                           for route in handlers)
-        for name, mount_prefix in module.mounts:
+        for mount in module.mounts:
             source = file
-            router_name = name
-            if name in module.imports:
-                dotted_module, router_name = module.imports[name]
-                source = (root / Path(*dotted_module.split("."))).with_suffix(".py").resolve()
-                if not source.is_relative_to(root):
+            router_name = mount.router
+            if mount.imported_from:
+                router_name = mount.imported_from.name
+                source = _import_source(file, mount.imported_from, root)
+                if source is None:
                     continue
             router = modules.get(source, ModuleRoutes()).routers.get(router_name)
             if router is None:
                 continue
             router_prefix, handlers = router
             for handler in handlers:
+                if source == file and handler.line > mount.line:
+                    continue
                 routes.append(Route(handler.file, handler.line, handler.method,
-                                    _join(mount_prefix, router_prefix, handler.path), handler.symbol))
+                                    _join(mount.prefix, router_prefix, handler.path), handler.symbol))
     return list(dict.fromkeys(routes))

@@ -149,6 +149,81 @@ def test_python_fastapi_analyzer_rejects_unproven_or_dynamic_router_mounts(tmp_p
     assert StaticAnalysisEngine().analyze(tmp_path, "python").entrypoints == []
 
 
+def test_python_fastapi_analyzer_resolves_relative_router_import_from_package(tmp_path: Path):
+    package = tmp_path / "api"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from .routes import router as item_router\n"
+        "app = FastAPI()\n"
+        "app.include_router(item_router, prefix='/api')\n",
+        encoding="utf-8",
+    )
+    (package / "routes.py").write_text(
+        "from fastapi import APIRouter\n"
+        "router = APIRouter(prefix='/v1')\n"
+        "@router.get('/items')\n"
+        "def items(): pass\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert [(entry.method, entry.name, entry.symbol) for entry in result.entrypoints] == [
+        ("GET", "/api/v1/items", "routes.items"),
+    ]
+
+
+def test_python_fastapi_analyzer_only_includes_local_routes_registered_before_mount(tmp_path: Path):
+    (tmp_path / "main.py").write_text(
+        "from fastapi import FastAPI, APIRouter\n"
+        "app = FastAPI()\n"
+        "router = APIRouter()\n"
+        "@router.get('/before')\n"
+        "def before(): pass\n"
+        "app.include_router(router, prefix='/api')\n"
+        "@router.get('/after')\n"
+        "def after(): pass\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert [(entry.method, entry.name) for entry in result.entrypoints] == [
+        ("GET", "/api/before"),
+    ]
+
+
+def test_python_fastapi_analyzer_resolves_parent_relative_router_without_escaping_root(tmp_path: Path):
+    package = tmp_path / "api"
+    nested = package / "v1"
+    nested.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (nested / "__init__.py").write_text("", encoding="utf-8")
+    (nested / "main.py").write_text(
+        "from fastapi import FastAPI\nfrom ..routes import router\n"
+        "app = FastAPI()\napp.include_router(router)\n",
+        encoding="utf-8",
+    )
+    (package / "routes.py").write_text(
+        "from fastapi import APIRouter\nrouter = APIRouter()\n"
+        "@router.get('/items')\ndef items(): pass\n",
+        encoding="utf-8",
+    )
+
+    assert [(entry.method, entry.name) for entry in StaticAnalysisEngine().analyze(tmp_path, "python").entrypoints] == [
+        ("GET", "/items"),
+    ]
+
+    (nested / "main.py").write_text(
+        "from fastapi import FastAPI\nfrom ...routes import router\n"
+        "app = FastAPI()\napp.include_router(router)\n",
+        encoding="utf-8",
+    )
+    assert StaticAnalysisEngine().analyze(tmp_path, "python").entrypoints == []
+
+
 def test_kotlin_local_constructor_is_not_an_invocation_but_unknown_call_remains(tmp_path: Path):
     (tmp_path / "Handler.kt").write_text(
         '''data class Local(val id: String)
