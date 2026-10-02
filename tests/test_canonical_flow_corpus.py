@@ -119,3 +119,19 @@ def test_node_service_topology_shows_proven_http_hosts_as_external_nodes(tmp_pat
     assert 'svc_payments_service -.->|HTTPS POST /v1/refund| ext_card_gateway_vendor_io' in diagram
     assert 'svc_payments_service -.->|HTTPS POST /v1/send| ext_notify_hub_vendor_io' in diagram
     assert 'svc_card_gateway_vendor_io' not in diagram
+
+
+def test_node_service_topology_shows_only_proven_message_channels(tmp_path):
+    analysis = StaticAnalysisEngine().analyze(NODE_CORPUS, "node-js")
+    conn = open_db(tmp_path / "payments-message-topology.db")
+    service_id = services.ensure_service(conn, "payments-service", str(NODE_CORPUS), "node-js")
+    flows.replace_analysis(conn, service_id, analysis)
+
+    diagram = queries.describe_service_topology(conn, "payments-service", hops=0)["mermaid"]
+
+    assert 'channel_payments_service_payment_failed(("channel: payment.failed"))' in diagram
+    assert 'channel_payments_service_payment_completed(("channel: payment.completed"))' in diagram
+    assert diagram.count('svc_payments_service -.->|publish| channel_payments_service_payment_failed') == 1
+    assert diagram.count('svc_payments_service -.->|publish| channel_payments_service_payment_completed') == 1
+    assert 'order.cancelled' not in diagram
+    assert 'Kafka' not in diagram

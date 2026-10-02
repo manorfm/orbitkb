@@ -365,6 +365,10 @@ has established the destination.
 Confirmed outbound HTTP requests to literal external URLs appear as vendor host
 nodes, with method and path on their edges. Repeated requests share the host
 node, and these requests do not imply a link to another indexed service.
+Confirmed publish and consume contracts appear as service-scoped channel nodes
+with directed edges. A channel name alone does not establish a shared broker or
+a link between services; channels already represented by indexed messages are
+shown only once.
 Confirmed calls on an injected Spring Mongo template add a per-service MongoDB
 node labeled `accesses`; the diagram does not infer the collection or operation
 direction from `MongoTemplate.execute`.

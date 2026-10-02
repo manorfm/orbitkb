@@ -8,6 +8,7 @@ from orbitkb.analysis.models import (
     ExternalHttpCall,
     FlowEdge,
     Injection,
+    MessageContract,
     StaticServiceCall,
 )
 from orbitkb.db.connection import open_db
@@ -217,6 +218,49 @@ def test_topology_deduplicates_proven_http_targets_and_respects_service_scope(tm
     assert diagram.count('svc_orders_service -.->|HTTPS POST /v1/items| ext_vendor_example_8443') == 1
     assert "other.example" not in diagram
     assert "svc_vendor_example_8443" not in diagram
+
+
+def test_topology_keeps_canonical_message_channels_per_service(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    publisher_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    consumer_id = services_repo.ensure_service(conn, "stock-service", "/tmp/stock", "jvm-spring")
+    flows_repo.replace_analysis(conn, publisher_id, AnalysisResult(message_contracts=[
+        MessageContract("publishes", "orders.created", "new", None, Evidence("Orders.kt", 3, 3)),
+        MessageContract("publishes", "orders.created", "new", None, Evidence("Orders.kt", 8, 8)),
+    ]))
+    flows_repo.replace_analysis(conn, consumer_id, AnalysisResult(message_contracts=[
+        MessageContract("consumes", "orders.created", None, None, Evidence("Stock.kt", 4, 4)),
+    ]))
+
+    diagram = generate_topology_diagram(conn)
+
+    assert 'channel_orders_service_orders_created(("channel: orders.created"))' in diagram
+    assert 'channel_stock_service_orders_created(("channel: orders.created"))' in diagram
+    assert diagram.count('svc_orders_service -.->|publish: new| channel_orders_service_orders_created') == 1
+    assert 'channel_stock_service_orders_created -.->|consume| svc_stock_service' in diagram
+    assert 'svc_orders_service ==>|orders.created| svc_stock_service' not in diagram
+
+    scoped = generate_topology_diagram(conn, root_service_ids={publisher_id}, hops=0)
+    assert 'channel_orders_service_orders_created' in scoped
+    assert 'channel_stock_service_orders_created' not in scoped
+
+
+def test_topology_does_not_repeat_an_indexed_message_channel(tmp_path: Path):
+    conn = open_db(tmp_path / "test.db")
+    service_id = services_repo.ensure_service(conn, "orders-service", "/tmp/orders", "jvm-spring")
+    messages_repo.replace_messages(conn, service_id, [
+        {"direction": "publishes", "channel": "orders.created", "provider": "rabbitmq"},
+    ], EVIDENCE)
+    flows_repo.replace_analysis(conn, service_id, AnalysisResult(message_contracts=[
+        MessageContract("publishes", "orders.created", None, None, Evidence("Orders.kt", 3, 3)),
+        MessageContract("publishes", "orders.cancelled", None, None, Evidence("Orders.kt", 4, 4)),
+    ]))
+
+    diagram = generate_topology_diagram(conn)
+
+    assert 'ext_rabbitmq_orders_created(("rabbitmq: orders.created"))' in diagram
+    assert 'channel_orders_service_orders_created' not in diagram
+    assert 'channel_orders_service_orders_cancelled(("channel: orders.cancelled"))' in diagram
 
 
 def test_topology_shows_only_confirmed_redis_publishers_without_a_channel(tmp_path: Path):

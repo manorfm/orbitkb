@@ -110,6 +110,9 @@ def generate_topology_diagram(
     edges. Source-proven HTTP calls without a reconciled destination retain a
     declared target node, marked unresolved. Proven external HTTP calls add
     host nodes with method and path, without becoming internal service links.
+    Confirmed message contracts add service-scoped channel nodes when no indexed
+    message already represents that direction and channel; they do not imply a
+    shared broker or consumer.
     A confirmed Redis Pub/Sub
     publication adds a broker node scoped to its producer service; the source
     does not prove a channel or shared instance. A confirmed call on an injected
@@ -197,6 +200,34 @@ def generate_topology_diagram(
                 target_id = external_node(host_label)
                 label = f"{scheme.upper()} {method} {target_path}"
                 lines.append(f"  {from_id} -.->|{_mermaid_label(label)}| {target_id}")
+            indexed_channels = {
+                (row["channel"], row["direction"])
+                for row in messages_repo.list_messages(conn, svc["id"])
+            }
+            message_channels = {
+                (fact.subject.channel, fact.attributes["direction"], fact.attributes["routing_key"])
+                for fact in snapshot.facts
+                if fact.kind == "message_contract" and fact.status is FactStatus.CONFIRMED
+                and fact.subject.channel and fact.attributes["direction"] in {"publishes", "consumes"}
+                and (fact.subject.channel, fact.attributes["direction"]) not in indexed_channels
+            }
+            channel_ids: dict[str, str] = {}
+            for channel, direction, routing_key in sorted(
+                message_channels, key=lambda item: (item[0], item[1], item[2] or ""),
+            ):
+                if channel not in channel_ids:
+                    node_id = _unique_node_id(f"channel_{from_id.removeprefix('svc_')}_{_slug(channel)}", used_node_ids)
+                    channel_ids[channel] = node_id
+                    channel_label = _mermaid_label(f"channel: {channel}")
+                    lines.append(f'  {node_id}(("{channel_label}"))')
+                node_id = channel_ids[channel]
+                label = "publish" if direction == "publishes" else "consume"
+                if routing_key:
+                    label += f": {routing_key}"
+                if direction == "publishes":
+                    lines.append(f"  {from_id} -.->|{_mermaid_label(label)}| {node_id}")
+                else:
+                    lines.append(f"  {node_id} -.->|{_mermaid_label(label)}| {from_id}")
 
     for fact in flows_repo.list_all_static_cloud_facts(conn):
         from_id = service_ids.get(fact["from_id"])
