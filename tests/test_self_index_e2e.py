@@ -655,19 +655,25 @@ async def test_cli_to_mcp_exposes_entity_manager_persistence_operations(tmp_path
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("default_export", [False, True])
-async def test_cli_to_mcp_exposes_mongoose_persistence_operations(tmp_path: Path, fake_backends, default_export):
+@pytest.mark.parametrize("export_style", ["named", "default", "named_clause", "default_clause"])
+async def test_cli_to_mcp_exposes_mongoose_persistence_operations(tmp_path: Path, fake_backends, export_style):
     root = tmp_path / "orders"
     root.mkdir()
-    export_line = (
-        'export default mongoose.model("Order", orderSchema, "orders");'
-        if default_export else 'export const Order = mongoose.model("Order", orderSchema, "orders");'
-    )
+    export_line = {
+        "named": 'export const Order = mongoose.model("Order", orderSchema, "orders");',
+        "default": 'export default mongoose.model("Order", orderSchema, "orders");',
+        "named_clause": 'const Order = mongoose.model("Order", orderSchema, "orders");\nexport { Order };',
+        "default_clause": 'const Order = mongoose.model("Order", orderSchema, "orders");\nexport { Order as default };',
+    }[export_style]
     (root / "order.model.ts").write_text(
         f'import mongoose from "mongoose";\n{export_line}\n',
         encoding="utf-8",
     )
-    import_line = 'import Order from "./order.model";' if default_export else 'import { Order } from "./order.model";'
+    import_line = (
+        'import Order from "./order.model";'
+        if export_style in {"default", "default_clause"}
+        else 'import { Order } from "./order.model";'
+    )
     (root / "resolvers.ts").write_text(
         f'''{import_line}
 export const resolvers = {{

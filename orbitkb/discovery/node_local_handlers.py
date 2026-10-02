@@ -620,15 +620,29 @@ def _exported_mongoose_models(path: Path) -> dict[str, str]:
     for statement in tree.named_children:
         if statement.type != "export_statement":
             continue
-        declaration = statement.child_by_field_name("declaration")
-        if declaration is None or declaration.type != "lexical_declaration":
+        if statement.child_by_field_name("source") is not None or any(
+            child.type == "type" for child in statement.children
+        ):
             continue
-        for variable in declaration.named_children:
-            if variable.type != "variable_declarator":
+        declaration = statement.child_by_field_name("declaration")
+        if declaration is not None and declaration.type == "lexical_declaration":
+            for variable in declaration.named_children:
+                if variable.type != "variable_declarator":
+                    continue
+                name = variable.child_by_field_name("name")
+                if name is not None and (model := models.get(_text(name, source))) is not None:
+                    exported[_text(name, source)] = model[0]
+            continue
+        clause = next((child for child in statement.named_children if child.type == "export_clause"), None)
+        if clause is None:
+            continue
+        for specifier in clause.named_children:
+            if specifier.type != "export_specifier" or any(child.type == "type" for child in specifier.children):
                 continue
-            name = variable.child_by_field_name("name")
+            name = specifier.child_by_field_name("name")
+            alias = specifier.child_by_field_name("alias")
             if name is not None and (model := models.get(_text(name, source))) is not None:
-                exported[_text(name, source)] = model[0]
+                exported[_text(alias or name, source)] = model[0]
     return exported
 
 

@@ -240,7 +240,9 @@ Instance `save()` inherits the model only when its local document origin is prov
 Named and default JS/TS ESM imports of a directly exported local Mongoose model
 carry that identity into the importing module. A default export may contain the
 model call or a stable local model constant. The import path, export and
-unchanged alias must be proven; re-exports are not resolved as models.
+unchanged alias must be proven. Local `export { Model }` and
+`export { Model as default }` clauses are supported; re-exports from another
+module are not resolved as models.
 
 For Node/TypeScript, direct Axios calls in named functions and class methods
 can expose an external host and path when the URL is literal or combines a
