@@ -660,7 +660,7 @@ async def test_cli_to_mcp_exposes_mongoose_persistence_operations(tmp_path: Path
     root.mkdir()
     (root / "resolvers.ts").write_text(
         '''import mongoose from "mongoose";
-const Order = mongoose.model("Order", orderSchema, "orders");
+export const Order = mongoose.model("Order", orderSchema, "orders");
 export const resolvers = {
   Mutation: { createOrder: (_: unknown, input: CreateOrderInput) => Order.create(input) },
 };

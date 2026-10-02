@@ -4036,6 +4036,55 @@ def test_node_analyzer_links_local_typescript_mongoose_model_identity(tmp_path: 
     }
 
 
+def test_node_analyzer_links_exported_typescript_mongoose_model(tmp_path: Path):
+    (tmp_path / "payments.ts").write_text(
+        "import mongoose from 'mongoose';\n"
+        "export const Transaction = mongoose.model<Payment>('Payment', schema, 'payments');\n"
+        "function findPayment(id: string) { return Transaction.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert [(fact.name, fact.kind, fact.owner) for fact in result.persistence_facts] == [
+        ("payments", "document", "Payment"),
+    ]
+    assert ("Transaction.findById", "reads", "Payment") in {
+        (edge.target, edge.kind, edge.model_name) for edge in result.edges
+    }
+
+
+def test_node_analyzer_links_exported_javascript_mongoose_model(tmp_path: Path):
+    (tmp_path / "payments.js").write_text(
+        "import mongoose from 'mongoose';\n"
+        "export const Payment = mongoose.model('Payment', schema);\n"
+        "function findPayment(id) { return Payment.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert [(fact.name, fact.kind) for fact in result.persistence_facts] == [("Payment", "mongoose_model")]
+    assert ("Payment.findById", "reads", "Payment") in {
+        (edge.target, edge.kind, edge.model_name) for edge in result.edges
+    }
+
+
+def test_node_analyzer_does_not_link_mutable_exported_mongoose_alias(tmp_path: Path):
+    (tmp_path / "payments.js").write_text(
+        "import mongoose from 'mongoose';\n"
+        "export let Payment = mongoose.model('Payment', schema);\n"
+        "Payment = replacement;\n"
+        "function findPayment(id) { return Payment.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert result.persistence_facts == []
+    assert ("Payment.findById", "invokes") in {(edge.target, edge.kind) for edge in result.edges}
+
+
 def test_node_analyzer_does_not_link_fake_local_mongoose_factory(tmp_path: Path):
     (tmp_path / "payments.js").write_text(
         "const mongoose = fakeFactory;\n"

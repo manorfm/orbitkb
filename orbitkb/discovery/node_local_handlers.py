@@ -157,14 +157,19 @@ def _is_exports_object(node: Node, source: bytes, aliases: set[str] | None = Non
     return name == "exports" or (aliases is not None and name in aliases)
 
 
-def _top_level_declarators(tree: Node) -> list[Node]:
-    return [
-        variable
-        for statement in tree.named_children
-        if statement.type in {"lexical_declaration", "variable_declaration"}
-        for variable in statement.named_children
-        if variable.type == "variable_declarator"
-    ]
+def _top_level_declarators(tree: Node, *, include_exports: bool = False) -> list[Node]:
+    declarators = []
+    for statement in tree.named_children:
+        declaration = (
+            statement.child_by_field_name("declaration")
+            if include_exports and statement.type == "export_statement"
+            else statement
+        )
+        if declaration is not None and declaration.type in {"lexical_declaration", "variable_declaration"}:
+            declarators.extend(
+                child for child in declaration.named_children if child.type == "variable_declarator"
+            )
+    return declarators
 
 
 def _commonjs_export_aliases(declarations: list[Node], source: bytes) -> set[str]:
@@ -472,7 +477,12 @@ def _stable_const_binding(tree: Node, source: bytes, name: str) -> Node | None:
     if len(bindings) != 1:
         return None
     declaration = bindings[0].parent
-    if declaration is None or declaration.parent != tree or declaration.type != "lexical_declaration":
+    if declaration is None or declaration.type != "lexical_declaration":
+        return None
+    parent = declaration.parent
+    if parent != tree and not (
+        parent is not None and parent.type == "export_statement" and parent.parent == tree
+    ):
         return None
     if not _text(declaration, source).lstrip().startswith("const "):
         return None
@@ -481,7 +491,7 @@ def _stable_const_binding(tree: Node, source: bytes, name: str) -> Node | None:
 
 def _mongoose_factory_bindings(tree: Node, source: bytes) -> set[str]:
     factories: set[str] = set()
-    for variable in _top_level_declarators(tree):
+    for variable in _top_level_declarators(tree, include_exports=True):
         name = variable.child_by_field_name("name")
         if name is None or name.type != "identifier":
             continue
@@ -563,7 +573,7 @@ def proven_local_mongoose_model_declarations(tree: Node, source: bytes) -> dict[
     """Map stable local model aliases to literal model names and source lines."""
     factories = _mongoose_factory_bindings(tree, source)
     models: dict[str, tuple[str, str | None, int]] = {}
-    for variable in _top_level_declarators(tree):
+    for variable in _top_level_declarators(tree, include_exports=True):
         name = variable.child_by_field_name("name")
         if name is None or name.type != "identifier":
             continue
