@@ -658,9 +658,14 @@ async def test_cli_to_mcp_exposes_entity_manager_persistence_operations(tmp_path
 async def test_cli_to_mcp_exposes_mongoose_persistence_operations(tmp_path: Path, fake_backends):
     root = tmp_path / "orders"
     root.mkdir()
-    (root / "resolvers.ts").write_text(
+    (root / "order.model.ts").write_text(
         '''import mongoose from "mongoose";
 export const Order = mongoose.model("Order", orderSchema, "orders");
+''',
+        encoding="utf-8",
+    )
+    (root / "resolvers.ts").write_text(
+        '''import { Order } from "./order.model";
 export const resolvers = {
   Mutation: { createOrder: (_: unknown, input: CreateOrderInput) => Order.create(input) },
 };
@@ -682,7 +687,7 @@ export const resolvers = {
 
     assert result["persistence_operations"] == [{
         "operation": "writes", "target": "Order.create",
-        "evidence": {"file": "resolvers.ts", "start_line": 4, "end_line": 4},
+        "evidence": {"file": "resolvers.ts", "start_line": 3, "end_line": 3},
         "model": "Order", "collection": "orders",
     }]
 

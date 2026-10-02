@@ -121,6 +121,7 @@ from orbitkb.discovery.node_local_handlers import (
     proven_commonjs_mongoose_model_export,
     proven_local_commonjs_flow_imports,
     proven_local_commonjs_mongoose_models,
+    proven_local_esm_mongoose_models,
     proven_local_handler_imports,
     proven_local_mongoose_model_declarations,
 )
@@ -936,6 +937,7 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
         mongoose_models = {
             **{alias: model_name for alias, (model_name, _collection, _line) in local_mongoose_models.items()},
             **proven_local_commonjs_mongoose_models(tree, source, path, root),
+            **proven_local_esm_mongoose_models(tree, source, path, root),
         }
         prisma_clients = _prisma_client_variables(source_text)
         client_declarations = node_stateful_client_declarations(source_text)

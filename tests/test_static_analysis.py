@@ -4085,6 +4085,105 @@ def test_node_analyzer_does_not_link_mutable_exported_mongoose_alias(tmp_path: P
     assert ("Payment.findById", "invokes") in {(edge.target, edge.kind) for edge in result.edges}
 
 
+def test_node_analyzer_links_named_esm_mongoose_model_import(tmp_path: Path):
+    (tmp_path / "payment.model.ts").write_text(
+        "import mongoose from 'mongoose';\n"
+        "export const Transaction = mongoose.model<Payment>('Payment', schema, 'payments');\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "payments.ts").write_text(
+        "import { Transaction as PaymentModel } from './payment.model';\n"
+        "async function refund(id: string) {\n"
+        "  const payment = await PaymentModel.findById(id);\n"
+        "  await payment.save();\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert {(edge.target, edge.kind, edge.model_name) for edge in result.edges} >= {
+        ("PaymentModel.findById", "reads", "Payment"),
+        ("payment.save", "writes", "Payment"),
+    }
+
+
+def test_node_analyzer_links_javascript_named_esm_mongoose_model_import(tmp_path: Path):
+    (tmp_path / "payment.model.js").write_text(
+        "import mongoose from 'mongoose';\n"
+        "export const Transaction = mongoose.model('Payment', schema);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "payments.js").write_text(
+        "import { Transaction as PaymentModel } from './payment.model.js';\n"
+        "function refund(id) { return PaymentModel.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert ("PaymentModel.findById", "Payment") in {
+        (edge.target, edge.model_name) for edge in result.edges
+    }
+
+
+def test_node_analyzer_does_not_link_unproven_esm_mongoose_import(tmp_path: Path):
+    (tmp_path / "payment.model.ts").write_text(
+        "const mongoose = fakeFactory;\n"
+        "export const Transaction = mongoose.model('Payment', schema);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "payments.ts").write_text(
+        "import { Transaction as PaymentModel } from './payment.model';\n"
+        "function refund(id: string) { return PaymentModel.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert ("PaymentModel.findById", None) in {
+        (edge.target, edge.model_name) for edge in result.edges
+    }
+
+
+def test_node_analyzer_does_not_link_shadowed_esm_mongoose_model(tmp_path: Path):
+    (tmp_path / "payment.model.ts").write_text(
+        "import mongoose from 'mongoose';\n"
+        "export const Transaction = mongoose.model('Payment', schema);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "payments.ts").write_text(
+        "import { Transaction as PaymentModel } from './payment.model';\n"
+        "function refund(PaymentModel: OtherModel, id: string) { return PaymentModel.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert ("PaymentModel.findById", None) in {
+        (edge.target, edge.model_name) for edge in result.edges
+    }
+
+
+def test_node_analyzer_does_not_link_unexported_esm_mongoose_model(tmp_path: Path):
+    (tmp_path / "payment.model.ts").write_text(
+        "import mongoose from 'mongoose';\n"
+        "const Transaction = mongoose.model('Payment', schema);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "payments.ts").write_text(
+        "import { Transaction as PaymentModel } from './payment.model';\n"
+        "function refund(id: string) { return PaymentModel.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert ("PaymentModel.findById", None) in {
+        (edge.target, edge.model_name) for edge in result.edges
+    }
+
+
 def test_node_analyzer_does_not_link_fake_local_mongoose_factory(tmp_path: Path):
     (tmp_path / "payments.js").write_text(
         "const mongoose = fakeFactory;\n"

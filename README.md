@@ -237,6 +237,9 @@ For operations on such a proven model, `describe_entrypoint.persistence_operatio
 includes its declared `model` name. `collection` contains the literal physical
 name only when that model has one matching declaration; otherwise it is `null`.
 Instance `save()` inherits the model only when its local document origin is proven.
+Named JS/TS ESM imports of a directly exported local Mongoose model carry that
+identity into the importing module. The import path, export and unchanged alias
+must be proven; default imports and re-exports are not resolved as models.
 
 For Node/TypeScript, direct Axios calls in named functions and class methods
 can expose an external host and path when the URL is literal or combines a

@@ -593,6 +593,73 @@ def local_mongoose_model_declarations(path: Path) -> dict[str, tuple[str, str | 
     return proven_local_mongoose_model_declarations(_parse(path, source), source)
 
 
+def _exported_mongoose_models(path: Path) -> dict[str, str]:
+    source = path.read_bytes()
+    tree = _parse(path, source)
+    models = proven_local_mongoose_model_declarations(tree, source)
+    exported: dict[str, str] = {}
+    for statement in tree.named_children:
+        if statement.type != "export_statement":
+            continue
+        declaration = statement.child_by_field_name("declaration")
+        if declaration is None or declaration.type != "lexical_declaration":
+            continue
+        for variable in declaration.named_children:
+            if variable.type != "variable_declarator":
+                continue
+            name = variable.child_by_field_name("name")
+            if name is not None and (model := models.get(_text(name, source))) is not None:
+                exported[_text(name, source)] = model[0]
+    return exported
+
+
+def _unshadowed_import_alias(tree: Node, source: bytes, alias: str) -> bool:
+    for node in _walk_nodes(tree):
+        if node.type == "variable_declarator":
+            name = node.child_by_field_name("name")
+            if name is not None and _text(name, source) == alias:
+                return False
+        elif node.type == "formal_parameters":
+            if any(child.type == "identifier" and _text(child, source) == alias for child in _walk_nodes(node)):
+                return False
+        elif node.type in {"assignment_expression", "augmented_assignment_expression", "update_expression"}:
+            left = node.child_by_field_name("left") or node.child_by_field_name("argument")
+            if left is not None and left.type == "identifier" and _text(left, source) == alias:
+                return False
+    return True
+
+
+def proven_local_esm_mongoose_models(tree: Node, source: bytes, path: Path, root: Path) -> dict[str, str]:
+    """Resolve direct named imports of source-proven local Mongoose models."""
+    candidates: list[tuple[str, str]] = []
+    for statement in tree.named_children:
+        if statement.type != "import_statement" or any(child.type == "type" for child in statement.children):
+            continue
+        module_node = statement.child_by_field_name("source")
+        clause = next((child for child in statement.named_children if child.type == "import_clause"), None)
+        if module_node is None or clause is None:
+            continue
+        imported = resolve_local_source(path, _text(module_node, source)[1:-1], root, suffixes=_SOURCE_SUFFIXES)
+        if imported is None:
+            continue
+        exports = _exported_mongoose_models(imported)
+        for names in clause.named_children:
+            if names.type != "named_imports":
+                continue
+            for specifier in names.named_children:
+                if specifier.type != "import_specifier" or any(child.type == "type" for child in specifier.children):
+                    continue
+                original = specifier.child_by_field_name("name")
+                alias = specifier.child_by_field_name("alias")
+                if original is None or (model := exports.get(_text(original, source))) is None:
+                    continue
+                candidates.append((_text(alias or original, source), model))
+    return {
+        alias: model for alias, model in candidates
+        if sum(name == alias for name, _ in candidates) == 1 and _unshadowed_import_alias(tree, source, alias)
+    }
+
+
 def proven_commonjs_mongoose_model_export(path: Path) -> tuple[str, str | None, int] | None:
     """Return the literal model name and source line of a direct CommonJS export."""
     source = path.read_bytes()
