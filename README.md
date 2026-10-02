@@ -234,8 +234,9 @@ an explicit `mongoose` package import or `require`. A literal third argument
 records the physical collection as a `document` fact; an unproven factory does
 not establish a persistence fact or operation.
 For operations on such a proven model, `describe_entrypoint.persistence_operations`
-includes its declared `model` name and `collection: null`; instance `save()`
-inherits that model only when its local document origin is proven.
+includes its declared `model` name. `collection` contains the literal physical
+name only when that model has one matching declaration; otherwise it is `null`.
+Instance `save()` inherits the model only when its local document origin is proven.
 
 For Node/TypeScript, direct Axios calls in named functions and class methods
 can expose an external host and path when the URL is literal or combines a

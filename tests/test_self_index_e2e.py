@@ -683,7 +683,7 @@ export const resolvers = {
     assert result["persistence_operations"] == [{
         "operation": "writes", "target": "Order.create",
         "evidence": {"file": "resolvers.ts", "start_line": 4, "end_line": 4},
-        "model": "Order", "collection": None,
+        "model": "Order", "collection": "orders",
     }]
 
 

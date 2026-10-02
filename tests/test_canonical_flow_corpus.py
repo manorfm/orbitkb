@@ -2,6 +2,13 @@ import shutil
 from pathlib import Path
 
 from orbitkb.analysis.engine import StaticAnalysisEngine
+from orbitkb.analysis.models import (
+    AnalysisResult,
+    EntryPoint,
+    Evidence,
+    FlowEdge,
+    PersistenceFact,
+)
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import canonical_snapshots, flows, services
 from orbitkb.domain.navigation import KnowledgeNavigator, TraversalPolicy
@@ -9,6 +16,44 @@ from orbitkb.mcp import queries
 
 CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/menu-kotlin-service"
 NODE_CORPUS = Path(__file__).resolve().parents[1] / "verify/sample_project/payments-service"
+
+
+def test_mongoose_collection_follows_proven_document_save(tmp_path):
+    conn = open_db(tmp_path / "document-model.db")
+    service_id = services.ensure_service(conn, "orders", str(tmp_path), "node-js")
+    evidence = Evidence("orders.js", 2, 2)
+    flows.replace_analysis(conn, service_id, AnalysisResult(
+        entrypoints=[EntryPoint("http", "GET", "/orders", "orders.get", evidence)],
+        edges=[
+            FlowEdge("orders.get", "Order.findOne", "reads", evidence, model_name="Order"),
+            FlowEdge("orders.get", "order.save", "writes", evidence, model_name="Order"),
+        ],
+        persistence_facts=[PersistenceFact("orders", "document", "Order", Evidence("order.model.js", 2, 2))],
+    ))
+
+    detail = queries.describe_entrypoint(conn, "orders", "http", "GET", "/orders")
+
+    assert {(operation["target"], operation["collection"]) for operation in detail["persistence_operations"]} == {
+        ("Order.findOne", "orders"), ("order.save", "orders"),
+    }
+
+
+def test_mongoose_collection_remains_unknown_with_multiple_model_declarations(tmp_path):
+    conn = open_db(tmp_path / "ambiguous-model.db")
+    service_id = services.ensure_service(conn, "orders", str(tmp_path), "node-js")
+    evidence = Evidence("orders.js", 2, 2)
+    flows.replace_analysis(conn, service_id, AnalysisResult(
+        entrypoints=[EntryPoint("http", "GET", "/orders", "orders.get", evidence)],
+        edges=[FlowEdge("orders.get", "Order.findOne", "reads", evidence, model_name="Order")],
+        persistence_facts=[
+            PersistenceFact("orders", "document", "Order", Evidence("order.model.js", 2, 2)),
+            PersistenceFact("Order", "mongoose_model", "Order", Evidence("other.model.js", 2, 2)),
+        ],
+    ))
+
+    detail = queries.describe_entrypoint(conn, "orders", "http", "GET", "/orders")
+
+    assert detail["persistence_operations"][0]["collection"] is None
 
 
 def test_kotlin_spring_route_reaches_feign_client_through_use_case_and_gateway(tmp_path):

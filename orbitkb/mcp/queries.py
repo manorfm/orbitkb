@@ -631,6 +631,19 @@ def _reachable_message_operations(traversal: TraversalResult) -> list[dict]:
     return operations
 
 
+def _single_declared_mongoose_collections(facts: list[sqlite3.Row]) -> dict[str, str]:
+    """Resolve physical collections only for models with one declaration."""
+    by_model: dict[str, list[sqlite3.Row]] = {}
+    for fact in facts:
+        if fact["kind"] in {"document", "mongoose_model"} and fact["file_path"].endswith((".js", ".ts")):
+            by_model.setdefault(fact["owner"], []).append(fact)
+    return {
+        model: declarations[0]["name"]
+        for model, declarations in by_model.items()
+        if len(declarations) == 1 and declarations[0]["kind"] == "document"
+    }
+
+
 def _canonical_entrypoint_traversal(
     conn: sqlite3.Connection, service_id: int, entrypoint: sqlite3.Row, max_edges: int,
 ) -> tuple[EntrypointKey, TraversalResult] | None:
@@ -681,6 +694,10 @@ def describe_entrypoint(
             "origin": fact.origin, "file_path": source.file_path,
             "start_line": source.start_line, "end_line": source.end_line,
         })
+    collections = (
+        _single_declared_mongoose_collections(flows_repo.list_static_persistence_facts(conn, row["id"]))
+        if any(edge["model_name"] for edge in edges) else {}
+    )
     truncated = traversal.truncated
     static_service_calls = _canonical_source_rows(traversal, "service_call")
     external_http_calls = _canonical_source_rows(traversal, "external_http_call")
@@ -728,7 +745,8 @@ def describe_entrypoint(
                 "operation": edge["kind"], "target": edge["to_symbol"], "evidence": {
                     "file": edge["file_path"], "start_line": edge["start_line"], "end_line": edge["end_line"],
                 },
-                **({"model": edge["model_name"], "collection": None} if edge["model_name"] else {}),
+                **({"model": edge["model_name"], "collection": collections.get(edge["model_name"])}
+                   if edge["model_name"] else {}),
             }
             for edge in edges
             if edge["kind"] in {"reads", "writes"}
