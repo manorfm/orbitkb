@@ -18,33 +18,36 @@ def test_describe_indexing_capabilities_exposes_the_initial_stack_contract():
             {
                 "stack": "node-ts",
                 "languages": ["javascript", "typescript"],
-                "entrypoint_kinds": ["http", "graphql"],
+                "entrypoint_kinds": ["http", "graphql", "message"],
                 "error_contract_protocols": ["http", "graphql"],
-                "known_unknowns": ["dynamic_routes", "global_error_middleware"],
+                "known_unknowns": ["dynamic_routes", "global_error_middleware", "dynamic_message_channels"],
                 "messaging_analysis": "supported",
             },
             {
                 "stack": "node-js",
                 "languages": ["javascript"],
-                "entrypoint_kinds": ["http", "graphql"],
+                "entrypoint_kinds": ["http", "graphql", "message"],
                 "error_contract_protocols": ["http", "graphql"],
-                "known_unknowns": ["dynamic_routes", "global_error_middleware"],
+                "known_unknowns": ["dynamic_routes", "global_error_middleware", "dynamic_message_channels"],
                 "messaging_analysis": "supported",
             },
             {
                 "stack": "jvm-spring",
                 "languages": ["java", "kotlin"],
-                "entrypoint_kinds": ["http", "grpc"],
+                "entrypoint_kinds": ["http", "grpc", "message", "job"],
                 "error_contract_protocols": ["http"],
-                "known_unknowns": ["dynamic_configuration", "framework_global_error_boundaries"],
+                "known_unknowns": [
+                    "dynamic_configuration", "framework_global_error_boundaries",
+                    "dynamic_message_channels", "dynamic_schedules",
+                ],
                 "messaging_analysis": "supported",
             },
             {
                 "stack": "go",
                 "languages": ["go"],
-                "entrypoint_kinds": ["http", "grpc"],
+                "entrypoint_kinds": ["http", "grpc", "message"],
                 "error_contract_protocols": ["http"],
-                "known_unknowns": ["dynamic_statuses", "custom_response_writers"],
+                "known_unknowns": ["dynamic_statuses", "custom_response_writers", "dynamic_message_channels"],
                 "messaging_analysis": "supported",
             },
             {
@@ -67,6 +70,46 @@ def test_advertised_messaging_support_matches_builtin_frontends(tmp_path):
         analysis = engine.analyze(tmp_path, capability["stack"])
         expected = "supported" if analysis.capabilities["messaging"] else "unsupported"
         assert capability["messaging_analysis"] == expected
+
+
+def test_source_proven_consumers_and_scheduled_job_are_advertised(tmp_path):
+    (tmp_path / "consumer.go").write_text(
+        "package orders\n"
+        "func Consume() {\n"
+        "  reader := kafka.NewReader(kafka.ReaderConfig{Topic: \"orders.created\"})\n"
+        "  message, err := reader.ReadMessage(ctx)\n"
+        "  orderService.Process(message)\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Consumer.java").write_text(
+        "class Consumer {\n"
+        "  @KafkaListener(topics = \"orders.created\")\n"
+        "  void consume(Event event) { service.handle(event); }\n"
+        "  @Scheduled(cron = \"0 */5 * * * *\")\n"
+        "  void reconcile() { ledger.sync(); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    consumer = (
+        'channel.consume("orders.created", async (message) => {\n'
+        '  await service.handle(message);\n'
+        '});\n'
+    )
+    (tmp_path / "consumer.js").write_text(consumer, encoding="utf-8")
+    (tmp_path / "consumer.ts").write_text(consumer, encoding="utf-8")
+    advertised = {item["stack"]: set(item["entrypoint_kinds"])
+                  for item in queries.describe_indexing_capabilities()["capabilities"]}
+
+    for stack, expected in (
+        ("go", {"message"}),
+        ("jvm-spring", {"message", "job"}),
+        ("node-js", {"message"}),
+        ("node-ts", {"message"}),
+    ):
+        observed = {entry.kind for entry in StaticAnalysisEngine().analyze(tmp_path, stack).entrypoints}
+        assert expected <= observed
+        assert observed <= advertised[stack]
 
 
 @pytest.mark.anyio

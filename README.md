@@ -179,6 +179,8 @@ Start broad, then narrow the request.
 and Python stacks. Each entry states supported entrypoint and error contract
 types, known limits, and whether message contracts are analyzed. Python reports
 messaging analysis as `unsupported` and has no static error contract protocol.
+Go, Node and Spring expose source-proven message consumers; Spring also exposes
+literal `@Scheduled` jobs. Dynamic channels and schedules remain unknown.
 
 All MCP responses are structured JSON and use progressive disclosure: list a bounded
 set, select one item, then ask for detail. The full per-tool contract — exact response
