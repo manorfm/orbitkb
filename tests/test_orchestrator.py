@@ -697,6 +697,43 @@ def test_reindexing_unchanged_static_inputs_skips_ast_analysis(tmp_path: Path, m
     assert len(analyzed) == first_run_count
 
 
+def test_reindexing_refreshes_previous_mongoose_analysis_version(tmp_path: Path, monkeypatch):
+    root = tmp_path / "orders"
+    root.mkdir()
+    (root / "package.json").write_text('{"scripts": {"start": "node index.js"}}', encoding="utf-8")
+    (root / "order.model.ts").write_text(
+        "import mongoose from 'mongoose';\n"
+        "export const Order = mongoose.model('Order', schema, 'orders');\n",
+        encoding="utf-8",
+    )
+    (root / "resolvers.ts").write_text(
+        "import { Order } from './order.model';\n"
+        "export const resolvers = { Mutation: { createOrder: () => Order.create({}) } };\n",
+        encoding="utf-8",
+    )
+    conn = open_db(tmp_path / "orders.db")
+    detector = detector_for(root)
+    first = index_service(conn, "orders", root, detector, FakeOrchestratorBackend())
+    conn.execute(
+        "UPDATE static_analysis_snapshots SET analysis_version = '69' WHERE service_id = ?",
+        (first.service_id,),
+    )
+    original_analyze = orchestrator.StaticAnalysisEngine.analyze
+    analyzed: list[Path] = []
+
+    def record_analyze(self, service_root: Path, stack: str):
+        analyzed.append(service_root)
+        return original_analyze(self, service_root, stack)
+
+    monkeypatch.setattr(orchestrator.StaticAnalysisEngine, "analyze", record_analyze)
+    backend = FakeOrchestratorBackend()
+    second = index_service(conn, "orders", root, detector, backend)
+
+    assert second.status == "ok"
+    assert analyzed == [root]
+    assert second.llm_invocations == backend.calls == 0
+
+
 def test_missing_canonical_snapshot_is_rebuilt_without_new_llm_calls(tmp_path: Path, monkeypatch):
     conn = open_db(tmp_path / "canonical-index.db")
     orders = next(c for c in discover_services(SAMPLE_ROOT) if c.name == "orders-service")

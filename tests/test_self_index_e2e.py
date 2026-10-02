@@ -711,6 +711,47 @@ export const resolvers = {{
     }]
 
 
+def test_update_refreshes_imported_mongoose_model_identity(tmp_path: Path, fake_backends):
+    root = tmp_path / "orders"
+    root.mkdir()
+    (root / "package.json").write_text('{"scripts": {"start": "node index.js"}}', encoding="utf-8")
+    model = root / "order.model.ts"
+    model.write_text(
+        "import mongoose from 'mongoose';\n"
+        "export const Order = mongoose.model('Order', schema, 'orders');\n",
+        encoding="utf-8",
+    )
+    (root / "resolvers.ts").write_text(
+        "import { Order } from './order.model';\n"
+        "export const resolvers = { Mutation: { createOrder: () => Order.create({}) } };\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "orders.db"
+    assert cli._cmd_index(_parse([
+        "index", str(root), "--db", str(db_path), "--service", "orders-mongo", "--stack", "node-ts",
+    ])) == 0
+    conn = open_db(db_path)
+
+    def operations():
+        return queries.describe_entrypoint(
+            conn, "orders-mongo", "graphql", "MUTATION", "createOrder",
+        )["persistence_operations"]
+
+    assert [(item["model"], item["collection"]) for item in operations()] == [("Order", "orders")]
+
+    model.write_text(
+        "import mongoose from 'mongoose';\n"
+        "export const Order = mongoose.model('Payment', schema, 'payments');\n",
+        encoding="utf-8",
+    )
+    assert cli._cmd_update(_parse(["update", "orders-mongo", "--db", str(db_path)])) == 0
+    assert [(item["model"], item["collection"]) for item in operations()] == [("Payment", "payments")]
+
+    model.write_text("export const Order = fakeFactory.model('Payment', schema);\n", encoding="utf-8")
+    assert cli._cmd_update(_parse(["update", "orders-mongo", "--db", str(db_path)])) == 0
+    assert operations() == []
+
+
 @pytest.mark.anyio
 async def test_cli_to_mcp_exposes_prisma_persistence_operations(tmp_path: Path, fake_backends):
     root = tmp_path / "orders"
