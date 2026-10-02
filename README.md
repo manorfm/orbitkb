@@ -187,6 +187,8 @@ an `id` alone does not establish a channel. Dynamic message channels remain unkn
 Spring HTTP routes and Feign paths require literal method and class mappings;
 unresolved path expressions are omitted.
 Feign declarations and mappings inside comments or strings are ignored.
+Feign calls need a literal service name and an unambiguous method mapping; a
+dynamic name or conflicting overloaded mappings leave the destination unknown.
 
 All MCP responses are structured JSON and use progressive disclosure: list a bounded
 set, select one item, then ask for detail. The full per-tool contract — exact response

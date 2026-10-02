@@ -93,7 +93,7 @@ def _spring_feign_service_calls(result: AnalysisResult, files: list[Path]) -> li
 
 def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], tuple[str, str, str]]:
     """Return only literal method mappings declared in a local Feign interface."""
-    endpoints = {}
+    candidates: dict[tuple[str, str], set[tuple[str, str, str]]] = {}
     for path in files:
         if path.suffix not in {".java", ".kt"}:
             continue
@@ -101,6 +101,8 @@ def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], tuple[str, str,
         visible_source = mask_non_code(source)
         for client_match in _feign_clients(source, visible_source):
             service = client_match.group("service")
+            if not service or "$" in service or "#{" in service:
+                continue
             client = client_match.group("client")
             route_prefix, unresolved_route_prefix = spring_route_prefix(client_match.group("annotations"))
             if unresolved_route_prefix:
@@ -114,12 +116,12 @@ def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], tuple[str, str,
                     continue
                 if "${" in method_match.group("path") or "#{" in method_match.group("path"):
                     continue
-                endpoints[(client, method_match.group("method"))] = (
+                candidates.setdefault((client, method_match.group("method")), set()).add((
                     service,
                     SPRING_ROUTE_ANNOTATION_TO_METHOD[method_match.group("mapping")],
                     join_route(route_prefix, method_match.group("path")),
-                )
-    return endpoints
+                ))
+    return {key: next(iter(routes)) for key, routes in candidates.items() if len(routes) == 1}
 
 
 def _feign_client_url_bindings(files: list[Path], root: Path) -> list[ConfigurationBinding]:
