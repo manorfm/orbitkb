@@ -141,3 +141,11 @@ def test_node_service_topology_shows_only_proven_message_channels(tmp_path):
         (contract["direction"], contract["exchange"])
         for contract in messaging["static_contracts"]
     }
+    consumption = queries.describe_entrypoint(
+        conn, "payments-service", "message", "CONSUME", "order.cancelled",
+    )
+    assert [(contract["direction"], contract["channel"], contract["evidence"]["start_line"])
+            for contract in consumption["message_contracts"]] == [
+        ("consumes", "order.cancelled", 21),
+    ]
+    assert consumption["message_operations"] == []

@@ -111,6 +111,33 @@ def test_describe_entrypoint_reports_only_reachable_message_destinations(tmp_pat
     ]
 
 
+def test_message_entrypoint_reports_its_consume_contract_without_an_invented_operation(tmp_path):
+    conn = open_db(tmp_path / "message-consume.db")
+    service_id = services.ensure_service(conn, "orders", "/repos/orders", "node-js")
+    flows.replace_analysis(conn, service_id, AnalysisResult(
+        entrypoints=[
+            EntryPoint("message", "CONSUME", "orders.created", "message.consume:orders.created",
+                       Evidence("consumer.js", 8, 10)),
+            EntryPoint("message", "CONSUME", "orders.cancelled", "message.consume:orders.cancelled",
+                       Evidence("consumer.js", 18, 20)),
+        ],
+        message_contracts=[
+            MessageContract("consumes", "orders.created", None, None, Evidence("consumer.js", 7, 7)),
+            MessageContract("consumes", "orders.cancelled", None, None, Evidence("consumer.js", 17, 17)),
+            MessageContract("publishes", "orders.created", None, None, Evidence("publisher.js", 4, 4)),
+        ],
+    ))
+
+    detail = queries.describe_entrypoint(conn, "orders", "message", "CONSUME", "orders.created")
+
+    assert detail["message_contracts"] == [{
+        "direction": "consumes", "channel": "orders.created", "routing_key": None,
+        "payload_type": None, "message_version": None,
+        "evidence": {"file": "consumer.js", "start_line": 7, "end_line": 7},
+    }]
+    assert detail["message_operations"] == []
+
+
 def test_describe_entrypoint_uses_a_proven_contract_when_call_name_is_generic(tmp_path):
     conn = open_db(tmp_path / "generic-message-call.db")
     service_id = services.ensure_service(conn, "orders", "/repos/orders", "node-js")

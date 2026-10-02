@@ -640,10 +640,12 @@ Indexing stores this snapshot in SQLite together with static flow analysis, and
 reuses it when inputs are unchanged. A missing snapshot triggers static
 reanalysis without additional LLM calls. `describe_entrypoint` reads its
 bounded flow, contract, reachable service calls, external HTTP calls, message
-operations, error contracts, resilience policies and boundaries from the
-canonical snapshot. A message channel is confirmed only when its contract
-shares the reached call's source location; unresolved publish and consume calls
-report an unknown channel.
+operations and contracts, error contracts, resilience policies and boundaries
+from the canonical snapshot. A message channel is confirmed for a reached call
+only when its contract shares that call's source location; unresolved publish
+and consume calls report an unknown channel. A message consumption entrypoint
+also exposes its matching consume contract with source evidence, without adding
+a synthetic flow operation.
 Other exports retain their current read paths.
 `KnowledgeNavigator` can traverse a canonical snapshot from one indexed entrypoint
 with explicit depth, node, edge and relation limits. It returns reached facts,

@@ -41,7 +41,7 @@ from orbitkb.db.repositories import security_findings as security_findings_repo
 from orbitkb.db.repositories import service_calls as service_calls_repo
 from orbitkb.db.repositories import services as services_repo
 from orbitkb.discovery.hashing import git_working_changed_files_with_status
-from orbitkb.domain.canonical import EntrypointKey, SymbolKey
+from orbitkb.domain.canonical import EntrypointKey, FactStatus, SymbolKey
 from orbitkb.domain.navigation import (
     KnowledgeNavigator,
     TraversalPolicy,
@@ -655,7 +655,7 @@ def describe_entrypoint(
     max_edges: int = DEFAULT_FLOW_EDGE_LIMIT,
     repository: str | None = None,
 ) -> dict:
-    """Return a compact deterministic flow for one HTTP, GraphQL, message or CLI entrypoint."""
+    """Return bounded flow and source-backed facts for one indexed entrypoint."""
     if max_edges < 1:
         return {"error": f"max_edges must be >= 1 (got {max_edges})"}
     row, service_error = _resolve_service(conn, service, repository)
@@ -709,6 +709,19 @@ def describe_entrypoint(
         ],
         "flow_pagination": {"max_edges": effective_max_edges, "truncated": truncated},
         "message_operations": _reachable_message_operations(traversal),
+        "message_contracts": [
+            {
+                "direction": fact.attributes["direction"], "channel": fact.subject.channel,
+                "routing_key": fact.attributes["routing_key"],
+                "payload_type": fact.attributes["payload_type"],
+                "message_version": fact.attributes["message_version"],
+                "evidence": {"file": source.file_path, "start_line": source.start_line,
+                             "end_line": source.end_line},
+            }
+            for fact in traversal.facts
+            if fact.kind == "message_contract" and fact.status is FactStatus.CONFIRMED
+            for source in fact.sources
+        ],
         "persistence_operations": [
             {
                 "operation": edge["kind"], "target": edge["to_symbol"], "evidence": {

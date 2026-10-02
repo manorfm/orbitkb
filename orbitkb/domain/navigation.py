@@ -79,6 +79,12 @@ class KnowledgeNavigator:
         for fact in snapshot.facts:
             if isinstance(fact.subject, SymbolKey) and fact.subject.service == snapshot.service:
                 self._by_symbol.setdefault(fact.subject.name, []).append(fact)
+        message_entrypoints: dict[tuple[str, str], list[str]] = {}
+        for fact in snapshot.facts:
+            if fact.kind == "entrypoint" and isinstance(fact.subject, EntrypointKey) and (
+                fact.subject.transport == "message" and fact.subject.method == "CONSUME"
+            ):
+                message_entrypoints.setdefault(("consumes", fact.subject.name), []).append(fact.subject.symbol)
         message_sources: dict[SourceReference, dict[str, CanonicalFact]] = {}
         for fact in snapshot.facts:
             if fact.kind != "flow_edge":
@@ -88,6 +94,11 @@ class KnowledgeNavigator:
         for fact in snapshot.facts:
             if fact.kind != "message_contract":
                 continue
+            if fact.status is FactStatus.CONFIRMED:
+                for symbol in message_entrypoints.get(
+                    (fact.attributes.get("direction"), fact.subject.channel), (),
+                ):
+                    self._by_symbol.setdefault(symbol, []).append(fact)
             for source in fact.sources:
                 edges = message_sources.get(source, {})
                 if len(edges) == 1:
