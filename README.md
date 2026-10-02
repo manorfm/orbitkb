@@ -243,7 +243,9 @@ model call or a stable local model constant. The import path, export and
 unchanged alias must be proven. Local `export { Model }` and
 `export { Model as default }` clauses are supported. A single named re-export
 through another local file is resolved when its source is proven. Longer chains,
-ambiguous names and external modules remain unresolved.
+ambiguous names and external modules remain unresolved. `export *` carries a
+model only when it is the barrel's sole export and its source has one direct,
+proven model export; default and type-only exports do not qualify.
 
 For Node/TypeScript, direct Axios calls in named functions and class methods
 can expose an external host and path when the URL is literal or combines a

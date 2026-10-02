@@ -655,7 +655,7 @@ async def test_cli_to_mcp_exposes_entity_manager_persistence_operations(tmp_path
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("export_style", ["named", "default", "named_clause", "default_clause", "reexport"])
+@pytest.mark.parametrize("export_style", ["named", "default", "named_clause", "default_clause", "reexport", "star"])
 async def test_cli_to_mcp_exposes_mongoose_persistence_operations(tmp_path: Path, fake_backends, export_style):
     root = tmp_path / "orders"
     root.mkdir()
@@ -665,16 +665,19 @@ async def test_cli_to_mcp_exposes_mongoose_persistence_operations(tmp_path: Path
         "named_clause": 'const Order = mongoose.model("Order", orderSchema, "orders");\nexport { Order };',
         "default_clause": 'const Order = mongoose.model("Order", orderSchema, "orders");\nexport { Order as default };',
         "reexport": 'export const Order = mongoose.model("Order", orderSchema, "orders");',
+        "star": 'export const Order = mongoose.model("Order", orderSchema, "orders");',
     }[export_style]
     (root / "order.model.ts").write_text(
         f'import mongoose from "mongoose";\n{export_line}\n',
         encoding="utf-8",
     )
-    if export_style == "reexport":
+    if export_style in {"reexport", "star"}:
         (root / "models.ts").write_text(
-            'export { Order } from "./order.model";\n', encoding="utf-8",
+            'export * from "./order.model";\n' if export_style == "star"
+            else 'export { Order } from "./order.model";\n',
+            encoding="utf-8",
         )
-    module = "./models" if export_style == "reexport" else "./order.model"
+    module = "./models" if export_style in {"reexport", "star"} else "./order.model"
     import_line = (
         f'import Order from "{module}";'
         if export_style in {"default", "default_clause"}

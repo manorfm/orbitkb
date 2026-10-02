@@ -610,6 +610,26 @@ def proven_default_mongoose_model_export(path: Path) -> tuple[str, str | None, i
     return _default_mongoose_model_export(_parse(path, source), source)
 
 
+def _single_direct_mongoose_export(path: Path) -> tuple[str, str] | None:
+    source = path.read_bytes()
+    tree = _parse(path, source)
+    exports = [statement for statement in tree.named_children if statement.type == "export_statement"]
+    if len(exports) != 1:
+        return None
+    declaration = exports[0].child_by_field_name("declaration")
+    if declaration is None or declaration.type != "lexical_declaration":
+        return None
+    variables = [child for child in declaration.named_children if child.type == "variable_declarator"]
+    if len(variables) != 1:
+        return None
+    name = variables[0].child_by_field_name("name")
+    if name is None or name.type != "identifier":
+        return None
+    alias = _text(name, source)
+    model = proven_local_mongoose_model_declarations(tree, source).get(alias)
+    return (alias, model[0]) if model is not None else None
+
+
 def _exported_mongoose_models(path: Path, root: Path, *, allow_reexport: bool = True) -> dict[str, str]:
     source = path.read_bytes()
     tree = _parse(path, source)
@@ -625,10 +645,22 @@ def _exported_mongoose_models(path: Path, root: Path, *, allow_reexport: bool = 
 
     if (default := _default_mongoose_model_export(tree, source)) is not None:
         record("default", default[0])
-    for statement in tree.named_children:
-        if statement.type != "export_statement":
-            continue
+    export_statements = [statement for statement in tree.named_children if statement.type == "export_statement"]
+    if allow_reexport and len(export_statements) == 1:
+        statement = export_statements[0]
+        module_node = statement.child_by_field_name("source")
+        if module_node is not None and not statement.has_error and not any(
+            child.type in {"export_clause", "namespace_export", "type"} for child in statement.children
+        ):
+            imported = resolve_local_source(path, _text(module_node, source)[1:-1], root, suffixes=_SOURCE_SUFFIXES)
+            if imported is not None and (single := _single_direct_mongoose_export(imported)) is not None:
+                record(*single)
+    for statement in export_statements:
         if any(child.type == "type" for child in statement.children):
+            continue
+        declaration = statement.child_by_field_name("declaration")
+        clause = next((child for child in statement.named_children if child.type == "export_clause"), None)
+        if declaration is None and clause is None:
             continue
         module_node = statement.child_by_field_name("source")
         if module_node is not None:
@@ -640,7 +672,6 @@ def _exported_mongoose_models(path: Path, root: Path, *, allow_reexport: bool = 
             available = _exported_mongoose_models(imported, root, allow_reexport=False)
         else:
             available = {alias: model[0] for alias, model in models.items()}
-        declaration = statement.child_by_field_name("declaration")
         if declaration is not None and declaration.type == "lexical_declaration":
             for variable in declaration.named_children:
                 if variable.type != "variable_declarator":
@@ -649,7 +680,6 @@ def _exported_mongoose_models(path: Path, root: Path, *, allow_reexport: bool = 
                 if name is not None and (model := models.get(_text(name, source))) is not None:
                     record(_text(name, source), model[0])
             continue
-        clause = next((child for child in statement.named_children if child.type == "export_clause"), None)
         if clause is None:
             continue
         for specifier in clause.named_children:
