@@ -4327,6 +4327,108 @@ def test_node_analyzer_does_not_link_mongoose_reexport_clause(tmp_path: Path):
     }
 
 
+def test_node_analyzer_links_one_hop_mongoose_reexport(tmp_path: Path):
+    (tmp_path / "payment.model.ts").write_text(
+        "import mongoose from 'mongoose';\n"
+        "export const Transaction = mongoose.model<Payment>('Payment', schema, 'payments');\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "models.ts").write_text(
+        "export { Transaction as PaymentRecord } from './payment.model';\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "payments.ts").write_text(
+        "import { PaymentRecord as PaymentModel } from './models';\n"
+        "function refund(id: string) { return PaymentModel.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert ("PaymentModel.findById", "reads", "Payment") in {
+        (edge.target, edge.kind, edge.model_name) for edge in result.edges
+    }
+
+
+def test_node_analyzer_links_default_one_hop_mongoose_reexport(tmp_path: Path):
+    (tmp_path / "payment.model.js").write_text(
+        "import mongoose from 'mongoose';\n"
+        "export default mongoose.model('Payment', schema);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "models.js").write_text(
+        "export { default as PaymentRecord } from './payment.model.js';\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "payments.js").write_text(
+        "import { PaymentRecord as PaymentModel } from './models.js';\n"
+        "function refund(id) { return PaymentModel.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert ("PaymentModel.findById", "Payment") in {
+        (edge.target, edge.model_name) for edge in result.edges
+    }
+
+
+def test_node_analyzer_does_not_follow_two_mongoose_reexports(tmp_path: Path):
+    (tmp_path / "payment.model.ts").write_text(
+        "import mongoose from 'mongoose';\n"
+        "export const Transaction = mongoose.model('Payment', schema);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "inner.ts").write_text(
+        "export { Transaction } from './payment.model';\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "outer.ts").write_text(
+        "export { Transaction as PaymentRecord } from './inner';\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "payments.ts").write_text(
+        "import { PaymentRecord as PaymentModel } from './outer';\n"
+        "function refund(id: string) { return PaymentModel.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert ("PaymentModel.findById", None) in {
+        (edge.target, edge.model_name) for edge in result.edges
+    }
+
+
+def test_node_analyzer_does_not_guess_conflicting_mongoose_reexports(tmp_path: Path):
+    (tmp_path / "payment.model.ts").write_text(
+        "import mongoose from 'mongoose';\n"
+        "export const Payment = mongoose.model('Payment', schema);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "invoice.model.ts").write_text(
+        "import mongoose from 'mongoose';\n"
+        "export const Invoice = mongoose.model('Invoice', schema);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "models.ts").write_text(
+        "export { Payment as Record } from './payment.model';\n"
+        "export { Invoice as Record } from './invoice.model';\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "records.ts").write_text(
+        "import { Record } from './models';\n"
+        "function find(id: string) { return Record.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert ("Record.findById", None) in {
+        (edge.target, edge.model_name) for edge in result.edges
+    }
+
+
 def test_node_analyzer_does_not_link_fake_local_mongoose_factory(tmp_path: Path):
     (tmp_path / "payments.js").write_text(
         "const mongoose = fakeFactory;\n"

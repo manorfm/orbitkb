@@ -610,20 +610,36 @@ def proven_default_mongoose_model_export(path: Path) -> tuple[str, str | None, i
     return _default_mongoose_model_export(_parse(path, source), source)
 
 
-def _exported_mongoose_models(path: Path) -> dict[str, str]:
+def _exported_mongoose_models(path: Path, root: Path, *, allow_reexport: bool = True) -> dict[str, str]:
     source = path.read_bytes()
     tree = _parse(path, source)
     models = proven_local_mongoose_model_declarations(tree, source)
     exported: dict[str, str] = {}
+    duplicate_names: set[str] = set()
+
+    def record(name: str, model: str) -> None:
+        if name in exported:
+            duplicate_names.add(name)
+        else:
+            exported[name] = model
+
     if (default := _default_mongoose_model_export(tree, source)) is not None:
-        exported["default"] = default[0]
+        record("default", default[0])
     for statement in tree.named_children:
         if statement.type != "export_statement":
             continue
-        if statement.child_by_field_name("source") is not None or any(
-            child.type == "type" for child in statement.children
-        ):
+        if any(child.type == "type" for child in statement.children):
             continue
+        module_node = statement.child_by_field_name("source")
+        if module_node is not None:
+            if not allow_reexport:
+                continue
+            imported = resolve_local_source(path, _text(module_node, source)[1:-1], root, suffixes=_SOURCE_SUFFIXES)
+            if imported is None:
+                continue
+            available = _exported_mongoose_models(imported, root, allow_reexport=False)
+        else:
+            available = {alias: model[0] for alias, model in models.items()}
         declaration = statement.child_by_field_name("declaration")
         if declaration is not None and declaration.type == "lexical_declaration":
             for variable in declaration.named_children:
@@ -631,7 +647,7 @@ def _exported_mongoose_models(path: Path) -> dict[str, str]:
                     continue
                 name = variable.child_by_field_name("name")
                 if name is not None and (model := models.get(_text(name, source))) is not None:
-                    exported[_text(name, source)] = model[0]
+                    record(_text(name, source), model[0])
             continue
         clause = next((child for child in statement.named_children if child.type == "export_clause"), None)
         if clause is None:
@@ -641,9 +657,9 @@ def _exported_mongoose_models(path: Path) -> dict[str, str]:
                 continue
             name = specifier.child_by_field_name("name")
             alias = specifier.child_by_field_name("alias")
-            if name is not None and (model := models.get(_text(name, source))) is not None:
-                exported[_text(alias or name, source)] = model[0]
-    return exported
+            if name is not None and (model := available.get(_text(name, source))) is not None:
+                record(_text(alias or name, source), model)
+    return {name: model for name, model in exported.items() if name not in duplicate_names}
 
 
 def _unshadowed_import_alias(tree: Node, source: bytes, alias: str) -> bool:
@@ -675,7 +691,7 @@ def proven_local_esm_mongoose_models(tree: Node, source: bytes, path: Path, root
         imported = resolve_local_source(path, _text(module_node, source)[1:-1], root, suffixes=_SOURCE_SUFFIXES)
         if imported is None:
             continue
-        exports = _exported_mongoose_models(imported)
+        exports = _exported_mongoose_models(imported, root)
         for names in clause.named_children:
             if names.type == "identifier":
                 if (model := exports.get("default")) is not None:
