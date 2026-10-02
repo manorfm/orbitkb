@@ -164,6 +164,36 @@ def test_python_detector_resolves_relative_router_and_respects_local_mount_order
     }
 
 
+def test_python_detector_reports_only_nested_mounted_router_with_composed_prefix(tmp_path: Path):
+    (tmp_path / "main.py").write_text(
+        "from fastapi import FastAPI\nfrom parent import parent\n"
+        "app = FastAPI()\napp.include_router(parent, prefix='/api')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "parent.py").write_text(
+        "from fastapi import APIRouter\nfrom child import child\n"
+        "parent = APIRouter(prefix='/v1')\n"
+        "parent.include_router(child, prefix='/store')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "child.py").write_text(
+        "from fastapi import APIRouter\nchild = APIRouter(prefix='/items')\n"
+        "@child.get('/{item_id}')\ndef get_item(item_id): pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "orphan.py").write_text(
+        "from fastapi import APIRouter\nrouter = APIRouter()\n"
+        "@router.get('/orphan')\ndef orphan(): pass\n",
+        encoding="utf-8",
+    )
+
+    hints = PythonDetector().collect_hints(tmp_path)
+
+    assert [(endpoint.method, endpoint.path) for endpoint in hints.endpoints] == [
+        ("GET", "/api/v1/store/items/{item_id}"),
+    ]
+
+
 def test_python_endpoint_falls_back_to_file_stem_with_no_enclosing_class():
     """main.py's own /health check is the one endpoint in orders-service with no
     enclosing class (it's a bare `@app.get` in the composition root) — a natural

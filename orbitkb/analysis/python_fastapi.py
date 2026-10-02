@@ -27,10 +27,12 @@ class ImportBinding:
 
 @dataclass(frozen=True)
 class Mount:
+    owner: str
     router: str
     prefix: str
     line: int
     imported_from: ImportBinding | None
+    on_app: bool
 
 
 @dataclass
@@ -133,12 +135,15 @@ def parse_module(file: Path) -> ModuleRoutes:
         elif isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
             call = statement.value
             if (isinstance(call.func, ast.Attribute) and call.func.attr == "include_router"
-                    and isinstance(call.func.value, ast.Name) and call.func.value.id in apps
+                    and isinstance(call.func.value, ast.Name)
+                    and (call.func.value.id in apps or call.func.value.id in result.routers)
                     and call.args and isinstance(call.args[0], ast.Name)):
                 prefix = _prefix(call)
                 name = call.args[0].id
                 if prefix is not None and (name in result.routers or name in result.imports):
-                    result.mounts.append(Mount(name, prefix, call.lineno, result.imports.get(name)))
+                    owner = call.func.value.id
+                    result.mounts.append(Mount(owner, name, prefix, call.lineno,
+                                               result.imports.get(name), owner in apps))
         elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             functions = statement.body if isinstance(statement, ast.ClassDef) else [statement]
             owner = f"{statement.name}." if isinstance(statement, ast.ClassDef) else ""
@@ -181,6 +186,38 @@ def proven_routes(files: list[Path], root: Path) -> list[Route]:
     """Resolve direct routes and routers imported from local modules, once."""
     modules = {path.resolve(): parse_module(path) for path in files if path.suffix == ".py"}
     root = root.resolve()
+
+    def mounted_router(mount: Mount, file: Path) -> tuple[Path, str] | None:
+        if mount.imported_from:
+            source = _import_source(file, mount.imported_from, root)
+            return (source, mount.imported_from.name) if source is not None else None
+        return file, mount.router
+
+    def router_routes(file: Path, name: str, before: int | None,
+                      ancestors: frozenset[tuple[Path, str]]) -> list[Route]:
+        identity = (file, name)
+        if identity in ancestors:
+            return []
+        module = modules.get(file)
+        router = module.routers.get(name) if module else None
+        if router is None:
+            return []
+        prefix, handlers = router
+        routes = [Route(route.file, route.line, route.method, _join(prefix, route.path), route.symbol)
+                  for route in handlers if before is None or route.line < before]
+        for mount in module.mounts:
+            if mount.on_app or mount.owner != name or (before is not None and mount.line >= before):
+                continue
+            target = mounted_router(mount, file)
+            if target is None:
+                continue
+            child_file, child_name = target
+            child_before = mount.line if child_file == file else None
+            for route in router_routes(child_file, child_name, child_before, ancestors | {identity}):
+                routes.append(Route(route.file, route.line, route.method,
+                                    _join(prefix, mount.prefix, route.path), route.symbol))
+        return routes
+
     routes: list[Route] = []
     for file, module in modules.items():
         routes.extend(module.direct)
@@ -192,20 +229,14 @@ def proven_routes(files: list[Path], root: Path) -> list[Route]:
             routes.extend(Route(route.file, route.line, route.method, route.path, route.symbol)
                           for route in handlers)
         for mount in module.mounts:
-            source = file
-            router_name = mount.router
-            if mount.imported_from:
-                router_name = mount.imported_from.name
-                source = _import_source(file, mount.imported_from, root)
-                if source is None:
-                    continue
-            router = modules.get(source, ModuleRoutes()).routers.get(router_name)
-            if router is None:
+            if not mount.on_app:
                 continue
-            router_prefix, handlers = router
-            for handler in handlers:
-                if source == file and handler.line > mount.line:
-                    continue
-                routes.append(Route(handler.file, handler.line, handler.method,
-                                    _join(mount.prefix, router_prefix, handler.path), handler.symbol))
+            target = mounted_router(mount, file)
+            if target is None:
+                continue
+            source, router_name = target
+            before = mount.line if source == file else None
+            for route in router_routes(source, router_name, before, frozenset()):
+                routes.append(Route(route.file, route.line, route.method,
+                                    _join(mount.prefix, route.path), route.symbol))
     return list(dict.fromkeys(routes))

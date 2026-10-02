@@ -224,6 +224,57 @@ def test_python_fastapi_analyzer_resolves_parent_relative_router_without_escapin
     assert StaticAnalysisEngine().analyze(tmp_path, "python").entrypoints == []
 
 
+def test_python_fastapi_analyzer_resolves_nested_imported_routers_with_literal_prefixes(tmp_path: Path):
+    (tmp_path / "main.py").write_text(
+        "from fastapi import FastAPI\nfrom parent import parent\n"
+        "app = FastAPI()\napp.include_router(parent, prefix='/api')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "parent.py").write_text(
+        "from fastapi import APIRouter\nfrom child import child\n"
+        "parent = APIRouter(prefix='/v1')\n"
+        "parent.include_router(child, prefix='/store')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "child.py").write_text(
+        "from fastapi import APIRouter\nchild = APIRouter(prefix='/items')\n"
+        "@child.get('/{item_id}')\ndef get_item(item_id): return service.get(item_id)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "unused.py").write_text(
+        "from fastapi import APIRouter\nunused = APIRouter()\n"
+        "@unused.get('/unused')\ndef unused_route(): pass\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert [(entry.method, entry.name, entry.symbol) for entry in result.entrypoints] == [
+        ("GET", "/api/v1/store/items/{item_id}", "child.get_item"),
+    ]
+    assert ("child.get_item", "service.get") in {
+        (edge.source, edge.target) for edge in result.edges
+    }
+
+
+def test_python_fastapi_analyzer_snapshots_child_at_parent_mount(tmp_path: Path):
+    (tmp_path / "main.py").write_text(
+        "from fastapi import FastAPI, APIRouter\n"
+        "app = FastAPI()\nparent = APIRouter(prefix='/parent')\nchild = APIRouter()\n"
+        "@child.get('/before')\ndef before(): pass\n"
+        "parent.include_router(child)\n"
+        "@child.get('/after')\ndef after(): pass\n"
+        "app.include_router(parent)\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert [(entry.method, entry.name) for entry in result.entrypoints] == [
+        ("GET", "/parent/before"),
+    ]
+
+
 def test_kotlin_local_constructor_is_not_an_invocation_but_unknown_call_remains(tmp_path: Path):
     (tmp_path / "Handler.kt").write_text(
         '''data class Local(val id: String)
