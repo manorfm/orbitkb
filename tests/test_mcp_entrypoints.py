@@ -11,6 +11,7 @@ from orbitkb.analysis.models import (
     Evidence,
     FlowBoundary,
     FlowEdge,
+    MessageContract,
     ResiliencePolicy,
     SecurityRequirement,
     StaticServiceCall,
@@ -78,6 +79,56 @@ def test_describe_entrypoint_returns_the_reachable_bounded_flow(tmp_path):
         "    participant p2 as DB",
         "    p1->>p2: writes",
     ])
+
+
+def test_describe_entrypoint_reports_only_reachable_message_destinations(tmp_path):
+    conn = open_db(tmp_path / "message-operations.db")
+    service_id = services.ensure_service(conn, "orders", "/repos/orders", "node-js")
+    publish_evidence = Evidence("events.js", 7, 7)
+    unrelated_evidence = Evidence("events.js", 12, 12)
+    flows.replace_analysis(conn, service_id, AnalysisResult(
+        entrypoints=[
+            EntryPoint("http", "POST", "/orders", "Orders.create", Evidence("routes.js", 1, 1)),
+            EntryPoint("http", "POST", "/cancel", "Orders.cancel", Evidence("routes.js", 2, 2)),
+        ],
+        edges=[
+            FlowEdge("Orders.create", "publish", "invokes", Evidence("routes.js", 3, 3)),
+            FlowEdge("publish", "producer.send", "publishes", publish_evidence),
+            FlowEdge("Orders.cancel", "otherPublish", "invokes", Evidence("routes.js", 4, 4)),
+            FlowEdge("otherPublish", "producer.send", "publishes", unrelated_evidence),
+        ],
+        message_contracts=[
+            MessageContract("publishes", "orders.created", None, None, publish_evidence),
+            MessageContract("publishes", "orders.cancelled", None, None, unrelated_evidence),
+        ],
+    ))
+
+    detail = queries.describe_entrypoint(conn, "orders", "http", "post", "/orders")
+
+    assert [(item["source"], item["target"], item["channel"], item["status"])
+            for item in detail["message_operations"]] == [
+        ("publish", "producer.send", "orders.created", "confirmed"),
+    ]
+
+
+def test_describe_entrypoint_does_not_assign_a_channel_to_ambiguous_same_line_calls(tmp_path):
+    conn = open_db(tmp_path / "ambiguous-messages.db")
+    service_id = services.ensure_service(conn, "orders", "/repos/orders", "node-js")
+    evidence = Evidence("events.js", 7, 7)
+    flows.replace_analysis(conn, service_id, AnalysisResult(
+        entrypoints=[EntryPoint("http", "POST", "/orders", "Orders.create", Evidence("routes.js", 1, 1))],
+        edges=[
+            FlowEdge("Orders.create", "producer.send", "publishes", evidence),
+            FlowEdge("Orders.create", "audit.send", "publishes", evidence),
+        ],
+        message_contracts=[MessageContract("publishes", "orders.created", None, None, evidence)],
+    ))
+
+    detail = queries.describe_entrypoint(conn, "orders", "http", "post", "/orders")
+
+    assert {item["target"] for item in detail["message_operations"]} == {"producer.send", "audit.send"}
+    assert all(item["status"] == "unknown" and item["channel"] is None
+               for item in detail["message_operations"])
 
 
 def test_describe_entrypoint_navigates_the_persisted_canonical_snapshot(tmp_path):

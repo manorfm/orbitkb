@@ -602,6 +602,35 @@ def _navigation_boundary_items(traversal: TraversalResult) -> list[dict]:
     return items
 
 
+def _reachable_message_operations(traversal: TraversalResult) -> list[dict]:
+    edges = [fact for fact in traversal.facts if fact.kind == "flow_edge"]
+    contracts = [fact for fact in traversal.facts if fact.kind == "message_contract"]
+    unresolved = {boundary.edge_id for boundary in traversal.boundaries
+                  if boundary.reason in {"unresolved", "external_call", "redis_publish"}}
+    operations = []
+    for edge in edges:
+        direction = edge.attributes.get("relation")
+        if direction not in {"publishes", "consumes"}:
+            continue
+        target = edge.attributes["target"]
+        matching = {
+            contract.subject.channel
+            for contract in contracts
+            if contract.attributes.get("direction") == direction
+            and any(source in edge.sources for source in contract.sources)
+        }
+        if edge.id not in unresolved and not matching:
+            continue
+        channel = next(iter(matching)) if len(matching) == 1 else None
+        source = edge.sources[0]
+        operations.append({
+            "source": edge.subject.name, "target": target, "direction": direction,
+            "channel": channel, "status": "confirmed" if channel is not None else "unknown",
+            "evidence": {"file": source.file_path, "start_line": source.start_line, "end_line": source.end_line},
+        })
+    return operations
+
+
 def _canonical_entrypoint_traversal(
     conn: sqlite3.Connection, service_id: int, entrypoint: sqlite3.Row, max_edges: int,
 ) -> tuple[EntrypointKey, TraversalResult] | None:
@@ -678,6 +707,7 @@ def describe_entrypoint(
             for edge in edges
         ],
         "flow_pagination": {"max_edges": effective_max_edges, "truncated": truncated},
+        "message_operations": _reachable_message_operations(traversal),
         "persistence_operations": [
             {
                 "operation": edge["kind"], "target": edge["to_symbol"], "evidence": {

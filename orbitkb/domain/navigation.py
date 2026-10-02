@@ -79,6 +79,19 @@ class KnowledgeNavigator:
         for fact in snapshot.facts:
             if isinstance(fact.subject, SymbolKey) and fact.subject.service == snapshot.service:
                 self._by_symbol.setdefault(fact.subject.name, []).append(fact)
+        message_sources: dict[tuple[SourceReference, str], dict[str, str]] = {}
+        for fact in snapshot.facts:
+            if fact.kind != "flow_edge" or fact.attributes.get("relation") not in {"publishes", "consumes"}:
+                continue
+            for source in fact.sources:
+                message_sources.setdefault((source, fact.attributes["relation"]), {})[fact.id] = fact.subject.name
+        for fact in snapshot.facts:
+            if fact.kind != "message_contract":
+                continue
+            for source in fact.sources:
+                owners = message_sources.get((source, fact.attributes.get("direction")), {})
+                if len(owners) == 1:
+                    self._by_symbol.setdefault(next(iter(owners.values())), []).append(fact)
         self._external_edges: set[str] = set()
         for attached in self._by_symbol.values():
             edges_by_source: dict[SourceReference, list[CanonicalFact]] = {}

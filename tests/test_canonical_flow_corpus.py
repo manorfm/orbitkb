@@ -62,3 +62,7 @@ def test_node_route_public_flow_reaches_service_client_and_message_publisher(tmp
     assert ("PaymentService.chargeCustomer", "PaymentService.publishPaymentEvent") in pairs
     assert ("PaymentService.publishPaymentEvent", "kafka.publish") in pairs
     assert not any(source == "PaymentService.refundCustomer" for source, _ in pairs)
+    assert [(operation["source"], operation["target"], operation["channel"], operation["status"])
+            for operation in detail["message_operations"]] == [
+        ("kafka.publish", "producer.send", None, "unknown"),
+    ]
