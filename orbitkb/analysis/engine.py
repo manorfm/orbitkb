@@ -273,7 +273,7 @@ def _mongoose_model_variables(source: str) -> frozenset[str]:
     ))
 
 
-def _mongoose_call_kind(target: str, model_variables: frozenset[str]) -> str | None:
+def _mongoose_call_kind(target: str, model_variables: Mapping[str, str | None]) -> str | None:
     """Classify only exact operations on a locally declared Mongoose model."""
     receiver, separator, method = target.rpartition(".")
     if not separator or receiver not in model_variables:
@@ -937,9 +937,10 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
         imports = (*_node_named_imports(source_text), *proven_local_commonjs_flow_imports(tree, source, path, root))
         launchdarkly_clients = _launchdarkly_client_variables(source_text, imports)
         graphql_error_constructors = _graphql_error_constructors(imports)
-        mongoose_models = _mongoose_model_variables(source_text) | proven_local_commonjs_mongoose_models(
-            tree, source, path, root,
-        )
+        mongoose_models = {
+            **{name: None for name in _mongoose_model_variables(source_text)},
+            **proven_local_commonjs_mongoose_models(tree, source, path, root),
+        }
         prisma_clients = _prisma_client_variables(source_text)
         client_declarations = node_stateful_client_declarations(source_text)
         command_imports = node_command_imports(source_text)
@@ -1146,7 +1147,7 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
         root: Path,
         source: bytes,
         imports: tuple[tuple[str, str], ...],
-        mongoose_models: frozenset[str],
+        mongoose_models: Mapping[str, str | None],
         prisma_clients: frozenset[str],
         client_declarations: dict,
         command_imports: dict[str, tuple[str, str]],
@@ -1177,7 +1178,7 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
 
     @staticmethod
     def _edges_for_node(
-        function: _Function, path: Path, root: Path, source: bytes, mongoose_models: frozenset[str],
+        function: _Function, path: Path, root: Path, source: bytes, mongoose_models: Mapping[str, str | None],
         prisma_clients: frozenset[str], client_declarations: dict, command_imports: dict[str, tuple[str, str]],
     ) -> tuple[list[FlowEdge], list[CloudFact]]:
         edges: list[FlowEdge] = []
@@ -1194,14 +1195,24 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
             ),
         ):
             cloud_kind, cloud_fact = cloud_edge_kind_and_fact(edge.target, edge.evidence, client_declarations)
+            mongoose_kind = _mongoose_call_kind(edge.target, mongoose_models)
+            document = edge.target.rpartition(".")[0] if edge.target in mongoose_document_saves else None
+            model_name = None
+            if mongoose_kind:
+                model_name = mongoose_models.get(edge.target.rpartition(".")[0])
+            elif document is not None:
+                model_name = mongoose_models.get(mongoose_documents[document])
             kind = (
-                _mongoose_call_kind(edge.target, mongoose_models)
+                mongoose_kind
                 or ("writes" if edge.target in mongoose_document_saves else None)
                 or _prisma_call_kind(edge.target, prisma_clients)
                 or cloud_kind
                 or edge.kind
             )
-            edges.append(FlowEdge(edge.source, edge.target, kind, edge.evidence, edge.confidence, edge.origin))
+            edges.append(FlowEdge(
+                edge.source, edge.target, kind, edge.evidence, edge.confidence, edge.origin,
+                model_name=model_name,
+            ))
             if cloud_fact is not None:
                 cloud_facts.append(cloud_fact)
         for node in _walk(function.body):

@@ -65,11 +65,12 @@ def _replace_analysis_rows(conn: sqlite3.Connection, service_id: int, analysis: 
     for edge in analysis.edges:
         conn.execute(
             """INSERT INTO flow_edges
-               (service_id, entrypoint_id, from_symbol, to_symbol, kind, confidence, origin, file_path, start_line, end_line, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (service_id, entrypoint_id, from_symbol, to_symbol, kind, confidence, origin,
+                model_name, file_path, start_line, end_line, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 service_id, entrypoint_ids.get(edge.source), edge.source, edge.target,
-                edge.kind, edge.confidence, edge.origin, edge.evidence.file_path,
+                edge.kind, edge.confidence, edge.origin, edge.model_name, edge.evidence.file_path,
                 edge.evidence.start_line, edge.evidence.end_line, indexed_at,
             ),
         )

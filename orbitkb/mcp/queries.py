@@ -677,6 +677,7 @@ def describe_entrypoint(
         edges.append({
             "from_symbol": fact.subject.name, "to_symbol": fact.attributes["target"],
             "kind": fact.attributes["relation"], "confidence": fact.attributes["confidence"],
+            "model_name": fact.attributes.get("model_name"),
             "origin": fact.origin, "file_path": source.file_path,
             "start_line": source.start_line, "end_line": source.end_line,
         })
@@ -727,6 +728,7 @@ def describe_entrypoint(
                 "operation": edge["kind"], "target": edge["to_symbol"], "evidence": {
                     "file": edge["file_path"], "start_line": edge["start_line"], "end_line": edge["end_line"],
                 },
+                **({"model": edge["model_name"], "collection": None} if edge["model_name"] else {}),
             }
             for edge in edges
             if edge["kind"] in {"reads", "writes"}

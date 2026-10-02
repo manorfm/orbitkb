@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from tree_sitter import Node
 
 
@@ -15,25 +17,28 @@ def _walk(node: Node):
         yield from _walk(child)
 
 
-def _document_query(expression: Node, source: bytes, models: frozenset[str]) -> bool:
+def _document_query(expression: Node, source: bytes, models: Mapping[str, str | None]) -> str | None:
     if expression.type in {"await_expression", "parenthesized_expression"}:
-        return len(expression.named_children) == 1 and _document_query(expression.named_children[0], source, models)
+        if len(expression.named_children) != 1:
+            return None
+        return _document_query(expression.named_children[0], source, models)
     if expression.type != "call_expression":
-        return False
+        return None
     function = expression.child_by_field_name("function")
     if function is None or function.type != "member_expression":
-        return False
+        return None
     receiver = function.child_by_field_name("object")
     method = function.child_by_field_name("property")
     if receiver is None or method is None:
-        return False
+        return None
     name = _text(method, source)
     if receiver.type == "identifier":
-        return _text(receiver, source) in models and name in {"findOne", "findById"}
-    return name == "sort" and _document_query(receiver, source, models)
+        alias = _text(receiver, source)
+        return alias if alias in models and name in {"findOne", "findById"} else None
+    return _document_query(receiver, source, models) if name == "sort" else None
 
 
-def is_mongoose_query_sort(call: Node, source: bytes, models: frozenset[str]) -> bool:
+def is_mongoose_query_sort(call: Node, source: bytes, models: Mapping[str, str | None]) -> bool:
     """Identify a sort modifier on a proven single-document Mongoose query."""
     if call.type != "call_expression":
         return False
@@ -45,15 +50,15 @@ def is_mongoose_query_sort(call: Node, source: bytes, models: frozenset[str]) ->
     return (
         receiver is not None and method is not None
         and _text(method, source) == "sort"
-        and _document_query(receiver, source, models)
+        and _document_query(receiver, source, models) is not None
     )
 
 
 def proven_mongoose_documents(
-    declaration: Node, body: Node, source: bytes, models: frozenset[str],
-) -> frozenset[str]:
-    """Return immutable local names initialized by a document-producing query."""
-    candidates: set[str] = set()
+    declaration: Node, body: Node, source: bytes, models: Mapping[str, str | None],
+) -> dict[str, str]:
+    """Map immutable document locals to their proven model receiver aliases."""
+    candidates: dict[str, str] = {}
     declarations: dict[str, int] = {}
     invalid: set[str] = set()
     for node in _walk(body):
@@ -69,9 +74,9 @@ def proven_mongoose_documents(
                 parent is not None and parent.type == "lexical_declaration"
                 and parent.parent == body
                 and _text(parent, source).lstrip().startswith("const ")
-                and value is not None and _document_query(value, source, models)
+                and value is not None and (model_alias := _document_query(value, source, models)) is not None
             ):
-                candidates.add(alias)
+                candidates[alias] = model_alias
         elif node.type in {"assignment_expression", "augmented_assignment_expression", "update_expression"}:
             left = node.child_by_field_name("left") or node.child_by_field_name("argument")
             if left is None:
@@ -86,7 +91,7 @@ def proven_mongoose_documents(
         if node.type != "formal_parameters":
             continue
         invalid.update(_text(parameter, source) for parameter in node.named_children if parameter.type == "identifier")
-    return frozenset(
-        alias for alias in candidates
+    return {
+        alias: model_alias for alias, model_alias in candidates.items()
         if declarations.get(alias) == 1 and alias not in invalid
-    )
+    }

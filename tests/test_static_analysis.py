@@ -4036,6 +4036,28 @@ def test_node_analyzer_classifies_operations_on_required_mongoose_models(tmp_pat
     }
 
 
+def test_node_analyzer_uses_exported_model_identity_instead_of_import_alias(tmp_path: Path):
+    (tmp_path / "payment.model.js").write_text(
+        "const mongoose = require('mongoose');\nmodule.exports = mongoose.model('Payment', schema);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "payments.js").write_text(
+        "const Transaction = require('./payment.model');\n"
+        "async function refund(id) {\n"
+        "  const payment = await Transaction.findOne({ id });\n"
+        "  await payment.save();\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert {(edge.target, edge.model_name) for edge in result.edges if edge.kind in {"reads", "writes"}} >= {
+        ("Transaction.findOne", "Payment"),
+        ("payment.save", "Payment"),
+    }
+
+
 def test_node_analyzer_does_not_treat_arbitrary_required_module_as_mongoose_model(tmp_path: Path):
     (tmp_path / "fake-model.js").write_text(
         "const mongoose = fakeFactory;\nmodule.exports = mongoose.model('Order', schema);\n",

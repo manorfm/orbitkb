@@ -1,12 +1,25 @@
 from pathlib import Path
 
+from orbitkb.analysis.models import AnalysisResult, Evidence, FlowEdge
 from orbitkb.db.connection import SCHEMA_VERSION, open_db
+from orbitkb.db.repositories import flows, services
 
 
 def test_schema_initializes(tmp_path: Path):
     conn = open_db(tmp_path / "test.db")
     row = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
     assert row["value"] == SCHEMA_VERSION
+
+
+def test_flow_edge_preserves_proven_mongoose_model_name(tmp_path: Path):
+    conn = open_db(tmp_path / "models.db")
+    service_id = services.ensure_service(conn, "orders", str(tmp_path), "node-js")
+    flows.replace_analysis(conn, service_id, AnalysisResult(edges=[
+        FlowEdge("orders.refund", "Transaction.findOne", "reads", Evidence("orders.js", 3, 3),
+                 model_name="Payment"),
+    ]))
+
+    assert conn.execute("SELECT model_name FROM flow_edges").fetchone()[0] == "Payment"
 
 
 def test_schema_expands_persistence_kind_without_losing_existing_facts(tmp_path: Path):

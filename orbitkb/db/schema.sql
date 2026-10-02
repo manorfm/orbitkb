@@ -463,6 +463,7 @@ CREATE TABLE IF NOT EXISTS flow_edges (
     kind          TEXT NOT NULL CHECK (kind IN ('invokes', 'injects', 'validates', 'reads', 'writes', 'publishes', 'consumes')),
     confidence    TEXT NOT NULL CHECK (confidence IN ('high', 'medium', 'low')),
     origin        TEXT NOT NULL CHECK (origin IN ('static', 'codegraph', 'runtime')),
+    model_name    TEXT,
     file_path     TEXT NOT NULL,
     start_line    INTEGER NOT NULL,
     end_line      INTEGER NOT NULL,

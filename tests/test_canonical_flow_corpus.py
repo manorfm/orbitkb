@@ -181,6 +181,12 @@ def test_node_consumer_reaches_refund_from_proven_bootstrap_argument(tmp_path):
         ("LedgerEntry.create", "writes"),
         ("transaction.save", "writes"),
     }
+    assert {(operation["target"], operation["model"], operation["collection"])
+            for operation in detail["persistence_operations"]} >= {
+        ("Transaction.findOne", "Transaction", None),
+        ("LedgerEntry.create", "LedgerEntry", None),
+        ("transaction.save", "Transaction", None),
+    }
     assert not any(".sort" in edge["to"] for edge in detail["flow"])
 
 

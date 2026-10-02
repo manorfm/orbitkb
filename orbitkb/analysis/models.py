@@ -41,6 +41,7 @@ class FlowEdge:
     confidence: str = "high"
     origin: str = "static"
     boundary_kind: str | None = None
+    model_name: str | None = None
 
 
 @dataclass(frozen=True)

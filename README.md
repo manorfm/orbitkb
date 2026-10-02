@@ -229,6 +229,9 @@ A direct CommonJS `mongoose.model("Name", schema)` export also appears in
 collection is declared. `Name` identifies the logical model; the physical
 collection remains unknown. Logical model names alone do not trigger a
 shared-resource architecture finding.
+For operations on such a proven model, `describe_entrypoint.persistence_operations`
+includes its declared `model` name and `collection: null`; instance `save()`
+inherits that model only when its local document origin is proven.
 
 For Node/TypeScript, direct Axios calls in named functions and class methods
 can expose an external host and path when the URL is literal or combines a

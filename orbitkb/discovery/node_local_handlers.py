@@ -517,16 +517,17 @@ def proven_commonjs_mongoose_model_export(path: Path) -> tuple[str, int] | None:
     return (model_name, call.start_point.row + 1) if proven else None
 
 
-def proven_local_commonjs_mongoose_models(tree: Node, source: bytes, path: Path, root: Path) -> frozenset[str]:
-    """Resolve immutable relative require aliases to direct Mongoose model exports."""
-    models: set[str] = set()
+def proven_local_commonjs_mongoose_models(tree: Node, source: bytes, path: Path, root: Path) -> dict[str, str]:
+    """Resolve immutable require aliases to the exported Mongoose model names."""
+    models: dict[str, str] = {}
     for name, imported in _relative_commonjs_requires(tree, source, path, root):
         if name.type != "identifier":
             continue
         alias = _text(name, source)
-        if _stable_const_binding(tree, source, alias) is not None and proven_commonjs_mongoose_model_export(imported):
-            models.add(alias)
-    return frozenset(models)
+        model = proven_commonjs_mongoose_model_export(imported)
+        if _stable_const_binding(tree, source, alias) is not None and model is not None:
+            models[alias] = model[0]
+    return models
 
 
 def proven_local_commonjs_flow_imports(tree: Node, source: bytes, path: Path, root: Path) -> tuple[tuple[str, str], ...]:
