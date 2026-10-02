@@ -377,7 +377,7 @@ def _end_of_expression_body(text: str, start: int, limit: int) -> int:
 
 
 def split_top_level(text: str, sep: str = ",") -> list[str]:
-    """Split `text` on `sep`, ignoring separators nested inside `()`/`[]`/`<>` or
+    """Split `text` on `sep`, ignoring separators nested inside `()`/`[]`/`{}`/`<>` or
     string/char literals -- e.g. a Kotlin primary constructor's parameter list, where
     a generic type argument's own comma (`Map<String, Int>`) must not split the
     parameter.
@@ -397,9 +397,9 @@ def split_top_level(text: str, sep: str = ",") -> list[str]:
         if ch == "'":
             i = _skip_char_literal(text, i)
             continue
-        if ch in "([<":
+        if ch in "([{<":
             depth += 1
-        elif ch in ")]>":
+        elif ch in ")]}>":
             depth = max(0, depth - 1)
         elif depth == 0 and text[i : i + len(sep)] == sep:
             parts.append(text[start:i])

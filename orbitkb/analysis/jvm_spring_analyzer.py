@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 import types
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -78,7 +79,7 @@ _NAMED_RESPONSE_HEADER_BUILDERS = {
 }
 
 
-def _add_scheduled_job(result: AnalysisResult, modifiers: str, symbol: str, name: str, evidence: Evidence) -> None:
+def _method_annotations(modifiers: str) -> Iterator[tuple[str, str]]:
     cursor = 0
     while cursor < len(modifiers):
         annotation = re.search(r"@[A-Za-z_]\w*", modifiers[cursor:])
@@ -95,16 +96,69 @@ def _add_scheduled_job(result: AnalysisResult, modifiers: str, symbol: str, name
         argument_end = find_matching_paren(modifiers, argument_start)
         if argument_end == -1:
             return
-        if annotation_name == "Scheduled":
-            match = _SCHEDULED_CRON_RE.match(modifiers[argument_start : argument_end + 1])
-            if match is None or "${" in match.group(1) or "#{" in match.group(1):
-                return
-            result.entrypoints.append(EntryPoint("job", "SCHEDULED", name, symbol, evidence))
-            result.contracts[symbol] = {
-                "schedule": match.group(1), "concurrency": "unknown", "idempotency": "unknown",
-            }
-            return
+        yield annotation_name, modifiers[argument_start : argument_end + 1]
         cursor = argument_end + 1
+
+
+def _add_scheduled_job(
+    result: AnalysisResult, annotations: tuple[tuple[str, str], ...], symbol: str, name: str, evidence: Evidence,
+) -> None:
+    for annotation_name, arguments in annotations:
+        if annotation_name != "Scheduled":
+            continue
+        match = _SCHEDULED_CRON_RE.match(arguments)
+        if match is None or "${" in match.group(1) or "#{" in match.group(1):
+            continue
+        result.entrypoints.append(EntryPoint("job", "SCHEDULED", name, symbol, evidence))
+        result.contracts[symbol] = {
+            "schedule": match.group(1), "concurrency": "unknown", "idempotency": "unknown",
+        }
+        return
+
+
+def _listener_channel(arguments: str, key: str, kotlin: bool) -> str | None:
+    parts = split_top_level(arguments[1:-1])
+    for index, part in enumerate(parts):
+        name, separator, value = part.partition("=")
+        if separator and name.strip() != key:
+            continue
+        if not separator:
+            if kotlin or index != 0:
+                continue
+            value = name
+        value = value.strip()
+        if value.startswith("[") and value.endswith("]") and kotlin:
+            values = split_top_level(value[1:-1])
+        elif value.startswith("{") and value.endswith("}") and not kotlin:
+            values = split_top_level(value[1:-1])
+        else:
+            values = [value]
+        literals = [re.fullmatch(r'"([^"\n]+)"', item.strip()) for item in values]
+        if literals and all(literals):
+            channels = [literal.group(1) for literal in literals if literal]
+            if all("${" not in channel and "#{" not in channel for channel in channels):
+                return channels[0]
+    return None
+
+
+def _add_message_listeners(
+    result: AnalysisResult, annotations: tuple[tuple[str, str], ...],
+    symbol: str, function: FunctionMatch, evidence: Evidence, *, kotlin: bool,
+) -> None:
+    language = "kotlin" if kotlin else "java"
+    for annotation_name, arguments in annotations:
+        if annotation_name == "RabbitListener":
+            channel = _listener_channel(arguments, "queues", kotlin)
+            transport = "rabbitmq"
+        elif annotation_name == "KafkaListener":
+            channel = _listener_channel(arguments, "topics", kotlin)
+            transport = "kafka"
+        else:
+            continue
+        if channel is None:
+            continue
+        result.entrypoints.append(EntryPoint("message", "CONSUME", channel, symbol, evidence))
+        result.contracts[symbol] = engine._message_contract(channel, function.text, language, transport=transport)
 
 
 def _endpoint_headers(method: str, path: str, function_match: FunctionMatch, evidence: Evidence) -> list[ApiHeader]:
@@ -474,7 +528,8 @@ class _KotlinSpringAnalyzer:
                     symbol, function_match.text, web_client_receivers, path, root, line_evidence,
                 ))
                 modifier_text = function_match.modifiers
-                _add_scheduled_job(result, modifier_text, symbol, function_match.name, evidence)
+                annotations = tuple(_method_annotations(modifier_text))
+                _add_scheduled_job(result, annotations, symbol, function_match.name, evidence)
                 if requirement := method_security_requirement(symbol, modifier_text, evidence):
                     result.security_requirements.append(requirement)
                 result.resilience_policies.extend(engine._spring_resilience_policies(
@@ -494,14 +549,7 @@ class _KotlinSpringAnalyzer:
                     result.entrypoints.append(EntryPoint("http", http_method, route, symbol, evidence))
                     result.contracts[symbol] = engine._spring_http_contract(function_match.text, modifier_text, kotlin=True)
                     result.api_headers.extend(_endpoint_headers(http_method, route, function_match, evidence))
-                listener = re.search(r"@RabbitListener\s*\([^)]*\[\s*\"([^\"]+)\"", modifier_text)
-                if listener:
-                    result.entrypoints.append(EntryPoint("message", "CONSUME", listener.group(1), symbol, evidence))
-                    result.contracts[symbol] = engine._message_contract(listener.group(1), function_match.text, "kotlin")
-                kafka_listener = re.search(r"@KafkaListener\s*\([^)]*\[\s*\"([^\"]+)\"", modifier_text)
-                if kafka_listener:
-                    result.entrypoints.append(EntryPoint("message", "CONSUME", kafka_listener.group(1), symbol, evidence))
-                    result.contracts[symbol] = engine._message_contract(kafka_listener.group(1), function_match.text, "kotlin", transport="kafka")
+                _add_message_listeners(result, annotations, symbol, function_match, evidence, kotlin=True)
         symbols, edges, boundaries = _kotlin_top_level_extensions(text, classes, path, root, local_classes)
         result.symbols.extend(symbols)
         result.edges.extend(edges)
@@ -579,7 +627,8 @@ class _JavaSpringAnalyzer:
                     symbol, function_match.text, web_client_receivers, path, root, line_evidence,
                 ))
                 modifier_text = function_match.modifiers
-                _add_scheduled_job(result, modifier_text, symbol, function_match.name, evidence)
+                annotations = tuple(_method_annotations(modifier_text))
+                _add_scheduled_job(result, annotations, symbol, function_match.name, evidence)
                 if requirement := method_security_requirement(symbol, modifier_text, evidence):
                     result.security_requirements.append(requirement)
                 result.resilience_policies.extend(engine._spring_resilience_policies(
@@ -599,14 +648,7 @@ class _JavaSpringAnalyzer:
                     result.entrypoints.append(EntryPoint("http", http_method, route, symbol, evidence))
                     result.contracts[symbol] = engine._spring_http_contract(function_match.text, modifier_text)
                     result.api_headers.extend(_endpoint_headers(http_method, route, function_match, evidence))
-                listener = re.search(r"@RabbitListener\s*\([^)]*(?:queues\s*=\s*)?\"([^\"]+)\"", modifier_text)
-                if listener:
-                    result.entrypoints.append(EntryPoint("message", "CONSUME", listener.group(1), symbol, evidence))
-                    result.contracts[symbol] = engine._message_contract(listener.group(1), function_match.text, "java")
-                kafka_listener = re.search(r"@KafkaListener\s*\([^)]*(?:topics\s*=\s*)?\"([^\"]+)\"", modifier_text)
-                if kafka_listener:
-                    result.entrypoints.append(EntryPoint("message", "CONSUME", kafka_listener.group(1), symbol, evidence))
-                    result.contracts[symbol] = engine._message_contract(kafka_listener.group(1), function_match.text, "java", transport="kafka")
+                _add_message_listeners(result, annotations, symbol, function_match, evidence, kotlin=False)
         return result
 
 

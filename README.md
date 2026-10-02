@@ -182,7 +182,8 @@ messaging analysis as `unsupported` and has no static error contract protocol.
 Go, Node and Spring expose source-proven message consumers; Spring also exposes
 `@Scheduled(cron = "...")` jobs with literal cron values attached to methods. Property placeholders
 and expressions are omitted; job concurrency and idempotency remain `unknown`.
-Dynamic message channels remain unknown.
+Spring listener channels come from literal `queues` or `topics` on method annotations;
+an `id` alone does not establish a channel. Dynamic message channels remain unknown.
 
 All MCP responses are structured JSON and use progressive disclosure: list a bounded
 set, select one item, then ask for detail. The full per-tool contract — exact response

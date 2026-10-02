@@ -5780,3 +5780,82 @@ class ManualJob {
     assert [(entry.name, entry.symbol) for entry in result.entrypoints if entry.kind == "job"] == [
         ("run", "DailyJob.run"),
     ]
+
+
+def test_spring_listeners_ignore_annotation_names_inside_other_annotation_values(tmp_path: Path):
+    (tmp_path / "Consumers.kt").write_text(
+        '''class Consumers {
+  @Label("""@RabbitListener(queues = ["ghost.rabbit"])""")
+  fun rabbitExample(message: String) { }
+
+  @Label("""@KafkaListener(topics = ["ghost.kafka"])""")
+  fun kafkaExample(message: String) { }
+
+  // @RabbitListener(queues = ["comment.rabbit"])
+  fun plain(message: String) { }
+
+  @RabbitListener(queues = ["real.rabbit"])
+  fun rabbit(message: String) { }
+
+  @KafkaListener(topics = ["real.kafka"])
+  fun kafka(message: String) { }
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(entry.name, entry.symbol) for entry in result.entrypoints if entry.kind == "message"] == [
+        ("real.rabbit", "Consumers.rabbit"),
+        ("real.kafka", "Consumers.kafka"),
+    ]
+
+
+def test_spring_listener_uses_declared_channel_instead_of_other_annotation_argument(tmp_path: Path):
+    (tmp_path / "Consumers.java").write_text(
+        '''class Consumers {
+  @RabbitListener(id = "worker.rabbit")
+  void rabbitWithoutQueue(String message) { }
+
+  @KafkaListener(id = "worker.kafka")
+  void kafkaWithoutTopic(String message) { }
+
+  @RabbitListener(id = "worker", queues = "real.rabbit")
+  void rabbit(String message) { }
+
+  @KafkaListener(id = "worker", topics = "real.kafka")
+  void kafka(String message) { }
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(entry.name, entry.symbol) for entry in result.entrypoints if entry.kind == "message"] == [
+        ("real.rabbit", "Consumers.rabbit"),
+        ("real.kafka", "Consumers.kafka"),
+    ]
+
+
+def test_spring_listeners_preserve_literal_array_channels(tmp_path: Path):
+    (tmp_path / "JavaConsumer.java").write_text(
+        '''class JavaConsumer {
+  @RabbitListener(queues = {"orders.primary", "orders.backup"})
+  void rabbit(String message) { }
+}
+''', encoding="utf-8",
+    )
+    (tmp_path / "KotlinConsumer.kt").write_text(
+        '''class KotlinConsumer {
+  @KafkaListener(topics = ["events.primary", "events.backup"])
+  fun kafka(message: String) { }
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(entry.name, entry.symbol) for entry in result.entrypoints if entry.kind == "message"] == [
+        ("orders.primary", "JavaConsumer.rabbit"),
+        ("events.primary", "KotlinConsumer.kafka"),
+    ]
