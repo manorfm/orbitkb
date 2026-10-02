@@ -4072,6 +4072,55 @@ def test_node_analyzer_does_not_classify_shadowed_mongoose_import(tmp_path: Path
     }
 
 
+def test_node_analyzer_classifies_save_on_document_from_mongoose_query(tmp_path: Path):
+    (tmp_path / "orders.js").write_text(
+        "const Order = mongoose.model('Order', schema);\n"
+        "async function update(id) {\n"
+        "  const order = await Order.findOne({ id }).sort({ createdAt: -1 });\n"
+        "  order.status = 'updated';\n"
+        "  await order.save();\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert ("orders.update", "order.save", "writes") in {
+        (edge.source, edge.target, edge.kind) for edge in result.edges
+    }
+
+
+def test_node_analyzer_leaves_unproven_document_save_unclassified(tmp_path: Path):
+    (tmp_path / "orders.js").write_text(
+        "const Order = mongoose.model('Order', schema);\n"
+        "async function update(id) {\n"
+        "  const order = await Order.findOne({ id }).lean();\n"
+        "  await order.save();\n"
+        "}\n"
+        "async function unknown(order) { await order.save(); }\n"
+        "async function reassigned(id) {\n"
+        "  let order = await Order.findById(id);\n"
+        "  order = fallback;\n"
+        "  await order.save();\n"
+        "}\n"
+        "async function replacedSave(id) {\n"
+        "  const order = await Order.findById(id);\n"
+        "  order.save = customSave;\n"
+        "  await order.save();\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert {(edge.source, edge.target, edge.kind) for edge in result.edges} >= {
+        ("orders.update", "order.save", "invokes"),
+        ("orders.unknown", "order.save", "invokes"),
+        ("orders.reassigned", "order.save", "invokes"),
+        ("orders.replacedSave", "order.save", "invokes"),
+    }
+
+
 def test_spring_analyzers_extract_literal_document_collection_ownership(tmp_path: Path):
     (tmp_path / "Order.java").write_text(
         '''@Document(collection = "orders") class Order {}''', encoding="utf-8",

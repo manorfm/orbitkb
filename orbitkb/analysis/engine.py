@@ -89,6 +89,7 @@ from orbitkb.analysis.models import (
     StaticServiceCall,
     Symbol,
 )
+from orbitkb.analysis.node_mongoose import proven_mongoose_documents
 from orbitkb.analysis.node_router_mounts import resolve_node_router_mounts
 from orbitkb.analysis.resolution import BoundedFlowResolver
 from orbitkb.analysis.route_paths import join_route as _join_route
@@ -1177,12 +1178,17 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
     ) -> tuple[list[FlowEdge], list[CloudFact]]:
         edges: list[FlowEdge] = []
         cloud_facts: list[CloudFact] = []
+        mongoose_documents = proven_mongoose_documents(
+            function.declaration, function.body, source, mongoose_models,
+        )
+        mongoose_document_saves = {f"{name}.save" for name in mongoose_documents}
         for edge in _FileAnalyzer._edges_for(
             function, path, root, source, skip_call=lambda node: _node_promise_continuation(node, source),
         ):
             cloud_kind, cloud_fact = cloud_edge_kind_and_fact(edge.target, edge.evidence, client_declarations)
             kind = (
                 _mongoose_call_kind(edge.target, mongoose_models)
+                or ("writes" if edge.target in mongoose_document_saves else None)
                 or _prisma_call_kind(edge.target, prisma_clients)
                 or cloud_kind
                 or edge.kind

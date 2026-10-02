@@ -170,6 +170,7 @@ def test_node_consumer_reaches_refund_from_proven_bootstrap_argument(tmp_path):
             for operation in detail["persistence_operations"]} >= {
         ("Transaction.findOne", "reads"),
         ("LedgerEntry.create", "writes"),
+        ("transaction.save", "writes"),
     }
 
 

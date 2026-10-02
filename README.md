@@ -219,6 +219,9 @@ Conflicting or unknown arguments keep the receiver unresolved.
 Calls on a local CommonJS import of a direct `mongoose.model(...)` export are
 classified as persistence reads or writes when the export and import bindings
 are proven. An unrelated module with the same method names remains an ordinary call.
+An immutable local document returned by a proven `findOne` or `findById` call,
+optionally followed by `sort`, also makes its direct `save()` call a write.
+`lean()` results, unknown receivers and reassigned locals remain unresolved.
 
 For Node/TypeScript, direct Axios calls in named functions and class methods
 can expose an external host and path when the URL is literal or combines a
