@@ -1630,19 +1630,55 @@ def _node_publish_contracts(tree: Node, source: bytes, path: Path, root: Path) -
 # is far too generic a method name to gate on (many unrelated APIs share it,
 # e.g. Express's `res.send()`), so the literal presence of both `topic:` and
 # `messages:` keys in the same object argument is the real structural proof,
-# not the method name.
+# not the method name. The receiver must also be a producer built from an
+# imported kafkajs Kafka client.
 _NODE_KAFKA_SEND_RE = re.compile(
     r"\.\s*send\s*\(\s*\{[^{}]*?\btopic\s*:\s*['\"]([^'\"]+)['\"][^{}]*?\bmessages\s*:", re.DOTALL,
 )
 
 
+def _node_local_name_shadows_call(node: Node, source: bytes, name: str) -> bool:
+    current = node.parent
+    while current is not None and current.type != "program":
+        if current.type in {"function_declaration", "function_expression", "arrow_function", "method_definition"}:
+            parameters = current.child_by_field_name("parameters")
+            if parameters is not None:
+                for parameter in parameters.named_children:
+                    parameter_name = (
+                        parameter.named_children[0]
+                        if parameter.type in {"required_parameter", "optional_parameter"} and parameter.named_children
+                        else parameter
+                    )
+                    if parameter_name.type == "identifier" and _text(parameter_name, source) == name:
+                        return True
+        if current.type == "statement_block":
+            for declaration in current.named_children:
+                if declaration.type not in {"lexical_declaration", "variable_declaration"}:
+                    continue
+                for variable in declaration.named_children:
+                    identifier = variable.child_by_field_name("name")
+                    if identifier is not None and identifier.type == "identifier" and _text(identifier, source) == name:
+                        return True
+        current = current.parent
+    return False
+
+
 def _node_kafka_publish_contracts(tree: Node, source: bytes, path: Path, root: Path) -> list[MessageContract]:
     contracts = []
+    producers = _node_kafka_producers(tree, source)
     for node in _walk(tree):
         if node.type != "call_expression":
             continue
         callee = node.child_by_field_name("function")
-        if callee is None or not _text(callee, source).endswith(".send"):
+        if callee is None or callee.type != "member_expression":
+            continue
+        receiver = callee.child_by_field_name("object")
+        method = callee.child_by_field_name("property")
+        if receiver is None or method is None or (
+            receiver.type != "identifier" or _text(receiver, source) not in producers
+            or _text(method, source) != "send"
+            or _node_local_name_shadows_call(node, source, _text(receiver, source))
+        ):
             continue
         call_text = _text(node, source)
         match = _NODE_KAFKA_SEND_RE.search(call_text)

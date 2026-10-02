@@ -211,6 +211,8 @@ For Node/TypeScript, a Kafka consumer with one literal `subscribe` topic and
 one `run` handler on the same `kafkajs` consumer in the same scope produces
 a source-backed consume contract. The topology shows the topic as a channel;
 ambiguous subscriptions or handlers are omitted.
+Direct Kafka publish contracts require a producer constructed from an imported
+`kafkajs` client, a literal topic, and an unshadowed producer receiver.
 
 For Node/TypeScript, direct Axios calls in named functions and class methods
 can expose an external host and path when the URL is literal or combines a

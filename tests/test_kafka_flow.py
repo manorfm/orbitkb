@@ -133,9 +133,12 @@ func BuildReader() *kafka.Reader {
     assert result.entrypoints == []
 
 
-def test_node_analyzer_extracts_a_kafka_publication_by_its_object_literal_shape(tmp_path: Path):
+def test_node_analyzer_extracts_a_kafka_publication_from_a_proven_producer(tmp_path: Path):
     (tmp_path / "publisher.ts").write_text(
-        '''export async function publish(event: OrderCreated) {
+        '''import { Kafka } from "kafkajs";
+const kafka = new Kafka({ brokers: ["localhost:9092"] });
+const producer = kafka.producer();
+export async function publish(event: OrderCreated) {
   await producer.send({ topic: "orders.created", messages: [{ key: event.id, value: JSON.stringify(event) }] });
 }
 ''',
@@ -145,6 +148,36 @@ def test_node_analyzer_extracts_a_kafka_publication_by_its_object_literal_shape(
     result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
 
     assert [(item.channel, item.routing_key) for item in result.message_contracts] == [("orders.created", None)]
+
+
+def test_node_analyzer_ignores_a_non_kafka_send_with_message_shape(tmp_path: Path):
+    (tmp_path / "publisher.ts").write_text(
+        '''const producer = telemetryClient;
+export async function publish() {
+  await producer.send({ topic: "orders.created", messages: [] });
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert result.message_contracts == []
+
+
+def test_node_analyzer_ignores_a_shadowed_kafka_producer(tmp_path: Path):
+    (tmp_path / "publisher.ts").write_text(
+        '''import { Kafka } from "kafkajs";
+const kafka = new Kafka({ brokers: ["localhost:9092"] });
+const producer = kafka.producer();
+export async function publish(producer: TelemetryClient) {
+  await producer.send({ topic: "orders.created", messages: [] });
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert result.message_contracts == []
 
 
 def test_node_analyzer_ignores_an_unrelated_send_call(tmp_path: Path):
