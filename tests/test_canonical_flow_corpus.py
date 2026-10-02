@@ -172,6 +172,7 @@ def test_node_consumer_reaches_refund_from_proven_bootstrap_argument(tmp_path):
         ("LedgerEntry.create", "writes"),
         ("transaction.save", "writes"),
     }
+    assert not any(".sort" in edge["to"] for edge in detail["flow"])
 
 
 def test_node_consumer_keeps_receiver_unresolved_when_bootstrap_arguments_conflict(tmp_path):

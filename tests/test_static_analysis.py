@@ -4088,6 +4088,23 @@ def test_node_analyzer_classifies_save_on_document_from_mongoose_query(tmp_path:
     assert ("orders.update", "order.save", "writes") in {
         (edge.source, edge.target, edge.kind) for edge in result.edges
     }
+    assert ("orders.update", "Order.findOne", "reads") in {
+        (edge.source, edge.target, edge.kind) for edge in result.edges
+    }
+    assert not any(edge.source == "orders.update" and ".sort" in edge.target for edge in result.edges)
+
+
+def test_node_analyzer_keeps_unproven_sort_call_in_flow(tmp_path: Path):
+    (tmp_path / "orders.js").write_text(
+        "function list(source) { return source.findOne().sort(); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert ("orders.list", "source.findOne().sort", "invokes") in {
+        (edge.source, edge.target, edge.kind) for edge in result.edges
+    }
 
 
 def test_node_analyzer_leaves_unproven_document_save_unclassified(tmp_path: Path):

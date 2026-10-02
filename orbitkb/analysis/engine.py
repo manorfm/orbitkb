@@ -89,7 +89,10 @@ from orbitkb.analysis.models import (
     StaticServiceCall,
     Symbol,
 )
-from orbitkb.analysis.node_mongoose import proven_mongoose_documents
+from orbitkb.analysis.node_mongoose import (
+    is_mongoose_query_sort,
+    proven_mongoose_documents,
+)
 from orbitkb.analysis.node_router_mounts import resolve_node_router_mounts
 from orbitkb.analysis.resolution import BoundedFlowResolver
 from orbitkb.analysis.route_paths import join_route as _join_route
@@ -1183,7 +1186,11 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
         )
         mongoose_document_saves = {f"{name}.save" for name in mongoose_documents}
         for edge in _FileAnalyzer._edges_for(
-            function, path, root, source, skip_call=lambda node: _node_promise_continuation(node, source),
+            function, path, root, source,
+            skip_call=lambda node: (
+                _node_promise_continuation(node, source)
+                or is_mongoose_query_sort(node, source, mongoose_models)
+            ),
         ):
             cloud_kind, cloud_fact = cloud_edge_kind_and_fact(edge.target, edge.evidence, client_declarations)
             kind = (

@@ -222,6 +222,8 @@ are proven. An unrelated module with the same method names remains an ordinary c
 An immutable local document returned by a proven `findOne` or `findById` call,
 optionally followed by `sort`, also makes its direct `save()` call a write.
 `lean()` results, unknown receivers and reassigned locals remain unresolved.
+The proven query's `sort()` is treated as query composition, so it does not
+appear as a separate call in the flow; the underlying read remains visible.
 
 For Node/TypeScript, direct Axios calls in named functions and class methods
 can expose an external host and path when the URL is literal or combines a

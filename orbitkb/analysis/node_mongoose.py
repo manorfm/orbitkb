@@ -33,6 +33,22 @@ def _document_query(expression: Node, source: bytes, models: frozenset[str]) -> 
     return name == "sort" and _document_query(receiver, source, models)
 
 
+def is_mongoose_query_sort(call: Node, source: bytes, models: frozenset[str]) -> bool:
+    """Identify a sort modifier on a proven single-document Mongoose query."""
+    if call.type != "call_expression":
+        return False
+    function = call.child_by_field_name("function")
+    if function is None or function.type != "member_expression":
+        return False
+    receiver = function.child_by_field_name("object")
+    method = function.child_by_field_name("property")
+    return (
+        receiver is not None and method is not None
+        and _text(method, source) == "sort"
+        and _document_query(receiver, source, models)
+    )
+
+
 def proven_mongoose_documents(
     declaration: Node, body: Node, source: bytes, models: frozenset[str],
 ) -> frozenset[str]:
