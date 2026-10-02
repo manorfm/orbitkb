@@ -111,6 +111,30 @@ def test_python_detector_matches_and_finds_hints():
     assert any(p.name_hint == "Order" and p.engine_hint == "postgres" for p in hints.persistence)
 
 
+def test_python_detector_only_reports_mounted_fastapi_router_with_composed_path(tmp_path: Path):
+    (tmp_path / "main.py").write_text(
+        "from fastapi import FastAPI\nfrom routes import router\n"
+        "app = FastAPI()\napp.include_router(router, prefix='/api')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "routes.py").write_text(
+        "from fastapi import APIRouter\nrouter = APIRouter(prefix='/v1')\n"
+        "@router.get('/items')\ndef items(): pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "unused.py").write_text(
+        "from fastapi import APIRouter\nrouter = APIRouter()\n"
+        "@router.get('/unused')\ndef unused(): pass\n",
+        encoding="utf-8",
+    )
+
+    hints = PythonDetector().collect_hints(tmp_path)
+
+    assert [(endpoint.method, endpoint.path) for endpoint in hints.endpoints] == [
+        ("GET", "/api/v1/items"),
+    ]
+
+
 def test_python_endpoint_falls_back_to_file_stem_with_no_enclosing_class():
     """main.py's own /health check is the one endpoint in orders-service with no
     enclosing class (it's a bare `@app.get` in the composition root) — a natural

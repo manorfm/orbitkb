@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from orbitkb.analysis.python_fastapi import proven_routes
 from orbitkb.discovery.base import (
     EndpointHint,
     MessagingHint,
@@ -18,6 +19,7 @@ from orbitkb.discovery.scan_helpers import (
     excerpt_around,
     find_matches,
     first_existing_file,
+    iter_files,
     provider_from_match,
     resolve_local_calls,
 )
@@ -37,10 +39,6 @@ _ENGINE_DRIVER_KEYWORDS = {
 
 EXTENSIONS = (".py",)
 
-_FASTAPI_ROUTE_RE = re.compile(
-    r"@(?:app|router|\w+_router)\.(get|post|put|patch|delete)\s*\(\s*['\"]([^'\"]+)['\"]",
-    re.IGNORECASE,
-)
 _FLASK_ROUTE_RE = re.compile(
     r"@(?:app|\w+_bp|blueprint)\.route\s*\(\s*['\"]([^'\"]+)['\"](?:.*?methods\s*=\s*\[([^\]]*)\])?",
     re.DOTALL,
@@ -101,8 +99,8 @@ class PythonDetector:
         if entry:
             hints.entry_excerpt = excerpt_around(entry, folder, 1, context=20)
 
-        for path, line_no, match in find_matches(folder, EXTENSIONS, _FASTAPI_ROUTE_RE):
-            hints.endpoints.append(_endpoint_hint(match.group(1).upper(), match.group(2), path, folder, line_no))
+        for route in proven_routes(list(iter_files(folder, EXTENSIONS)), folder):
+            hints.endpoints.append(_endpoint_hint(route.method, route.path, route.file, folder, route.line))
         for path, line_no, match in find_matches(folder, EXTENSIONS, _FLASK_ROUTE_RE):
             methods = match.group(2)
             method = methods.split(",")[0].strip(" '\"").upper() if methods else "GET"

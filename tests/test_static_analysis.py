@@ -73,6 +73,82 @@ def test_python_fastapi_analyzer_deduplicates_identical_route_decorators(tmp_pat
     ]
 
 
+def test_python_fastapi_analyzer_resolves_imported_router_with_literal_prefixes(tmp_path: Path):
+    (tmp_path / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from routes import router\n"
+        "app = FastAPI()\n"
+        "app.include_router(router, prefix='/api')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "routes.py").write_text(
+        "from fastapi import APIRouter\n"
+        "router = APIRouter(prefix='/v1')\n"
+        "@router.get('/items')\n"
+        "def list_items(): return service.list_items()\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "unused.py").write_text(
+        "from fastapi import APIRouter\n"
+        "router = APIRouter()\n"
+        "@router.get('/unused')\n"
+        "def unused(): pass\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert [(entry.method, entry.name, entry.symbol) for entry in result.entrypoints] == [
+        ("GET", "/api/v1/items", "routes.list_items"),
+    ]
+    assert ("routes.list_items", "service.list_items") in {
+        (edge.source, edge.target) for edge in result.edges
+    }
+
+
+def test_python_fastapi_analyzer_traces_mounted_class_handler_calls(tmp_path: Path):
+    (tmp_path / "main.py").write_text(
+        "from fastapi import FastAPI\nfrom routes import router\n"
+        "app = FastAPI()\napp.include_router(router)\n", encoding="utf-8",
+    )
+    (tmp_path / "routes.py").write_text(
+        "from fastapi import APIRouter\nrouter = APIRouter()\n"
+        "class Controller:\n"
+        "    @router.post('/items')\n"
+        "    def create(self): return service.create()\n", encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert [(entry.name, entry.symbol) for entry in result.entrypoints] == [
+        ("/items", "routes.Controller.create"),
+    ]
+    assert ("routes.Controller.create", "service.create") in {
+        (edge.source, edge.target) for edge in result.edges
+    }
+
+
+def test_python_fastapi_analyzer_rejects_unproven_or_dynamic_router_mounts(tmp_path: Path):
+    (tmp_path / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from routes import router\n"
+        "from fake import other\n"
+        "app = FastAPI()\n"
+        "app.include_router(router, prefix=dynamic_prefix)\n"
+        "app.include_router(other, prefix='/fake')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "routes.py").write_text(
+        "from fastapi import APIRouter\n"
+        "router = APIRouter()\n"
+        "@router.get('/items')\n"
+        "def items(): pass\n",
+        encoding="utf-8",
+    )
+
+    assert StaticAnalysisEngine().analyze(tmp_path, "python").entrypoints == []
+
+
 def test_kotlin_local_constructor_is_not_an_invocation_but_unknown_call_remains(tmp_path: Path):
     (tmp_path / "Handler.kt").write_text(
         '''data class Local(val id: String)
