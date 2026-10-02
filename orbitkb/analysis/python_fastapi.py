@@ -29,6 +29,7 @@ class ImportBinding:
     module: str
     name: str
     level: int
+    module_import: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,16 @@ def _join(*parts: str) -> str:
     return "/" + "/".join(part.strip("/") for part in parts if part.strip("/"))
 
 
+def _attribute_path(value: ast.expr) -> list[str] | None:
+    parts = []
+    while isinstance(value, ast.Attribute):
+        parts.append(value.attr)
+        value = value.value
+    if not isinstance(value, ast.Name):
+        return None
+    return [value.id, *reversed(parts)]
+
+
 def _route_decorators(
     function: ast.FunctionDef | ast.AsyncFunctionDef, file: Path, root: Path, owner: str = "",
 ) -> list[Route]:
@@ -103,7 +114,9 @@ def parse_module(file: Path, root: Path) -> ModuleRoutes:
         apps.discard(name)
         result.applications.discard(name)
         result.routers.pop(name, None)
-        result.imports.pop(name, None)
+        for key in tuple(result.imports):
+            if key == name or key.startswith(f"{name}."):
+                result.imports.pop(key)
 
     for statement in tree.body:
         if isinstance(statement, ast.ImportFrom):
@@ -117,9 +130,15 @@ def parse_module(file: Path, root: Path) -> ModuleRoutes:
         elif isinstance(statement, ast.Import):
             for alias in statement.names:
                 local = alias.asname or alias.name.split(".", 1)[0]
-                forget(local)
+                dotted = alias.asname is None and "." in alias.name
+                if not dotted or local in factories or local in apps or local in result.routers or local in result.imports:
+                    forget(local)
                 if alias.name == "fastapi":
                     modules.add(local)
+                else:
+                    result.imports[alias.name if dotted else local] = ImportBinding(
+                        alias.name, "", 0, module_import=True,
+                    )
         elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
             targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
             value = statement.value
@@ -151,9 +170,9 @@ def parse_module(file: Path, root: Path) -> ModuleRoutes:
                 argument = call.args[0]
                 name = argument.id if isinstance(argument, ast.Name) else None
                 router_attribute = None
-                if isinstance(argument, ast.Attribute) and isinstance(argument.value, ast.Name):
-                    name = argument.value.id
-                    router_attribute = argument.attr
+                if isinstance(argument, ast.Attribute) and (path := _attribute_path(argument)):
+                    name = ".".join(path[:-1])
+                    router_attribute = path[-1]
                 if router_attribute is not None:
                     valid_router = name in result.imports
                 else:
@@ -198,7 +217,9 @@ def proven_routes(files: list[Path], root: Path) -> list[Route]:
         if mount.imported_from:
             binding = mount.imported_from
             if mount.router_attribute:
-                source = imported_submodule_path(file, root, binding.module, binding.level, binding.name)
+                source = (imported_module_path(file, root, binding.module, binding.level)
+                          if binding.module_import else
+                          imported_submodule_path(file, root, binding.module, binding.level, binding.name))
                 return (source, mount.router_attribute) if source is not None else None
             source = _import_source(file, binding, root)
             return (source, binding.name) if source is not None else None

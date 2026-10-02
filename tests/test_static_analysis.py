@@ -230,6 +230,65 @@ def test_python_fastapi_rejects_ambiguous_or_unimported_package_router(tmp_path:
     assert StaticAnalysisEngine().analyze(tmp_path, "python").entrypoints == []
 
 
+def test_python_fastapi_mounts_router_from_exact_module_import(tmp_path: Path):
+    package = tmp_path / "api"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "routes.py").write_text(
+        "from fastapi import APIRouter\n"
+        "router = APIRouter(prefix='/v1')\n"
+        "@router.get('/items')\ndef items(): pass\n",
+        encoding="utf-8",
+    )
+    (package / "other.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "import api.routes as routes\n"
+        "app = FastAPI()\n"
+        "app.include_router(routes.router, prefix='/alias')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "dotted.py").write_text(
+        "from fastapi import FastAPI\n"
+        "import api.routes\nimport api.other\n"
+        "app = FastAPI()\n"
+        "app.include_router(api.routes.router, prefix='/dotted')\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "python")
+
+    assert {(entry.method, entry.name, entry.symbol) for entry in result.entrypoints} == {
+        ("GET", "/alias/v1/items", "api.routes.items"),
+        ("GET", "/dotted/v1/items", "api.routes.items"),
+    }
+
+
+def test_python_fastapi_does_not_mount_unimported_or_rebound_module_router(tmp_path: Path):
+    package = tmp_path / "api"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "routes.py").write_text(
+        "from fastapi import APIRouter\n"
+        "router = APIRouter()\n"
+        "@router.get('/items')\ndef items(): pass\n",
+        encoding="utf-8",
+    )
+    (package / "other.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "import api.other\n"
+        "app = FastAPI()\n"
+        "app.include_router(api.routes.router)\n"
+        "import api.routes as routes\n"
+        "routes = replacement\n"
+        "app.include_router(routes.router)\n",
+        encoding="utf-8",
+    )
+
+    assert StaticAnalysisEngine().analyze(tmp_path, "python").entrypoints == []
+
+
 def test_python_fastapi_analyzer_only_includes_local_routes_registered_before_mount(tmp_path: Path):
     (tmp_path / "main.py").write_text(
         "from fastapi import FastAPI, APIRouter\n"
