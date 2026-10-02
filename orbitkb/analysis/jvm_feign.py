@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from pathlib import Path
 
 from orbitkb.analysis.configuration_syntax import SENSITIVE_CONFIGURATION_KEY
-from orbitkb.analysis.jvm_scanner import find_matching_brace
+from orbitkb.analysis.jvm_scanner import find_matching_brace, mask_non_code
 from orbitkb.analysis.jvm_spring_syntax import (
     SPRING_ROUTE_ANNOTATION_TO_METHOD,
     spring_placeholder_literal,
@@ -34,6 +35,12 @@ _FEIGN_METHOD_PATTERN = re.compile(
     re.DOTALL,
 )
 _FEIGN_CLIENT_URL = re.compile(r'\burl\s*=\s*' + spring_placeholder_literal("key"))
+
+
+def _feign_clients(source: str, visible_source: str) -> Iterator[re.Match[str]]:
+    for match in _FEIGN_CLIENT_PATTERN.finditer(source):
+        if visible_source[match.start()] == "@":
+            yield match
 
 
 class SpringFeignRecognizer:
@@ -91,7 +98,8 @@ def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], tuple[str, str,
         if path.suffix not in {".java", ".kt"}:
             continue
         source = path.read_text(encoding="utf-8", errors="ignore")
-        for client_match in _FEIGN_CLIENT_PATTERN.finditer(source):
+        visible_source = mask_non_code(source)
+        for client_match in _feign_clients(source, visible_source):
             service = client_match.group("service")
             client = client_match.group("client")
             route_prefix, unresolved_route_prefix = spring_route_prefix(client_match.group("annotations"))
@@ -100,7 +108,10 @@ def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], tuple[str, str,
             brace_open = client_match.end() - 1
             brace_close = find_matching_brace(source, brace_open)
             body = source[brace_open + 1 : brace_close]
+            visible_body = visible_source[brace_open + 1 : brace_close]
             for method_match in _FEIGN_METHOD_PATTERN.finditer(body):
+                if visible_body[method_match.start()] != "@" or visible_body[method_match.start("method")] == " ":
+                    continue
                 if "${" in method_match.group("path") or "#{" in method_match.group("path"):
                     continue
                 endpoints[(client, method_match.group("method"))] = (
@@ -118,7 +129,8 @@ def _feign_client_url_bindings(files: list[Path], root: Path) -> list[Configurat
         if path.suffix not in {".java", ".kt"}:
             continue
         source = path.read_text(encoding="utf-8", errors="ignore")
-        for client_match in _FEIGN_CLIENT_PATTERN.finditer(source):
+        visible_source = mask_non_code(source)
+        for client_match in _feign_clients(source, visible_source):
             url_match = _FEIGN_CLIENT_URL.search(client_match.group("extra_args"))
             if url_match is None:
                 continue

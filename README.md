@@ -186,6 +186,7 @@ Spring listener channels come from literal `queues` or `topics` on method annota
 an `id` alone does not establish a channel. Dynamic message channels remain unknown.
 Spring HTTP routes and Feign paths require literal method and class mappings;
 unresolved path expressions are omitted.
+Feign declarations and mappings inside comments or strings are ignored.
 
 All MCP responses are structured JSON and use progressive disclosure: list a bounded
 set, select one item, then ask for detail. The full per-tool contract — exact response

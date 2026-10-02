@@ -433,6 +433,38 @@ def mask_ranges(text: str, ranges: list[tuple[int, int]]) -> str:
     return "".join(chars)
 
 
+def mask_non_code(text: str) -> str:
+    """Blank JVM comments and string/char literals without changing source offsets."""
+    ranges: list[tuple[int, int]] = []
+    cursor = 0
+    while cursor < len(text):
+        start = cursor
+        if text.startswith("//", cursor):
+            end = text.find("\n", cursor + 2)
+            cursor = end if end != -1 else len(text)
+        elif text.startswith("/*", cursor):
+            depth = 1
+            cursor += 2
+            while cursor < len(text) and depth:
+                if text.startswith("/*", cursor):
+                    depth += 1
+                    cursor += 2
+                elif text.startswith("*/", cursor):
+                    depth -= 1
+                    cursor += 2
+                else:
+                    cursor += 1
+        elif text[cursor] == '"':
+            cursor = _skip_string(text, cursor)
+        elif text[cursor] == "'":
+            cursor = _skip_char_literal(text, cursor)
+        else:
+            cursor += 1
+            continue
+        ranges.append((start, cursor))
+    return mask_ranges(text, ranges)
+
+
 def find_calls(text: str) -> list[tuple[str, int]]:
     """(callee_text, offset) for each apparent call site in `text` -- a dotted
     identifier chain immediately followed by `(`, skipping control-flow keywords and
