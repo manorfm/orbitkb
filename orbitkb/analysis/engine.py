@@ -74,6 +74,7 @@ from orbitkb.analysis.models import (
     EntryPoint,
     ErrorContract,
     Evidence,
+    ExternalHttpCall,
     FeatureFlag,
     FlowBoundary,
     FlowEdge,
@@ -131,7 +132,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "68"
+STATIC_ANALYSIS_INPUT_VERSION = "69"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -952,7 +953,8 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
             result.injections.append(injection)
             result.edges.append(FlowEdge(injection.consumer, injection.contract, "injects", injection.evidence))
         functions_by_name: dict[str, _Function] = {}
-        for function in _node_named_functions(tree, source, path.stem):
+        named_functions = _node_named_functions(tree, source, path.stem)
+        for function in named_functions:
             functions_by_name[function.name] = function
             self._record_function(
                 result, function, path, root, source, imports, mongoose_models, prisma_clients,
@@ -967,6 +969,9 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
             )
         class_methods = {function.symbol for function in class_functions}
         result.edges = [_node_resolve_self_call(edge, class_methods) for edge in result.edges]
+        result.external_http_calls.extend(_node_external_http_calls(
+            tree, source, path, root, (*named_functions, *class_functions),
+        ))
         for function, method, route, contract in _nest_http_entrypoint_functions(tree, source, imports):
             self._record_function(
                 result, function, path, root, source, imports, mongoose_models, prisma_clients,
@@ -1714,7 +1719,7 @@ def _node_kafka_producers(tree: Node, source: bytes) -> set[str]:
     return producers
 
 
-def _node_topic_parameters(function: _Function, source: bytes) -> tuple[str | None, ...]:
+def _node_declared_parameters(function: _Function, source: bytes) -> tuple[str | None, ...]:
     declaration = function.declaration
     if declaration.type == "variable_declarator":
         declaration = declaration.child_by_field_name("value") or declaration
@@ -1731,6 +1736,11 @@ def _node_topic_parameters(function: _Function, source: bytes) -> tuple[str | No
             names.append(_text(parameter.named_children[0], source))
         else:
             names.append(None)
+    return tuple(names)
+
+
+def _node_topic_parameters(function: _Function, source: bytes) -> tuple[str | None, ...]:
+    names = _node_declared_parameters(function, source)
     reassigned = set()
     for node in _walk(function.body):
         if node.type in {"assignment_expression", "augmented_assignment_expression"}:
@@ -2545,6 +2555,132 @@ def _node_resolve_self_call(edge: FlowEdge, class_methods: set[str]) -> FlowEdge
     owner = edge.source.rpartition(".")[0]
     target = f"{owner}.{edge.target.removeprefix('this.')}"
     return replace(edge, target=target) if target in class_methods else edge
+
+
+def _node_http_constants_and_clients(tree: Node, source: bytes) -> tuple[dict[str, str], set[str]]:
+    constants: dict[str, str] = {}
+    clients: set[str] = set()
+    duplicates: set[str] = set()
+    for statement in tree.named_children:
+        if statement.type == "import_statement":
+            module = statement.child_by_field_name("source")
+            if module is not None and _string(module, source) == "axios":
+                match = re.fullmatch(
+                    r"\s*import\s+([A-Za-z_$][\w$]*)\s+from\s+['\"]axios['\"]\s*;?\s*",
+                    _text(statement, source),
+                )
+                if match:
+                    clients.add(match.group(1))
+            continue
+        if statement.type != "lexical_declaration" or not _text(statement, source).lstrip().startswith("const "):
+            continue
+        for declaration in statement.named_children:
+            if declaration.type != "variable_declarator":
+                continue
+            name = declaration.child_by_field_name("name")
+            value = declaration.child_by_field_name("value")
+            if name is None or name.type != "identifier" or value is None:
+                continue
+            identifier = _text(name, source)
+            if value.type == "string":
+                literal = _string(value, source)
+                if literal is not None and "\\" not in literal:
+                    if identifier in constants:
+                        duplicates.add(identifier)
+                    constants[identifier] = literal
+            elif value.type == "call_expression":
+                callee = value.child_by_field_name("function")
+                arguments = value.child_by_field_name("arguments")
+                if callee is not None and _text(callee, source) == "require" and arguments is not None:
+                    args = arguments.named_children
+                    if len(args) == 1 and _string(args[0], source) == "axios":
+                        clients.add(identifier)
+    for name in duplicates:
+        constants.pop(name, None)
+    for node in _walk(tree):
+        if node.type not in {"assignment_expression", "augmented_assignment_expression"}:
+            continue
+        target = node.child_by_field_name("left")
+        if target is None:
+            continue
+        receiver = target.child_by_field_name("object") if target.type == "member_expression" else target
+        if receiver is not None and receiver.type == "identifier":
+            clients.discard(_text(receiver, source))
+    return constants, clients
+
+
+def _node_literal_http_url(node: Node, source: bytes, constants: dict[str, str]) -> str | None:
+    if node.type == "string":
+        value = _string(node, source)
+        return value if value is not None and "\\" not in value else None
+    if node.type != "template_string":
+        return None
+    parts = node.named_children
+    if len(parts) != 2 or parts[0].type != "template_substitution" or parts[1].type != "string_fragment":
+        return None
+    expression = parts[0].named_children
+    if len(expression) != 1 or expression[0].type != "identifier":
+        return None
+    base = constants.get(_text(expression[0], source))
+    suffix = _text(parts[1], source)
+    return base + suffix if base is not None and "\\" not in suffix else None
+
+
+def _node_external_http_destination(url: str) -> tuple[str, str, int | None, str] | None:
+    try:
+        parsed = urlparse(url)
+        host, port = parsed.hostname, parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"} or host is None or "@" in parsed.netloc:
+        return None
+    if "?" in url or "#" in url or not re.fullmatch(r"(?:[a-z0-9-]+\.)+[a-z]{2,}", host):
+        return None
+    if any(label.startswith("-") or label.endswith("-") for label in host.split(".")):
+        return None
+    return parsed.scheme, host, port, parsed.path or "/"
+
+
+def _node_external_http_calls(
+    tree: Node, source: bytes, path: Path, root: Path, functions: tuple[_Function, ...],
+) -> list[ExternalHttpCall]:
+    constants, clients = _node_http_constants_and_clients(tree, source)
+    if not clients:
+        return []
+    symbols = [function.symbol for function in functions]
+    calls = []
+    for function in functions:
+        if symbols.count(function.symbol) != 1:
+            continue
+        shadowed = set(_node_declared_parameters(function, source))
+        shadowed.update(
+            _text(name, source)
+            for node in _walk(function.body) if node.type == "variable_declarator"
+            if (name := node.child_by_field_name("name")) is not None and name.type == "identifier"
+        )
+        for node in _walk(function.body):
+            if node.type != "call_expression":
+                continue
+            callee = node.child_by_field_name("function")
+            arguments = node.child_by_field_name("arguments")
+            if callee is None or arguments is None or callee.type != "member_expression":
+                continue
+            receiver = callee.child_by_field_name("object")
+            method = callee.child_by_field_name("property")
+            if receiver is None or method is None or receiver.type != "identifier":
+                continue
+            alias, verb = _text(receiver, source), _text(method, source)
+            if alias not in clients or alias in shadowed or verb.upper() not in _HTTP_METHOD_LITERALS:
+                continue
+            args = arguments.named_children
+            url = _node_literal_http_url(args[0], source, constants) if args else None
+            destination = _node_external_http_destination(url) if url is not None else None
+            if destination is not None:
+                scheme, host, port, target_path = destination
+                calls.append(ExternalHttpCall(
+                    function.symbol, scheme, host, port, verb.upper(), target_path, _evidence(path, root, node),
+                ))
+    return calls
 
 
 _NEST_CACHE_DECORATORS = {

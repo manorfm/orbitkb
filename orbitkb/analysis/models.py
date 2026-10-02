@@ -120,6 +120,19 @@ class StaticServiceCall:
 
 
 @dataclass(frozen=True)
+class ExternalHttpCall:
+    """A source-proven HTTP request to a domain, never an indexed service link."""
+
+    source: str
+    scheme: str
+    host: str
+    port: int | None
+    method: str
+    path: str
+    evidence: Evidence
+
+
+@dataclass(frozen=True)
 class GrpcHandler:
     """A static handler explicitly bound to a literal Protobuf service/RPC name."""
 
@@ -257,6 +270,7 @@ class AnalysisResult:
     boundaries: list[FlowBoundary] = field(default_factory=list)
     error_contracts: list[ErrorContract] = field(default_factory=list)
     static_service_calls: list[StaticServiceCall] = field(default_factory=list)
+    external_http_calls: list[ExternalHttpCall] = field(default_factory=list)
     grpc_handlers: list[GrpcHandler] = field(default_factory=list)
     grpc_client_bindings: list[GrpcClientBinding] = field(default_factory=list)
     resilience_policies: list[ResiliencePolicy] = field(default_factory=list)
@@ -283,6 +297,7 @@ class AnalysisResult:
         self.boundaries.extend(other.boundaries)
         self.error_contracts.extend(other.error_contracts)
         self.static_service_calls.extend(other.static_service_calls)
+        self.external_http_calls.extend(other.external_http_calls)
         self.grpc_handlers.extend(other.grpc_handlers)
         self.grpc_client_bindings.extend(other.grpc_client_bindings)
         self.resilience_policies.extend(other.resilience_policies)

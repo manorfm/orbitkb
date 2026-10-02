@@ -125,6 +125,15 @@ def project_analysis(service: ServiceKey, analysis: AnalysisResult) -> Canonical
                         "target_method": call.target_method, "target_path": call.target_path},
             status=FactStatus.CONFIRMED, origin="static", sources=(source,),
         ))
+    for call in analysis.external_http_calls:
+        _add_fact(facts, CanonicalFact(
+            id=fact_id(service, "external_http_call", call.source, call.scheme, call.host,
+                       call.port, call.method, call.path),
+            kind="external_http_call", subject=SymbolKey(service, call.source),
+            attributes={"scheme": call.scheme, "host": call.host, "port": call.port,
+                        "method": call.method, "path": call.path},
+            status=FactStatus.CONFIRMED, origin="static", sources=(_source(call.evidence),),
+        ))
     for binding in analysis.configuration_bindings:
         source = _source(binding.evidence)
         _add_fact(facts, CanonicalFact(

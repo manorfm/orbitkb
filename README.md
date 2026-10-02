@@ -206,6 +206,12 @@ The supported deterministic subset is intentionally focused:
 | GraphQL | Operations, local schema contracts, input/output shapes | Remote composition, directives and federation behavior are not inferred. |
 | Persistence and messaging | Postgres/Mongo evidence, RabbitMQ bindings and contracts, Kafka producer/consumer contracts | Only literal, source-proven configuration is exposed; Kafka consumer detection is Go/JVM/Node only, no Python. |
 | Cloud/infra | AWS (SQS, SNS, S3, EventBridge, Kinesis), Azure (Blob Storage, Service Bus, Event Hub) and GCP (Pub/Sub) call sites (Go, Java, Kotlin, Node/TS; Python is AWS-only via `boto3`), plus Terraform/CloudFormation/plain Kubernetes declarations, parsed with real grammars (`python-hcl2`, `cfn-flip`) — never keyword matching. A cloud call also produces a `FlowEdge`, visible in `trace_flow`/`describe_entrypoint`, for every language except Python. | GCS, Dockerfile, and unrendered Helm templates are not resolved; Azure Service Bus code facts can't distinguish queue from topic (defaults to queue — see `describe_cloud_dependencies`). |
+
+For Node/TypeScript, direct Axios calls in named functions and class methods
+can expose an external host and path when the URL is literal or combines a
+top-level constant URL with a literal path. Dynamic URLs, userinfo, query
+strings and local IPs remain unresolved. These facts appear in
+`describe_entrypoint.external_http_calls`, separate from internal `service_calls`.
 | Runtime evidence | Normalized OTel or broker edges | Experimental; payloads, trace IDs and attributes are rejected. |
 
 Kotlin/Spring flow tracing follows a uniquely resolved interface implementation through constructor injection, including controller → use case → gateway → Feign paths.
@@ -621,10 +627,11 @@ as unknown rather than interpreting its behavior.
 Indexing stores this snapshot in SQLite together with static flow analysis, and
 reuses it when inputs are unchanged. A missing snapshot triggers static
 reanalysis without additional LLM calls. `describe_entrypoint` reads its
-bounded flow, contract, reachable service calls, message operations, error
-contracts, resilience policies and boundaries from the canonical snapshot. A
-message channel is confirmed only when its contract shares the reached call's
-source location; unresolved publish and consume calls report an unknown channel.
+bounded flow, contract, reachable service calls, external HTTP calls, message
+operations, error contracts, resilience policies and boundaries from the
+canonical snapshot. A message channel is confirmed only when its contract
+shares the reached call's source location; unresolved publish and consume calls
+report an unknown channel.
 Other exports retain their current read paths.
 `KnowledgeNavigator` can traverse a canonical snapshot from one indexed entrypoint
 with explicit depth, node, edge and relation limits. It returns reached facts,

@@ -562,6 +562,50 @@ class Events {
     ]
 
 
+def test_node_external_http_requires_proven_axios_and_safe_literal_url(tmp_path: Path):
+    (tmp_path / "accepted.js").write_text('''const http = require("axios");
+const BASE_URL = "https://api.vendor.io:8443";
+function send() { http.post(`${BASE_URL}/v1/items`, {}); }
+''', encoding="utf-8")
+    (tmp_path / "fake.js").write_text('''const http = { post() {} };
+function send() { http.post("https://fake.vendor.io/v1/items", {}); }
+''', encoding="utf-8")
+    (tmp_path / "mutated.js").write_text('''const http = require("axios");
+http.post = () => {};
+function send() { http.post("https://mutated.vendor.io/v1/items", {}); }
+''', encoding="utf-8")
+    (tmp_path / "unsafe.js").write_text('''const http = require("axios");
+let BASE_URL = "https://mutable.vendor.io";
+function mutable() { http.post(`${BASE_URL}/v1/items`, {}); }
+function dynamic(url) { http.post(url, {}); }
+function secret() { http.post("https://user:pass@api.vendor.io/v1/items", {}); }
+function query() { http.post("https://api.vendor.io/v1/items?token=secret", {}); }
+function local() { http.post("http://127.0.0.1/v1/items", {}); }
+function shadow(http) { http.post("https://shadow.vendor.io/v1/items", {}); }
+''', encoding="utf-8")
+
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert [(call.source, call.scheme, call.host, call.port, call.method, call.path)
+            for call in analysis.external_http_calls] == [
+        ("accepted.send", "https", "api.vendor.io", 8443, "POST", "/v1/items"),
+    ]
+
+
+def test_typescript_external_http_accepts_a_direct_default_axios_import(tmp_path: Path):
+    (tmp_path / "client.ts").write_text('''import axios from "axios";
+class Client {
+  send() { axios.get("https://api.vendor.io/v1/items"); }
+}
+''', encoding="utf-8")
+
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert [(call.source, call.method, call.host, call.path) for call in analysis.external_http_calls] == [
+        ("Client.send", "GET", "api.vendor.io", "/v1/items"),
+    ]
+
+
 def test_node_self_calls_resolve_only_methods_of_the_same_class(tmp_path: Path):
     (tmp_path / "service.js").write_text('''class Checkout {
   run() {

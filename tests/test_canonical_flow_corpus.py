@@ -82,3 +82,24 @@ def test_node_route_resolves_only_its_literal_kafka_topics(tmp_path):
         "payment.failed", "payment.failed", "payment.completed",
     ]
     assert refund["message_operations"] == []
+
+
+def test_node_route_reports_only_reachable_external_http_destinations(tmp_path):
+    analysis = StaticAnalysisEngine().analyze(NODE_CORPUS, "node-js")
+    conn = open_db(tmp_path / "payments-http.db")
+    service_id = services.ensure_service(conn, "payments-service", str(NODE_CORPUS), "node-js")
+    flows.replace_analysis(conn, service_id, analysis)
+
+    charge = queries.describe_entrypoint(conn, "payments-service", "http", "POST", "/charge")
+    refund = queries.describe_entrypoint(conn, "payments-service", "http", "POST", "/payments/:id/refund")
+
+    assert {(item["source"], item["method"], item["host"], item["path"])
+            for item in charge["external_http_calls"]} == {
+        ("card_gateway.client.charge", "POST", "card-gateway.vendor.io", "/v1/charge"),
+        ("notify_hub.client.send", "POST", "notify-hub.vendor.io", "/v1/send"),
+    }
+    assert {(item["source"], item["method"], item["host"], item["path"])
+            for item in refund["external_http_calls"]} == {
+        ("card_gateway.client.refund", "POST", "card-gateway.vendor.io", "/v1/refund"),
+    }
+    assert charge["service_calls"] == []

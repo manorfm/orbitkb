@@ -682,6 +682,7 @@ def describe_entrypoint(
         })
     truncated = traversal.truncated
     static_service_calls = _canonical_source_rows(traversal, "service_call")
+    external_http_calls = _canonical_source_rows(traversal, "external_http_call")
     resilience_policies = _canonical_source_rows(traversal, "resilience_policy")
     boundaries = _canonical_source_rows(traversal, "flow_boundary")
     error_contracts = _canonical_source_rows(traversal, "error_contract")
@@ -746,6 +747,13 @@ def describe_entrypoint(
                 "resolved_target": _resolve_static_service_call_target(conn, row, item, target_cache),
             }
             for item in static_service_calls
+        ],
+        "external_http_calls": [
+            {"source": item["source"], "scheme": item["scheme"], "host": item["host"],
+             "port": item["port"], "method": item["method"], "path": item["path"],
+             "evidence": {"file": item["file_path"], "start_line": item["start_line"],
+                          "end_line": item["end_line"]}}
+            for item in external_http_calls
         ],
         "resilience_policies": [
             {

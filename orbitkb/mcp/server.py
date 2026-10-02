@@ -159,6 +159,8 @@ def build_server(db_path: Path | None = None, backend: LLMBackend | None = None)
         validation, reads/writes and messages, each with evidence and provenance.
         `message_operations` reports reached publish/consume calls; a channel is
         confirmed only by a matching source contract, otherwise it is unknown.
+        `external_http_calls` reports source-proven domains separately from
+        indexed service calls; it does not infer an internal service identity.
         Includes a GraphQL argument/input/return contract when a local schema proves it.
         For an exact local HTTP route, includes a matching literal OpenAPI/Swagger
         operation when one is present in a conventional spec file.
