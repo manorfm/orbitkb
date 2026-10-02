@@ -117,10 +117,12 @@ from orbitkb.discovery.node_imports import parse_node_named_imports
 from orbitkb.discovery.node_local_handlers import (
     anonymous_commonjs_function,
     anonymous_default_function,
+    local_mongoose_model_declarations,
     proven_commonjs_mongoose_model_export,
     proven_local_commonjs_flow_imports,
     proven_local_commonjs_mongoose_models,
     proven_local_handler_imports,
+    proven_local_mongoose_model_declarations,
 )
 from orbitkb.discovery.node_nest import (
     nest_decorator_path as _nest_decorator_path,
@@ -266,15 +268,8 @@ _REST_TEMPLATE_METHODS = {
 }
 
 
-def _mongoose_model_variables(source: str) -> frozenset[str]:
-    """Return names locally declared through the unambiguous Mongoose factory."""
-    return frozenset(re.findall(
-        r"\b(?:const|let|var)\s+(\w+)\s*=\s*mongoose\.model\s*(?:<[^>]+>)?\s*\(", source,
-    ))
-
-
 def _mongoose_call_kind(target: str, model_variables: Mapping[str, str | None]) -> str | None:
-    """Classify only exact operations on a locally declared Mongoose model."""
+    """Classify exact operations on a source-proven Mongoose model."""
     receiver, separator, method = target.rpartition(".")
     if not separator or receiver not in model_variables:
         return None
@@ -937,8 +932,9 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
         imports = (*_node_named_imports(source_text), *proven_local_commonjs_flow_imports(tree, source, path, root))
         launchdarkly_clients = _launchdarkly_client_variables(source_text, imports)
         graphql_error_constructors = _graphql_error_constructors(imports)
+        local_mongoose_models = proven_local_mongoose_model_declarations(tree, source)
         mongoose_models = {
-            **{name: None for name in _mongoose_model_variables(source_text)},
+            **{alias: model_name for alias, (model_name, _collection, _line) in local_mongoose_models.items()},
             **proven_local_commonjs_mongoose_models(tree, source, path, root),
         }
         prisma_clients = _prisma_client_variables(source_text)
@@ -4474,15 +4470,21 @@ def _persistence_facts(files: list[Path], root: Path) -> list[PersistenceFact]:
         for match in re.finditer(r"type\s+(\w+)\s+struct\s*\{(.*?)\}", source, re.DOTALL):
             if 'gorm:"' in match.group(2):
                 facts.append(PersistenceFact(match.group(1), "sql_table", match.group(1), _line_evidence(path, root, source, match.start())))
-        for match in re.finditer(r'\bmongoose\.model\s*(?:<[^>]+>)?\s*\(\s*["\']([^"\']+)["\']\s*,\s*[^,]+,\s*["\']([^"\']+)["\']', source):
-            owner, collection = match.groups()
-            facts.append(PersistenceFact(collection, "document", owner, _line_evidence(path, root, source, match.start())))
-        if path.suffix == ".js" and (model := proven_commonjs_mongoose_model_export(path)) is not None:
-            name, line = model
-            if not any(fact.owner == name and fact.evidence.file_path == path.relative_to(root).as_posix() for fact in facts):
-                facts.append(PersistenceFact(
-                    name, "mongoose_model", name, Evidence(path.relative_to(root).as_posix(), line, line),
-                ))
+        if path.suffix in {".js", ".ts"}:
+            models = list(local_mongoose_model_declarations(path).values())
+            if path.suffix == ".js" and (exported := proven_commonjs_mongoose_model_export(path)) is not None:
+                models.append(exported)
+            for name, collection, line in models:
+                kind = "document" if collection else "mongoose_model"
+                fact_name = collection or name
+                if not any(
+                    fact.name == fact_name and fact.kind == kind and fact.owner == name
+                    and fact.evidence.file_path == path.relative_to(root).as_posix()
+                    for fact in facts
+                ):
+                    facts.append(PersistenceFact(
+                        fact_name, kind, name, Evidence(path.relative_to(root).as_posix(), line, line),
+                    ))
         facts.extend(_prisma_persistence_facts(source, path, root))
     return facts
 

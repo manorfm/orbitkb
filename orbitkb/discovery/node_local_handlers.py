@@ -479,7 +479,111 @@ def _stable_const_binding(tree: Node, source: bytes, name: str) -> Node | None:
     return bindings[0].child_by_field_name("value")
 
 
-def proven_commonjs_mongoose_model_export(path: Path) -> tuple[str, int] | None:
+def _mongoose_factory_bindings(tree: Node, source: bytes) -> set[str]:
+    factories: set[str] = set()
+    for variable in _top_level_declarators(tree):
+        name = variable.child_by_field_name("name")
+        if name is None or name.type != "identifier":
+            continue
+        alias = _text(name, source)
+        value = _stable_const_binding(tree, source, alias)
+        if value is None or value.type != "call_expression":
+            continue
+        function = value.child_by_field_name("function")
+        arguments = value.child_by_field_name("arguments")
+        if (
+            function is not None and _text(function, source) == "require"
+            and arguments is not None and len(arguments.named_children) == 1
+            and arguments.named_children[0].type == "string"
+            and _text(arguments.named_children[0], source)[1:-1] == "mongoose"
+        ):
+            factories.add(alias)
+    for statement in tree.named_children:
+        if statement.type != "import_statement":
+            continue
+        module = statement.child_by_field_name("source")
+        if module is None or _text(module, source)[1:-1] != "mongoose":
+            continue
+        clause = next((child for child in statement.named_children if child.type == "import_clause"), None)
+        if clause is None:
+            continue
+        for imported in clause.named_children:
+            alias_node = (
+                imported if imported.type == "identifier"
+                else imported.named_children[0] if imported.type == "namespace_import" and imported.named_children
+                else None
+            )
+            if alias_node is None:
+                continue
+            alias = _text(alias_node, source)
+            if not any(
+                node.type == "variable_declarator"
+                and (name := node.child_by_field_name("name")) is not None
+                and name.type == "identifier" and _text(name, source) == alias
+                for node in _walk_nodes(tree)
+            ):
+                factories.add(alias)
+    return factories
+
+
+def _walk_nodes(node: Node):
+    yield node
+    for child in node.named_children:
+        yield from _walk_nodes(child)
+
+
+def _mongoose_model_call(call: Node, source: bytes, factories: set[str]) -> tuple[str, str | None] | None:
+    if call.type != "call_expression":
+        return None
+    function = call.child_by_field_name("function")
+    arguments = call.child_by_field_name("arguments")
+    if function is None or function.type != "member_expression" or arguments is None:
+        return None
+    receiver = function.child_by_field_name("object")
+    method = function.child_by_field_name("property")
+    if receiver is None or receiver.type != "identifier" or method is None:
+        return None
+    if _text(receiver, source) not in factories or _text(method, source) != "model":
+        return None
+    args = arguments.named_children
+    if len(args) < 2 or args[0].type != "string":
+        return None
+    model_name = _text(args[0], source)[1:-1]
+    if not model_name or "\\" in model_name:
+        return None
+    collection = None
+    if len(args) >= 3 and args[2].type == "string":
+        literal = _text(args[2], source)[1:-1]
+        if literal and "\\" not in literal:
+            collection = literal
+    return model_name, collection
+
+
+def proven_local_mongoose_model_declarations(tree: Node, source: bytes) -> dict[str, tuple[str, str | None, int]]:
+    """Map stable local model aliases to literal model names and source lines."""
+    factories = _mongoose_factory_bindings(tree, source)
+    models: dict[str, tuple[str, str | None, int]] = {}
+    for variable in _top_level_declarators(tree):
+        name = variable.child_by_field_name("name")
+        if name is None or name.type != "identifier":
+            continue
+        alias = _text(name, source)
+        value = _stable_const_binding(tree, source, alias)
+        if value is None:
+            continue
+        model = _mongoose_model_call(value, source, factories)
+        if model is not None:
+            models[alias] = (*model, value.start_point.row + 1)
+    return models
+
+
+def local_mongoose_model_declarations(path: Path) -> dict[str, tuple[str, str | None, int]]:
+    """Read one JS/TS module's proven local Mongoose model declarations."""
+    source = path.read_bytes()
+    return proven_local_mongoose_model_declarations(_parse(path, source), source)
+
+
+def proven_commonjs_mongoose_model_export(path: Path) -> tuple[str, str | None, int] | None:
     """Return the literal model name and source line of a direct CommonJS export."""
     source = path.read_bytes()
     tree = _parse(path, source)
@@ -493,28 +597,8 @@ def proven_commonjs_mongoose_model_export(path: Path) -> tuple[str, int] | None:
     arguments = call.child_by_field_name("arguments")
     if function is None or function.type != "member_expression" or arguments is None:
         return None
-    receiver = function.child_by_field_name("object")
-    method = function.child_by_field_name("property")
-    if receiver is None or receiver.type != "identifier" or method is None or _text(method, source) != "model":
-        return None
-    args = arguments.named_children
-    if len(args) < 2 or args[0].type != "string":
-        return None
-    model_name = _text(args[0], source)[1:-1]
-    if not model_name or "\\" in model_name:
-        return None
-    binding = _stable_const_binding(tree, source, _text(receiver, source))
-    if binding is None or binding.type != "call_expression":
-        return None
-    require = binding.child_by_field_name("function")
-    require_args = binding.child_by_field_name("arguments")
-    proven = (
-        require is not None and _text(require, source) == "require"
-        and require_args is not None and len(require_args.named_children) == 1
-        and require_args.named_children[0].type == "string"
-        and _text(require_args.named_children[0], source)[1:-1] == "mongoose"
-    )
-    return (model_name, call.start_point.row + 1) if proven else None
+    model = _mongoose_model_call(call, source, _mongoose_factory_bindings(tree, source))
+    return (*model, call.start_point.row + 1) if model is not None else None
 
 
 def proven_local_commonjs_mongoose_models(tree: Node, source: bytes, path: Path, root: Path) -> dict[str, str]:

@@ -3970,7 +3970,8 @@ func Lookup(os Config) string { return os.Getenv("NOT_AN_ENVIRONMENT_KEY") }
 
 def test_node_analyzer_extracts_literal_mongoose_collection_ownership(tmp_path: Path):
     (tmp_path / "order-model.ts").write_text(
-        '''const Order = mongoose.model("Order", orderSchema, "orders");''', encoding="utf-8",
+        '''import mongoose from "mongoose";
+const Order = mongoose.model("Order", orderSchema, "orders");''', encoding="utf-8",
     )
 
     result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
@@ -3999,9 +4000,85 @@ def test_node_analyzer_records_mongoose_model_without_guessing_collection(tmp_pa
     ]
 
 
+def test_node_analyzer_links_local_commonjs_mongoose_model_identity(tmp_path: Path):
+    (tmp_path / "payments.js").write_text(
+        "const mg = require('mongoose');\n"
+        "const Transaction = mg.model('Payment', schema);\n"
+        "async function refund(id) {\n"
+        "  const payment = await Transaction.findOne({ id });\n"
+        "  await payment.save();\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert [(fact.name, fact.kind) for fact in result.persistence_facts] == [("Payment", "mongoose_model")]
+    assert {(edge.target, edge.model_name) for edge in result.edges if edge.kind in {"reads", "writes"}} >= {
+        ("Transaction.findOne", "Payment"),
+        ("payment.save", "Payment"),
+    }
+
+
+def test_node_analyzer_links_local_typescript_mongoose_model_identity(tmp_path: Path):
+    (tmp_path / "payments.ts").write_text(
+        "import mongoose from 'mongoose';\n"
+        "const Transaction = mongoose.model<Payment>('Payment', schema);\n"
+        "function findPayment(id: string) { return Transaction.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert [(fact.name, fact.kind) for fact in result.persistence_facts] == [("Payment", "mongoose_model")]
+    assert ("Transaction.findById", "Payment") in {
+        (edge.target, edge.model_name) for edge in result.edges if edge.kind == "reads"
+    }
+
+
+def test_node_analyzer_does_not_link_fake_local_mongoose_factory(tmp_path: Path):
+    (tmp_path / "payments.js").write_text(
+        "const mongoose = fakeFactory;\n"
+        "const Transaction = mongoose.model('Payment', schema);\n"
+        "function findPayment(id) { return Transaction.findById(id); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert result.persistence_facts == []
+    assert ("Transaction.findById", "invokes", None) in {
+        (edge.target, edge.kind, edge.model_name) for edge in result.edges
+    }
+
+
+def test_node_analyzer_uses_literal_collection_on_local_mongoose_model(tmp_path: Path):
+    (tmp_path / "payments.ts").write_text(
+        "import * as mg from 'mongoose';\n"
+        "const Transaction = mg.model<Payment>('Payment', schema, 'payments');\n"
+        "function findPayment(id: string) { return Transaction.findById(id); }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "fake.js").write_text(
+        "const mongoose = fakeFactory;\n"
+        "const Fake = mongoose.model('Fake', schema, 'fake_payments');\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-ts")
+
+    assert [(fact.name, fact.kind, fact.owner) for fact in result.persistence_facts] == [
+        ("payments", "document", "Payment"),
+    ]
+    assert ("Transaction.findById", "Payment") in {
+        (edge.target, edge.model_name) for edge in result.edges if edge.kind == "reads"
+    }
+
+
 def test_node_analyzer_classifies_explicit_mongoose_model_operations(tmp_path: Path):
     (tmp_path / "orders.ts").write_text(
-        '''const Order = mongoose.model("Order", orderSchema, "orders");
+        '''import mongoose from "mongoose";
+const Order = mongoose.model("Order", orderSchema, "orders");
 function findOrder(id: string) { return Order.findById(id); }
 function createOrder(input: CreateOrderInput) { return Order.create(input); }
 ''',
@@ -4115,6 +4192,7 @@ def test_node_analyzer_does_not_classify_shadowed_mongoose_import(tmp_path: Path
 
 def test_node_analyzer_classifies_save_on_document_from_mongoose_query(tmp_path: Path):
     (tmp_path / "orders.js").write_text(
+        "const mongoose = require('mongoose');\n"
         "const Order = mongoose.model('Order', schema);\n"
         "async function update(id) {\n"
         "  const order = await Order.findOne({ id }).sort({ createdAt: -1 });\n"
@@ -4150,6 +4228,7 @@ def test_node_analyzer_keeps_unproven_sort_call_in_flow(tmp_path: Path):
 
 def test_node_analyzer_leaves_unproven_document_save_unclassified(tmp_path: Path):
     (tmp_path / "orders.js").write_text(
+        "const mongoose = require('mongoose');\n"
         "const Order = mongoose.model('Order', schema);\n"
         "async function update(id) {\n"
         "  const order = await Order.findOne({ id }).lean();\n"

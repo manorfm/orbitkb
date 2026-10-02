@@ -343,7 +343,8 @@ async def test_cli_to_mcp_preserves_a_static_mongoose_persistence_fact(tmp_path:
     root = tmp_path / "orders"
     root.mkdir()
     (root / "order-model.ts").write_text(
-        '''const Order = mongoose.model("Order", orderSchema, "orders");''', encoding="utf-8",
+        '''import mongoose from "mongoose";
+const Order = mongoose.model("Order", orderSchema, "orders");''', encoding="utf-8",
     )
     db_path = tmp_path / "orders.db"
 
@@ -358,7 +359,7 @@ async def test_cli_to_mcp_preserves_a_static_mongoose_persistence_fact(tmp_path:
 
     assert result["static_facts"] == [{
         "name": "orders", "kind": "document", "owner": "Order",
-        "evidence": {"file": "order-model.ts", "start_line": 1, "end_line": 1},
+        "evidence": {"file": "order-model.ts", "start_line": 2, "end_line": 2},
     }]
 
 
@@ -658,7 +659,8 @@ async def test_cli_to_mcp_exposes_mongoose_persistence_operations(tmp_path: Path
     root = tmp_path / "orders"
     root.mkdir()
     (root / "resolvers.ts").write_text(
-        '''const Order = mongoose.model("Order", orderSchema, "orders");
+        '''import mongoose from "mongoose";
+const Order = mongoose.model("Order", orderSchema, "orders");
 export const resolvers = {
   Mutation: { createOrder: (_: unknown, input: CreateOrderInput) => Order.create(input) },
 };
@@ -680,7 +682,8 @@ export const resolvers = {
 
     assert result["persistence_operations"] == [{
         "operation": "writes", "target": "Order.create",
-        "evidence": {"file": "resolvers.ts", "start_line": 3, "end_line": 3},
+        "evidence": {"file": "resolvers.ts", "start_line": 4, "end_line": 4},
+        "model": "Order", "collection": None,
     }]
 
 

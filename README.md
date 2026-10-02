@@ -229,6 +229,10 @@ A direct CommonJS `mongoose.model("Name", schema)` export also appears in
 collection is declared. `Name` identifies the logical model; the physical
 collection remains unknown. Logical model names alone do not trigger a
 shared-resource architecture finding.
+Local JS/TS `const` models use the same identity when their factory comes from
+an explicit `mongoose` package import or `require`. A literal third argument
+records the physical collection as a `document` fact; an unproven factory does
+not establish a persistence fact or operation.
 For operations on such a proven model, `describe_entrypoint.persistence_operations`
 includes its declared `model` name and `collection: null`; instance `save()`
 inherits that model only when its local document origin is proven.
