@@ -7,6 +7,7 @@ from orbitkb.domain.navigation import KnowledgeNavigator, TraversalPolicy
 from orbitkb.mcp import queries
 
 CORPUS = Path(__file__).resolve().parents[1] / "verify/flow_corpus/menu-kotlin-service"
+NODE_CORPUS = Path(__file__).resolve().parents[1] / "verify/sample_project/payments-service"
 
 
 def test_kotlin_spring_route_reaches_feign_client_through_use_case_and_gateway(tmp_path):
@@ -44,3 +45,20 @@ def test_kotlin_spring_route_reaches_feign_client_through_use_case_and_gateway(t
                           if boundary["target"] == "restaurantClient.getRestaurant")
     assert (feign_boundary["kind"], feign_boundary["source"]) == ("external_call", "MenuGateway.fetch")
     assert feign_boundary["evidence"]["file"].endswith("MenuGateway.kt")
+
+
+def test_node_route_public_flow_reaches_service_client_and_message_publisher(tmp_path):
+    analysis = StaticAnalysisEngine().analyze(NODE_CORPUS, "node-js")
+    conn = open_db(tmp_path / "payments-flow.db")
+    service_id = services.ensure_service(conn, "payments-service", str(NODE_CORPUS), "node-js")
+    flows.replace_analysis(conn, service_id, analysis)
+
+    detail = queries.describe_entrypoint(conn, "payments-service", "http", "POST", "/charge")
+
+    pairs = {(edge["from"], edge["to"]) for edge in detail["flow"]}
+    assert ("payments.routes.http.post:/charge", "PaymentService.chargeCustomer") in pairs
+    assert ("PaymentService.chargeCustomer", "card_gateway.client.charge") in pairs
+    assert ("card_gateway.client.charge", "axios.post") in pairs
+    assert ("PaymentService.chargeCustomer", "PaymentService.publishPaymentEvent") in pairs
+    assert ("PaymentService.publishPaymentEvent", "kafka.publish") in pairs
+    assert not any(source == "PaymentService.refundCustomer" for source, _ in pairs)

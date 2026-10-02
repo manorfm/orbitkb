@@ -131,7 +131,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "66"
+STATIC_ANALYSIS_INPUT_VERSION = "67"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -959,11 +959,14 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
                 client_declarations, command_imports, launchdarkly_clients,
                 error_handler_parameter_counts=error_handler_parameter_counts,
             )
-        for function in _node_class_functions(tree, source):
+        class_functions = _node_class_functions(tree, source)
+        for function in class_functions:
             self._record_function(
                 result, function, path, root, source, imports, mongoose_models, prisma_clients,
                 client_declarations, command_imports, launchdarkly_clients,
             )
+        class_methods = {function.symbol for function in class_functions}
+        result.edges = [_node_resolve_self_call(edge, class_methods) for edge in result.edges]
         for function, method, route, contract in _nest_http_entrypoint_functions(tree, source, imports):
             self._record_function(
                 result, function, path, root, source, imports, mongoose_models, prisma_clients,
@@ -2318,6 +2321,14 @@ def _node_class_functions(tree: Node, source: bytes) -> list[_Function]:
                 method_name, f"{_text(class_name, source)}.{method_name}", body, method,
             ))
     return functions
+
+
+def _node_resolve_self_call(edge: FlowEdge, class_methods: set[str]) -> FlowEdge:
+    if edge.source not in class_methods or not edge.target.startswith("this."):
+        return edge
+    owner = edge.source.rpartition(".")[0]
+    target = f"{owner}.{edge.target.removeprefix('this.')}"
+    return replace(edge, target=target) if target in class_methods else edge
 
 
 _NEST_CACHE_DECORATORS = {

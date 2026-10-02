@@ -452,6 +452,26 @@ module.exports = run;
     assert not any(edge.source == "service.run" and edge.target == "client.send" for edge in analysis.edges)
 
 
+def test_node_self_calls_resolve_only_methods_of_the_same_class(tmp_path: Path):
+    (tmp_path / "service.js").write_text('''class Checkout {
+  run() {
+    this.publish();
+    this.client.send();
+  }
+  publish() {}
+}
+class Other { send() {} }
+module.exports = new Checkout();
+''', encoding="utf-8")
+
+    analysis = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+    targets = {edge.target for edge in analysis.edges if edge.source == "Checkout.run"}
+
+    assert "Checkout.publish" in targets
+    assert "this.client.send" in targets
+    assert "Other.send" not in targets
+
+
 def test_node_route_hints_require_a_locally_created_http_receiver(tmp_path: Path):
     (tmp_path / "main.ts").write_text('''import express from "express";
 import Fastify from "fastify";
