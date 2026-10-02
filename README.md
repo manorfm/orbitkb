@@ -216,6 +216,9 @@ Direct Kafka publish contracts require a producer constructed from an imported
 When bootstrap code passes one proven local CommonJS class instance to a
 consumer function, the bounded message flow can follow calls on that parameter.
 Conflicting or unknown arguments keep the receiver unresolved.
+Calls on a local CommonJS import of a direct `mongoose.model(...)` export are
+classified as persistence reads or writes when the export and import bindings
+are proven. An unrelated module with the same method names remains an ordinary call.
 
 For Node/TypeScript, direct Axios calls in named functions and class methods
 can expose an external host and path when the URL is literal or combines a

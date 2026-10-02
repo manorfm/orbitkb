@@ -114,6 +114,7 @@ from orbitkb.discovery.node_local_handlers import (
     anonymous_commonjs_function,
     anonymous_default_function,
     proven_local_commonjs_flow_imports,
+    proven_local_commonjs_mongoose_models,
     proven_local_handler_imports,
 )
 from orbitkb.discovery.node_nest import (
@@ -931,7 +932,9 @@ class _NodeGraphqlAnalyzer(_FileAnalyzer):
         imports = (*_node_named_imports(source_text), *proven_local_commonjs_flow_imports(tree, source, path, root))
         launchdarkly_clients = _launchdarkly_client_variables(source_text, imports)
         graphql_error_constructors = _graphql_error_constructors(imports)
-        mongoose_models = _mongoose_model_variables(source_text)
+        mongoose_models = _mongoose_model_variables(source_text) | proven_local_commonjs_mongoose_models(
+            tree, source, path, root,
+        )
         prisma_clients = _prisma_client_variables(source_text)
         client_declarations = node_stateful_client_declarations(source_text)
         command_imports = node_command_imports(source_text)

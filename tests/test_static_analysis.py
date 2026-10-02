@@ -3997,6 +3997,81 @@ function createOrder(input: CreateOrderInput) { return Order.create(input); }
     }
 
 
+def test_node_analyzer_classifies_operations_on_required_mongoose_models(tmp_path: Path):
+    (tmp_path / "order.model.js").write_text(
+        "const mongoose = require('mongoose');\nmodule.exports = mongoose.model('Order', schema);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "orders.js").write_text(
+        "const Order = require('./order.model');\n"
+        "function findOrder(id) { return Order.findOne({ id }); }\n"
+        "function createOrder(input) { return Order.create(input); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert {(edge.source, edge.target, edge.kind) for edge in result.edges} >= {
+        ("orders.findOrder", "Order.findOne", "reads"),
+        ("orders.createOrder", "Order.create", "writes"),
+    }
+
+
+def test_node_analyzer_does_not_treat_arbitrary_required_module_as_mongoose_model(tmp_path: Path):
+    (tmp_path / "fake-model.js").write_text(
+        "const mongoose = fakeFactory;\nmodule.exports = mongoose.model('Order', schema);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "orders.js").write_text(
+        "const Order = require('./fake-model');\n"
+        "function findOrder(id) { return Order.findOne({ id }); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert ("orders.findOrder", "Order.findOne", "invokes") in {
+        (edge.source, edge.target, edge.kind) for edge in result.edges
+    }
+
+
+def test_node_analyzer_does_not_classify_reassigned_mongoose_import(tmp_path: Path):
+    (tmp_path / "order.model.js").write_text(
+        "const mongoose = require('mongoose');\nmodule.exports = mongoose.model('Order', schema);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "orders.js").write_text(
+        "let Order = require('./order.model');\n"
+        "Order = replacement;\n"
+        "function findOrder(id) { return Order.findOne({ id }); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert ("orders.findOrder", "Order.findOne", "invokes") in {
+        (edge.source, edge.target, edge.kind) for edge in result.edges
+    }
+
+
+def test_node_analyzer_does_not_classify_shadowed_mongoose_import(tmp_path: Path):
+    (tmp_path / "order.model.js").write_text(
+        "const mongoose = require('mongoose');\nmodule.exports = mongoose.model('Order', schema);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "orders.js").write_text(
+        "const Order = require('./order.model');\n"
+        "function findOrder(Order, id) { return Order.findOne({ id }); }\n",
+        encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "node-js")
+
+    assert ("orders.findOrder", "Order.findOne", "invokes") in {
+        (edge.source, edge.target, edge.kind) for edge in result.edges
+    }
+
+
 def test_spring_analyzers_extract_literal_document_collection_ownership(tmp_path: Path):
     (tmp_path / "Order.java").write_text(
         '''@Document(collection = "orders") class Order {}''', encoding="utf-8",

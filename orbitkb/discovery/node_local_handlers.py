@@ -451,6 +451,79 @@ def _commonjs_exported_instance(path: Path) -> str | None:
     return class_name if len(classes) == 1 else None
 
 
+def _stable_const_binding(tree: Node, source: bytes, name: str) -> Node | None:
+    """Find one top-level const binding that is never reassigned or shadowed."""
+    bindings: list[Node] = []
+    pending = [tree]
+    while pending:
+        node = pending.pop()
+        pending.extend(node.named_children)
+        if node.type == "variable_declarator":
+            identifier = node.child_by_field_name("name")
+            if identifier is not None and identifier.type == "identifier" and _text(identifier, source) == name:
+                bindings.append(node)
+        elif node.type == "formal_parameters":
+            if any(child.type == "identifier" and _text(child, source) == name for child in node.named_children):
+                return None
+        elif node.type in {"assignment_expression", "augmented_assignment_expression", "update_expression"}:
+            left = node.child_by_field_name("left") or node.child_by_field_name("argument")
+            if left is not None and left.type == "identifier" and _text(left, source) == name:
+                return None
+    if len(bindings) != 1:
+        return None
+    declaration = bindings[0].parent
+    if declaration is None or declaration.parent != tree or declaration.type != "lexical_declaration":
+        return None
+    if not _text(declaration, source).lstrip().startswith("const "):
+        return None
+    return bindings[0].child_by_field_name("value")
+
+
+def _commonjs_exported_mongoose_model(path: Path) -> bool:
+    source = path.read_bytes()
+    tree = _parse(path, source)
+    values = _commonjs_assignment_values(tree, source)
+    if len(values) != 1 or values[0] is None or values[0].type != "call_expression":
+        return False
+    if _commonjs_property_assignments(tree, source) or _has_commonjs_export_mutation_or_escape(tree, source):
+        return False
+    call = values[0]
+    function = call.child_by_field_name("function")
+    arguments = call.child_by_field_name("arguments")
+    if function is None or function.type != "member_expression" or arguments is None:
+        return False
+    receiver = function.child_by_field_name("object")
+    method = function.child_by_field_name("property")
+    if receiver is None or receiver.type != "identifier" or method is None or _text(method, source) != "model":
+        return False
+    args = arguments.named_children
+    if len(args) < 2 or args[0].type != "string":
+        return False
+    binding = _stable_const_binding(tree, source, _text(receiver, source))
+    if binding is None or binding.type != "call_expression":
+        return False
+    require = binding.child_by_field_name("function")
+    require_args = binding.child_by_field_name("arguments")
+    return (
+        require is not None and _text(require, source) == "require"
+        and require_args is not None and len(require_args.named_children) == 1
+        and require_args.named_children[0].type == "string"
+        and _text(require_args.named_children[0], source)[1:-1] == "mongoose"
+    )
+
+
+def proven_local_commonjs_mongoose_models(tree: Node, source: bytes, path: Path, root: Path) -> frozenset[str]:
+    """Resolve immutable relative require aliases to direct Mongoose model exports."""
+    models: set[str] = set()
+    for name, imported in _relative_commonjs_requires(tree, source, path, root):
+        if name.type != "identifier":
+            continue
+        alias = _text(name, source)
+        if _stable_const_binding(tree, source, alias) is not None and _commonjs_exported_mongoose_model(imported):
+            models.add(alias)
+    return frozenset(models)
+
+
 def proven_local_commonjs_flow_imports(tree: Node, source: bytes, path: Path, root: Path) -> tuple[tuple[str, str], ...]:
     """Bind relative require aliases to proven local class methods or object functions."""
     imports: list[tuple[str, str]] = []

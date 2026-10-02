@@ -166,6 +166,11 @@ def test_node_consumer_reaches_refund_from_proven_bootstrap_argument(tmp_path):
     assert [(call["source"], call["host"], call["path"]) for call in detail["external_http_calls"]] == [
         ("card_gateway.client.refund", "card-gateway.vendor.io", "/v1/refund"),
     ]
+    assert {(operation["target"], operation["operation"])
+            for operation in detail["persistence_operations"]} >= {
+        ("Transaction.findOne", "reads"),
+        ("LedgerEntry.create", "writes"),
+    }
 
 
 def test_node_consumer_keeps_receiver_unresolved_when_bootstrap_arguments_conflict(tmp_path):
