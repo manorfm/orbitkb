@@ -28,14 +28,11 @@ from orbitkb.analysis.models import (
     StaticServiceCall,
 )
 from orbitkb.analysis.route_paths import join_route
+from orbitkb.discovery.scan_helpers import find_matching_paren
 
-# Stop at the interface's opening brace. A route may contain `{id}`, so the
-# interface body itself must be delimited with find_matching_brace below.
-_FEIGN_CLIENT_PATTERN = re.compile(
-    r'@FeignClient\s*\((?P<args>[^)]*)\)\s*'
-    r'(?P<annotations>(?:@\w+(?:\s*\([^)]*\))?\s*)*)'
-    r'(?:public\s+)?interface\s+(?P<client>\w+)\s*\{',
-)
+_FEIGN_START = re.compile(r'@FeignClient\s*\(')
+_ANNOTATION_NAME = re.compile(r'@[\w.]+')
+_FEIGN_INTERFACE = re.compile(r'(?:public\s+)?interface\s+(?P<client>\w+)\s*\{')
 _FEIGN_METHOD_PATTERN = re.compile(
     r'@(?P<mapping>GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\s*'
     r'\(\s*(?:value\s*=\s*)?"(?P<path>[^"]+)"[^)]*\)\s*'
@@ -58,10 +55,43 @@ class _FeignEndpoint:
     external_origin: tuple[str, str, int | None] | None = None
 
 
-def _feign_clients(source: str, visible_source: str) -> Iterator[re.Match[str]]:
-    for match in _FEIGN_CLIENT_PATTERN.finditer(source):
-        if visible_source[match.start()] == "@":
-            yield match
+@dataclass(frozen=True)
+class _FeignClientDeclaration:
+    start: int
+    end: int
+    args: str
+    annotations: str
+    client: str
+
+
+def _feign_clients(source: str, visible_source: str) -> Iterator[_FeignClientDeclaration]:
+    for match in _FEIGN_START.finditer(visible_source):
+        opening = match.end() - 1
+        closing = find_matching_paren(source, opening)
+        if closing < 0:
+            continue
+        cursor = closing + 1
+        annotations_start = cursor
+        while True:
+            while cursor < len(source) and visible_source[cursor].isspace():
+                cursor += 1
+            annotation = _ANNOTATION_NAME.match(visible_source, cursor)
+            if annotation is None:
+                break
+            cursor = annotation.end()
+            while cursor < len(source) and visible_source[cursor].isspace():
+                cursor += 1
+            if cursor < len(source) and visible_source[cursor] == "(":
+                annotation_end = find_matching_paren(source, cursor)
+                if annotation_end < 0:
+                    break
+                cursor = annotation_end + 1
+        interface = _FEIGN_INTERFACE.match(visible_source, cursor)
+        if interface is not None:
+            yield _FeignClientDeclaration(
+                match.start(), interface.end(), source[opening + 1:closing],
+                source[annotations_start:cursor], interface.group("client"),
+            )
 
 
 def _package_name(source: str) -> str:
@@ -197,11 +227,11 @@ def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], _FeignEndpoint]
         visible_source = mask_non_code(source)
         package = _package_name(source)
         for client_match in _feign_clients(source, visible_source):
-            service = _feign_service_name(client_match.group("args"))
+            service = _feign_service_name(client_match.args)
             if not service or "$" in service or "#{" in service:
                 continue
-            client = _qualified_client_name(package, client_match.group("client"))
-            url_argument = _feign_url_argument(client_match.group("args"))
+            client = _qualified_client_name(package, client_match.client)
+            url_argument = _feign_url_argument(client_match.args)
             destination = None
             if url_argument is not None and (
                 _FEIGN_EMPTY_URL.fullmatch(url_argument) is None
@@ -218,10 +248,10 @@ def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], _FeignEndpoint]
                 destination = literal_public_http_destination(url)
                 if destination is None:
                     continue
-            route_prefix, unresolved_route_prefix = spring_route_prefix(client_match.group("annotations"))
+            route_prefix, unresolved_route_prefix = spring_route_prefix(client_match.annotations)
             if unresolved_route_prefix:
                 continue
-            brace_open = client_match.end() - 1
+            brace_open = client_match.end - 1
             brace_close = find_matching_brace(source, brace_open)
             body = source[brace_open + 1 : brace_close]
             visible_body = visible_source[brace_open + 1 : brace_close]
@@ -251,16 +281,16 @@ def _feign_client_url_bindings(files: list[Path], root: Path) -> list[Configurat
         visible_source = mask_non_code(source)
         package = _package_name(source)
         for client_match in _feign_clients(source, visible_source):
-            if _feign_service_name(client_match.group("args")) is None:
+            if _feign_service_name(client_match.args) is None:
                 continue
-            url_argument = _feign_url_argument(client_match.group("args"))
+            url_argument = _feign_url_argument(client_match.args)
             url_match = _FEIGN_PROPERTY_URL.fullmatch(url_argument) if url_argument is not None else None
             if url_match is None:
                 continue
             key = url_match.group("key")
-            line = source.count("\n", 0, client_match.start()) + 1
+            line = source.count("\n", 0, client_match.start) + 1
             bindings.append(ConfigurationBinding(
-                source=_qualified_client_name(package, client_match.group("client")),
+                source=_qualified_client_name(package, client_match.client),
                 key=key,
                 kind="property",
                 sensitive=SENSITIVE_CONFIGURATION_KEY.search(key) is not None,

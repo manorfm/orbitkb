@@ -194,7 +194,8 @@ package determine which interface a call reaches; unresolved cases stay unknown.
 Feign URL configuration bindings identify packaged interfaces by qualified name.
 Named `@FeignClient` arguments can appear in either order.
 An injected Feign client with a literal public HTTP URL records an external call
-using that host and the combined URL and mapping path. Literal URLs that cannot
+using that host and the combined URL and mapping path, including literal paths
+containing parentheses. Literal URLs that cannot
 be classified do not produce an internal service call; property based URLs keep
 their configuration binding and declared service name. URLs composed with dynamic
 host or path expressions, constants, or concatenations do not establish a destination.

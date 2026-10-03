@@ -638,3 +638,28 @@ interface InventoryClient {
     assert [(binding.source, binding.key) for binding in analysis.configuration_bindings] == [
         ("InventoryClient", "provider.inventory.url"),
     ]
+
+
+def test_feign_url_parenthesis_inside_literal_keeps_the_complete_annotation(tmp_path: Path):
+    client = tmp_path / "VendorClient.java"
+    client.write_text(
+        '''@FeignClient(url = "https://api.vendor.example/v1/(archive)", name = "catalog-service")
+@RequestMapping("/catalog/(archived)")
+interface VendorClient {
+    @GetMapping("/items")
+    Item fetch();
+}
+''', encoding="utf-8",
+    )
+    evidence = Evidence("CatalogService.java", 4, 4)
+    analysis = AnalysisResult(
+        edges=[FlowEdge("CatalogService.read", "vendorClient.fetch", "invokes", evidence)],
+        injections=[Injection("CatalogService.vendorClient", "VendorClient", None, evidence)],
+    )
+
+    SpringFeignRecognizer().enrich(analysis, [client], tmp_path)
+
+    assert analysis.static_service_calls == []
+    assert [(call.host, call.path) for call in analysis.external_http_calls] == [
+        ("api.vendor.example", "/v1/(archive)/catalog/(archived)/items"),
+    ]
