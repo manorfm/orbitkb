@@ -152,6 +152,10 @@ def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
                and edge.confidence == "medium" for edge in analysis.edges)
     assert any(edge.source == "FetchItemMediator.get" and edge.target == "ItemDTO.hasChange"
                for edge in analysis.edges)
+    assert any(edge.source == "FetchItemMediator.get" and edge.target == "Ingredient.removes"
+               and edge.confidence == "medium" for edge in analysis.edges)
+    assert not any(boundary.reason == "unresolved" and boundary.target == "ingredient.removes"
+                   for boundary in reached.boundaries)
     assert any(edge.source == "BillOrderService.addItem" and edge.target == "BillOrderDAO.add"
                and edge.confidence == "medium" for edge in analysis.edges)
     assert ("persistence_call", "collection.updateOne") in {

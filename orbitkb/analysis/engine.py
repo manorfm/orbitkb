@@ -60,6 +60,9 @@ from orbitkb.analysis.jvm_grpc_analyzer import (
     kotlin_grpc_handlers,
 )
 from orbitkb.analysis.jvm_kotlin_constructors import remove_imported_constructor_calls
+from orbitkb.analysis.jvm_kotlin_lambda_receivers import (
+    resolve_kotlin_lambda_element_calls,
+)
 from orbitkb.analysis.jvm_security_analyzer import SpringSecurityAdapter
 from orbitkb.analysis.jvm_spring_data import (
     SPRING_DATA_REPOSITORY_BASE_TYPES,
@@ -158,7 +161,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "100"
+STATIC_ANALYSIS_INPUT_VERSION = "101"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -3533,6 +3536,8 @@ class StaticAnalysisEngine:
         if stack in {"node-ts", "node-js"}:
             _node_bind_consumer_argument_types(result, files, root, stack)
         result = BoundedFlowResolver().resolve(result)
+        if stack == "jvm-spring":
+            resolve_kotlin_lambda_element_calls(result, files, root)
         if stack in {"node-ts", "node-js"}:
             result.message_contracts.extend(_node_forwarded_kafka_topic_contracts(result, files, root, stack))
         adapter = self._framework_adapters.get(stack)

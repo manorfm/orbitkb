@@ -700,6 +700,81 @@ class Handler {
     }
 
 
+def test_kotlin_lambda_element_method_resolves_from_proven_return_and_list_property(tmp_path: Path):
+    (tmp_path / "Models.kt").write_text('''package example.model
+data class Ingredient(val id: String) { fun removes() = this }
+data class Item(val ingredients: List<Ingredient>)
+''', encoding="utf-8")
+    (tmp_path / "Provider.kt").write_text('''package example.provider
+import example.model.Item
+class Provider { fun getItem(): Item = Item(emptyList()) }
+''', encoding="utf-8")
+    (tmp_path / "Handler.kt").write_text('''package example.web
+import example.model.Item
+import example.provider.Provider
+class Handler(private val provider: Provider) {
+    fun handle() {
+        val item = provider.getItem()
+        item.ingredients.mapNotNull { ingredient -> ingredient.removes() }
+    }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Handler.handle" and edge.target == "Ingredient.removes"
+               and edge.confidence == "medium" for edge in result.edges)
+
+
+def test_kotlin_lambda_element_method_stays_unresolved_without_proven_return(tmp_path: Path):
+    (tmp_path / "Models.kt").write_text('''package example.model
+data class Ingredient(val id: String) { fun removes() = this }
+data class Item(val ingredients: List<Ingredient>)
+''', encoding="utf-8")
+    (tmp_path / "Handler.kt").write_text('''package example.web
+import example.model.Item
+class Handler(private val provider: ExternalProvider) {
+    fun handle() {
+        val item = provider.getItem()
+        item.ingredients.mapNotNull { ingredient -> ingredient.removes() }
+    }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Handler.handle" and edge.target == "ingredient.removes"
+               for edge in result.edges)
+
+
+def test_kotlin_lambda_element_method_keeps_duplicate_symbol_ambiguous(tmp_path: Path):
+    (tmp_path / "Models.kt").write_text('''package example.model
+data class Ingredient(val id: String) { fun removes() = this }
+data class Item(val ingredients: List<Ingredient>)
+''', encoding="utf-8")
+    (tmp_path / "Other.kt").write_text('''package example.other
+data class Ingredient(val id: String) { fun removes() = this }
+''', encoding="utf-8")
+    (tmp_path / "Provider.kt").write_text('''package example.provider
+import example.model.Item
+class Provider { fun getItem(): Item = Item(emptyList()) }
+''', encoding="utf-8")
+    (tmp_path / "Handler.kt").write_text('''package example.web
+import example.provider.Provider
+class Handler(private val provider: Provider) {
+    fun handle() {
+        val item = provider.getItem()
+        item.ingredients.mapNotNull { ingredient -> ingredient.removes() }
+    }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Handler.handle" and edge.target == "ingredient.removes"
+               for edge in result.edges)
+
+
 def test_go_net_http_handlefunc_routes_match_discovery_without_claiming_get():
     hints = GoDetector().collect_hints(CATALOG_GO_SAMPLE)
     analysis = StaticAnalysisEngine().analyze(CATALOG_GO_SAMPLE, "go")

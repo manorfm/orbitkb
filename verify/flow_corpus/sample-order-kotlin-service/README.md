@@ -8,8 +8,9 @@ Run `pytest -q tests/test_sample_order_kotlin.py` to inspect the current coverag
 The analyzer reaches both catalog Feign routes and recognizes the MongoDB
 document, the `collection.updateOne` write inside the Mongo callback, and the
 Spring security rule. Redis publication is confirmed, while library calls and
-domain branches still limit the flow. Imported local DTO and entity constructors
-are recognized as construction rather than flow calls. The request DTO is
-extracted. The response DTO through `resumeOut` is backed
+domain branches still limit the flow. The typed ingredients lambda reaches
+`Ingredient.removes`, whose internal `copy` remains unresolved. Imported local
+DTO and entity constructors are recognized as construction rather than flow
+calls. The request DTO is extracted. The response DTO through `resumeOut` is backed
 by the unique `AddItemCommand.add` return type. The business description and
 flow remain incomplete, so the route is not eligible for zero-call docs.
