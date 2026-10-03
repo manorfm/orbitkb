@@ -1,7 +1,12 @@
 from pathlib import Path
 
+from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.jvm_feign import SpringFeignRecognizer
 from orbitkb.analysis.models import AnalysisResult, Evidence, FlowEdge, Injection
+from orbitkb.db.connection import open_db
+from orbitkb.db.repositories import flows, services
+from orbitkb.domain.canonical import ServiceKey
+from orbitkb.mcp import queries
 
 
 def test_feign_recognizer_keeps_call_and_url_binding_together(tmp_path: Path):
@@ -279,4 +284,39 @@ class CatalogService(private val client: inventory.InventoryClient)
 
     assert [(call.target_service, call.target_path) for call in analysis.static_service_calls] == [
         ("inventory-service", "/items"),
+    ]
+
+
+def test_feign_url_bindings_keep_homonymous_clients_distinct_in_public_configuration(tmp_path: Path):
+    files = []
+    for package in ("first", "second"):
+        client = tmp_path / package / "InventoryClient.java"
+        client.parent.mkdir()
+        client.write_text(
+            f'''package {package};
+@FeignClient(name = "{package}-inventory", url = "${{provider.shared.url}}")
+interface InventoryClient {{
+    @GetMapping("/items")
+    Item fetch();
+}}
+''', encoding="utf-8",
+        )
+        files.append(client)
+    analysis = AnalysisResult()
+
+    SpringFeignRecognizer().enrich(analysis, files, tmp_path)
+
+    assert [(binding.source, binding.key) for binding in analysis.configuration_bindings] == [
+        ("first.InventoryClient", "provider.shared.url"),
+        ("second.InventoryClient", "provider.shared.url"),
+    ]
+    snapshot = project_analysis(ServiceKey("catalog"), analysis)
+    assert len([fact for fact in snapshot.facts if fact.kind == "configuration"]) == 2
+
+    conn = open_db(tmp_path / "catalog.db")
+    service_id = services.ensure_service(conn, "catalog", str(tmp_path), "jvm-spring")
+    flows.replace_analysis(conn, service_id, analysis)
+
+    assert [binding["source"] for binding in queries.describe_configuration(conn, "catalog")["bindings"]] == [
+        "first.InventoryClient", "second.InventoryClient",
     ]

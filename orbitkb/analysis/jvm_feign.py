@@ -50,6 +50,10 @@ def _package_name(source: str) -> str:
     return match.group(1) if match else ""
 
 
+def _qualified_client_name(package: str, client: str) -> str:
+    return f"{package}.{client}" if package else client
+
+
 class SpringFeignRecognizer:
     """Connect injected Feign calls to literal mappings and property keys."""
 
@@ -144,7 +148,7 @@ def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], tuple[str, str,
             service = client_match.group("service")
             if not service or "$" in service or "#{" in service:
                 continue
-            client = f"{package}.{client_match.group('client')}" if package else client_match.group("client")
+            client = _qualified_client_name(package, client_match.group("client"))
             route_prefix, unresolved_route_prefix = spring_route_prefix(client_match.group("annotations"))
             if unresolved_route_prefix:
                 continue
@@ -173,6 +177,7 @@ def _feign_client_url_bindings(files: list[Path], root: Path) -> list[Configurat
             continue
         source = path.read_text(encoding="utf-8", errors="ignore")
         visible_source = mask_non_code(source)
+        package = _package_name(source)
         for client_match in _feign_clients(source, visible_source):
             url_match = _FEIGN_CLIENT_URL.search(client_match.group("extra_args"))
             if url_match is None:
@@ -180,7 +185,7 @@ def _feign_client_url_bindings(files: list[Path], root: Path) -> list[Configurat
             key = url_match.group("key")
             line = source.count("\n", 0, client_match.start()) + 1
             bindings.append(ConfigurationBinding(
-                source=client_match.group("client"),
+                source=_qualified_client_name(package, client_match.group("client")),
                 key=key,
                 kind="property",
                 sensitive=SENSITIVE_CONFIGURATION_KEY.search(key) is not None,
