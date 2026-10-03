@@ -201,6 +201,8 @@ be classified do not produce an internal service call; property based URLs keep
 their configuration binding and declared service name. URLs composed with dynamic
 host or path expressions, constants, or concatenations do not establish a destination.
 An empty URL uses the declared service name.
+Feign method routes accept positional literals and named `value` or `path`
+literals in any argument order; conflicting route declarations remain unresolved.
 
 All MCP responses are structured JSON and use progressive disclosure: list a bounded
 set, select one item, then ask for detail. The full per-tool contract — exact response

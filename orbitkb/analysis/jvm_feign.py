@@ -36,7 +36,7 @@ _FEIGN_INTERFACE = re.compile(r'(?:public\s+)?interface\s+(?P<client>\w+)\s*\{')
 _FEIGN_METHOD_ANNOTATION = re.compile(
     r'@(?P<mapping>GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\s*\('
 )
-_FEIGN_METHOD_PATH = re.compile(r'(?:value\s*=\s*)?"([^"\n]+)"')
+_FEIGN_METHOD_PATH = re.compile(r'"([^"\n]+)"')
 _FEIGN_METHOD_SIGNATURE = re.compile(r'\s*(?:[\w<>?,\[\]\s]+\s+)?(?P<method>\w+)\s*\(')
 _FEIGN_PROPERTY_URL = re.compile(spring_placeholder_literal("key"))
 _FEIGN_EMPTY_URL = re.compile(r'\$*""')
@@ -130,19 +130,36 @@ def _feign_service_name(args: str) -> str | None:
     return names[0] if names and len(set(names)) == 1 else None
 
 
+def _feign_method_path(arguments: list[str]) -> str | None:
+    paths = []
+    for index, argument in enumerate(arguments):
+        key, separator, value = argument.partition("=")
+        if separator:
+            if key.strip() not in {"value", "path"}:
+                continue
+        elif index == 0:
+            value = key
+        else:
+            continue
+        literal = _FEIGN_METHOD_PATH.fullmatch(value.strip())
+        if literal is None:
+            return None
+        paths.append(literal.group(1))
+    return paths[0] if paths and len(set(paths)) == 1 else None
+
+
 def _feign_mapped_methods(body: str, visible_body: str) -> Iterator[tuple[str, str, str]]:
     for annotation in _FEIGN_METHOD_ANNOTATION.finditer(visible_body):
         opening = annotation.end() - 1
         closing = find_matching_paren(body, opening)
         if closing < 0:
             continue
-        arguments = split_top_level(body[opening + 1:closing])
-        if not arguments or (path_match := _FEIGN_METHOD_PATH.fullmatch(arguments[0].strip())) is None:
+        path = _feign_method_path(split_top_level(body[opening + 1:closing]))
+        if path is None:
             continue
         signature = _FEIGN_METHOD_SIGNATURE.match(body, closing + 1)
         if signature is None or visible_body[signature.start("method")] == " ":
             continue
-        path = path_match.group(1)
         if "${" in path or "#{" in path:
             continue
         yield annotation.group("mapping"), path, signature.group("method")
