@@ -496,3 +496,100 @@ interface VendorClient {
 
     assert analysis.static_service_calls == []
     assert analysis.external_http_calls == []
+
+
+def test_feign_url_constants_do_not_claim_the_declared_name_as_a_destination(tmp_path: Path):
+    java_client = tmp_path / "JavaVendorClient.java"
+    java_client.write_text(
+        '''@FeignClient(name = "catalog-service", url = VendorSettings.API_URL)
+interface JavaVendorClient {
+    @GetMapping("/items")
+    Item fetch();
+}
+''', encoding="utf-8",
+    )
+    kotlin_client = tmp_path / "KotlinVendorClient.kt"
+    kotlin_client.write_text(
+        '''@FeignClient(name = "catalog-service", url = VENDOR_URL)
+interface KotlinVendorClient {
+    @GetMapping("/items")
+    fun fetch(): Item
+}
+''', encoding="utf-8",
+    )
+    evidence = Evidence("CatalogService.java", 4, 4)
+    analysis = AnalysisResult(
+        edges=[
+            FlowEdge("CatalogService.read", "javaVendorClient.fetch", "invokes", evidence),
+            FlowEdge("CatalogService.read", "kotlinVendorClient.fetch", "invokes", evidence),
+        ],
+        injections=[
+            Injection("CatalogService.javaVendorClient", "JavaVendorClient", None, evidence),
+            Injection("CatalogService.kotlinVendorClient", "KotlinVendorClient", None, evidence),
+        ],
+    )
+
+    SpringFeignRecognizer().enrich(analysis, [java_client, kotlin_client], tmp_path)
+
+    assert analysis.static_service_calls == []
+    assert analysis.external_http_calls == []
+    assert analysis.configuration_bindings == []
+
+
+def test_feign_composed_url_arguments_are_not_treated_as_complete_literals(tmp_path: Path):
+    client = tmp_path / "VendorClients.java"
+    client.write_text(
+        '''@FeignClient(name = "catalog-service", url = "https://api.vendor.example" + VendorSettings.PATH)
+interface LiteralPrefixClient {
+    @GetMapping("/items")
+    Item fetch();
+}
+
+@FeignClient(name = "catalog-service", url = "${provider.vendor.url}" + "/v1")
+interface PropertyPrefixClient {
+    @GetMapping("/items")
+    Item fetch();
+}
+''', encoding="utf-8",
+    )
+    evidence = Evidence("CatalogService.java", 4, 4)
+    analysis = AnalysisResult(
+        edges=[
+            FlowEdge("CatalogService.read", "literalPrefixClient.fetch", "invokes", evidence),
+            FlowEdge("CatalogService.read", "propertyPrefixClient.fetch", "invokes", evidence),
+        ],
+        injections=[
+            Injection("CatalogService.literalPrefixClient", "LiteralPrefixClient", None, evidence),
+            Injection("CatalogService.propertyPrefixClient", "PropertyPrefixClient", None, evidence),
+        ],
+    )
+
+    SpringFeignRecognizer().enrich(analysis, [client], tmp_path)
+
+    assert analysis.static_service_calls == []
+    assert analysis.external_http_calls == []
+    assert analysis.configuration_bindings == []
+
+
+def test_feign_empty_url_keeps_the_declared_service_name(tmp_path: Path):
+    client = tmp_path / "VendorClient.java"
+    client.write_text(
+        '''@FeignClient(name = "catalog-service", url = "")
+interface VendorClient {
+    @GetMapping("/items")
+    Item fetch();
+}
+''', encoding="utf-8",
+    )
+    evidence = Evidence("CatalogService.java", 4, 4)
+    analysis = AnalysisResult(
+        edges=[FlowEdge("CatalogService.read", "vendorClient.fetch", "invokes", evidence)],
+        injections=[Injection("CatalogService.vendorClient", "VendorClient", None, evidence)],
+    )
+
+    SpringFeignRecognizer().enrich(analysis, [client], tmp_path)
+
+    assert [(call.target_service, call.target_path) for call in analysis.static_service_calls] == [
+        ("catalog-service", "/items"),
+    ]
+    assert analysis.external_http_calls == []

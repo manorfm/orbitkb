@@ -196,7 +196,8 @@ An injected Feign client with a literal public HTTP URL records an external call
 using that host and the combined URL and mapping path. Literal URLs that cannot
 be classified do not produce an internal service call; property based URLs keep
 their configuration binding and declared service name. URLs composed with dynamic
-host or path expressions do not establish a destination.
+host or path expressions, constants, or concatenations do not establish a destination.
+An empty URL uses the declared service name.
 
 All MCP responses are structured JSON and use progressive disclosure: list a bounded
 set, select one item, then ask for detail. The full per-tool contract — exact response

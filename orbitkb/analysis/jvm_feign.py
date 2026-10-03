@@ -10,7 +10,11 @@ from pathlib import Path
 from orbitkb.analysis.configuration_syntax import SENSITIVE_CONFIGURATION_KEY
 from orbitkb.analysis.http_destination import literal_public_http_destination
 from orbitkb.analysis.jvm_imports import parse_jvm_imports
-from orbitkb.analysis.jvm_scanner import find_matching_brace, mask_non_code
+from orbitkb.analysis.jvm_scanner import (
+    find_matching_brace,
+    mask_non_code,
+    split_top_level,
+)
 from orbitkb.analysis.jvm_spring_syntax import (
     SPRING_ROUTE_ANNOTATION_TO_METHOD,
     spring_placeholder_literal,
@@ -38,8 +42,9 @@ _FEIGN_METHOD_PATTERN = re.compile(
     r'(?:[\w<>?,\[\]\s]+\s+)?(?P<method>\w+)\s*\(',
     re.DOTALL,
 )
-_FEIGN_CLIENT_URL = re.compile(r'\burl\s*=\s*' + spring_placeholder_literal("key"))
-_FEIGN_LITERAL_URL = re.compile(r'\burl\s*=\s*\$*"([^"\n]+)"')
+_FEIGN_PROPERTY_URL = re.compile(spring_placeholder_literal("key"))
+_FEIGN_EMPTY_URL = re.compile(r'\$*""')
+_FEIGN_LITERAL_URL = re.compile(r'\$*"([^"\n]+)"')
 _KOTLIN_INTERPOLATED_VALUE = re.compile(r'(?<!\\)\$[A-Za-z_]')
 _PACKAGE_RE = re.compile(r"(?m)^[ \t]*package[ \t]+([\w.]+)[ \t]*;?")
 
@@ -65,6 +70,17 @@ def _package_name(source: str) -> str:
 
 def _qualified_client_name(package: str, client: str) -> str:
     return f"{package}.{client}" if package else client
+
+
+def _feign_url_argument(extra_args: str) -> str | None:
+    values = []
+    for argument in split_top_level(extra_args):
+        key, separator, value = argument.partition("=")
+        if separator and key.strip() == "url":
+            values.append(value.strip())
+    if not values:
+        return None
+    return values[0] if len(values) == 1 else ""
 
 
 class SpringFeignRecognizer:
@@ -167,10 +183,15 @@ def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], _FeignEndpoint]
             if not service or "$" in service or "#{" in service:
                 continue
             client = _qualified_client_name(package, client_match.group("client"))
-            extra_args = client_match.group("extra_args")
-            url_match = _FEIGN_LITERAL_URL.search(extra_args)
+            url_argument = _feign_url_argument(client_match.group("extra_args"))
             destination = None
-            if url_match is not None and _FEIGN_CLIENT_URL.search(extra_args) is None:
+            if url_argument is not None and (
+                _FEIGN_EMPTY_URL.fullmatch(url_argument) is None
+                and _FEIGN_PROPERTY_URL.fullmatch(url_argument) is None
+            ):
+                url_match = _FEIGN_LITERAL_URL.fullmatch(url_argument)
+                if url_match is None:
+                    continue
                 url = url_match.group(1)
                 if "${" in url or "#{" in url or (
                     path.suffix == ".kt" and _KOTLIN_INTERPOLATED_VALUE.search(url)
@@ -212,7 +233,8 @@ def _feign_client_url_bindings(files: list[Path], root: Path) -> list[Configurat
         visible_source = mask_non_code(source)
         package = _package_name(source)
         for client_match in _feign_clients(source, visible_source):
-            url_match = _FEIGN_CLIENT_URL.search(client_match.group("extra_args"))
+            url_argument = _feign_url_argument(client_match.group("extra_args"))
+            url_match = _FEIGN_PROPERTY_URL.fullmatch(url_argument) if url_argument is not None else None
             if url_match is None:
                 continue
             key = url_match.group("key")
