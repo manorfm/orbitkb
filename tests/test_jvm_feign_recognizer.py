@@ -2,7 +2,13 @@ from pathlib import Path
 
 from orbitkb.analysis.canonical_projection import project_analysis
 from orbitkb.analysis.jvm_feign import SpringFeignRecognizer
-from orbitkb.analysis.models import AnalysisResult, Evidence, FlowEdge, Injection
+from orbitkb.analysis.models import (
+    AnalysisResult,
+    EntryPoint,
+    Evidence,
+    FlowEdge,
+    Injection,
+)
 from orbitkb.db.connection import open_db
 from orbitkb.db.repositories import flows, services
 from orbitkb.domain.canonical import ServiceKey
@@ -320,3 +326,92 @@ interface InventoryClient {{
     assert [binding["source"] for binding in queries.describe_configuration(conn, "catalog")["bindings"]] == [
         "first.InventoryClient", "second.InventoryClient",
     ]
+
+
+def test_feign_literal_public_url_is_an_external_http_call(tmp_path: Path):
+    client = tmp_path / "VendorClient.java"
+    client.write_text(
+        '''@FeignClient(name = "catalog-service", url = "https://api.vendor.example/v1")
+interface VendorClient {
+    @GetMapping("/items")
+    Item fetch();
+}
+''', encoding="utf-8",
+    )
+    evidence = Evidence("CatalogService.java", 4, 4)
+    analysis = AnalysisResult(
+        edges=[FlowEdge("CatalogService.read", "vendorClient.fetch", "invokes", evidence)],
+        injections=[Injection("CatalogService.vendorClient", "VendorClient", None, evidence)],
+    )
+
+    SpringFeignRecognizer().enrich(analysis, [client], tmp_path)
+
+    assert analysis.static_service_calls == []
+    assert [
+        (call.source, call.scheme, call.host, call.port, call.method, call.path)
+        for call in analysis.external_http_calls
+    ] == [("CatalogService.read", "https", "api.vendor.example", None, "GET", "/v1/items")]
+    assert [fact.kind for fact in project_analysis(ServiceKey("catalog"), analysis).facts if fact.kind.endswith("call")] == [
+        "external_http_call",
+    ]
+    analysis.entrypoints.append(EntryPoint("http", "GET", "/catalog", "CatalogService.read", evidence))
+    conn = open_db(tmp_path / "catalog.db")
+    service_id = services.ensure_service(conn, "catalog", str(tmp_path), "jvm-spring")
+    flows.replace_analysis(conn, service_id, analysis)
+    detail = queries.describe_entrypoint(conn, "catalog", "http", "get", "/catalog")
+    assert detail["service_calls"] == []
+    assert [(call["host"], call["path"]) for call in detail["external_http_calls"]] == [
+        ("api.vendor.example", "/v1/items"),
+    ]
+
+
+def test_feign_unclassifiable_literal_url_does_not_become_an_internal_service_call(tmp_path: Path):
+    client = tmp_path / "VendorClient.java"
+    client.write_text(
+        '''@FeignClient(name = "catalog-service", url = "https://user:secret@api.vendor.example/v1")
+interface VendorClient {
+    @GetMapping("/items")
+    Item fetch();
+}
+''', encoding="utf-8",
+    )
+    evidence = Evidence("CatalogService.java", 4, 4)
+    analysis = AnalysisResult(
+        edges=[FlowEdge("CatalogService.read", "vendorClient.fetch", "invokes", evidence)],
+        injections=[Injection("CatalogService.vendorClient", "VendorClient", None, evidence)],
+    )
+
+    SpringFeignRecognizer().enrich(analysis, [client], tmp_path)
+
+    assert analysis.static_service_calls == []
+    assert analysis.external_http_calls == []
+
+
+def test_feign_clients_with_same_name_and_route_keep_distinct_external_hosts(tmp_path: Path):
+    clients = []
+    for client_name, host in (("FirstClient", "first.example"), ("SecondClient", "second.example")):
+        client = tmp_path / f"{client_name}.java"
+        client.write_text(
+            f'''@FeignClient(name = "vendor", url = "https://{host}")
+interface {client_name} {{
+    @GetMapping("/items")
+    Item fetch();
+}}
+''', encoding="utf-8",
+        )
+        clients.append(client)
+    evidence = Evidence("CatalogService.java", 4, 4)
+    analysis = AnalysisResult(
+        edges=[
+            FlowEdge("CatalogService.read", "firstClient.fetch", "invokes", evidence),
+            FlowEdge("CatalogService.read", "secondClient.fetch", "invokes", evidence),
+        ],
+        injections=[
+            Injection("CatalogService.firstClient", "FirstClient", None, evidence),
+            Injection("CatalogService.secondClient", "SecondClient", None, evidence),
+        ],
+    )
+
+    SpringFeignRecognizer().enrich(analysis, clients, tmp_path)
+
+    assert sorted(call.host for call in analysis.external_http_calls) == ["first.example", "second.example"]

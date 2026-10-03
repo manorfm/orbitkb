@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 from orbitkb.analysis.configuration_syntax import SENSITIVE_CONFIGURATION_KEY
+from orbitkb.analysis.http_destination import literal_public_http_destination
 from orbitkb.analysis.jvm_imports import parse_jvm_imports
 from orbitkb.analysis.jvm_scanner import find_matching_brace, mask_non_code
 from orbitkb.analysis.jvm_spring_syntax import (
@@ -18,6 +20,7 @@ from orbitkb.analysis.models import (
     AnalysisResult,
     ConfigurationBinding,
     Evidence,
+    ExternalHttpCall,
     StaticServiceCall,
 )
 from orbitkb.analysis.route_paths import join_route
@@ -36,7 +39,16 @@ _FEIGN_METHOD_PATTERN = re.compile(
     re.DOTALL,
 )
 _FEIGN_CLIENT_URL = re.compile(r'\burl\s*=\s*' + spring_placeholder_literal("key"))
+_FEIGN_LITERAL_URL = re.compile(r'\burl\s*=\s*"([^"\n]+)"')
 _PACKAGE_RE = re.compile(r"(?m)^[ \t]*package[ \t]+([\w.]+)[ \t]*;?")
+
+
+@dataclass(frozen=True)
+class _FeignEndpoint:
+    service: str
+    method: str
+    path: str
+    external_origin: tuple[str, str, int | None] | None = None
 
 
 def _feign_clients(source: str, visible_source: str) -> Iterator[re.Match[str]]:
@@ -58,11 +70,15 @@ class SpringFeignRecognizer:
     """Connect injected Feign calls to literal mappings and property keys."""
 
     def enrich(self, result: AnalysisResult, files: list[Path], root: Path) -> None:
-        result.static_service_calls.extend(_spring_feign_service_calls(result, files, root))
+        service_calls, external_calls = _spring_feign_calls(result, files, root)
+        result.static_service_calls.extend(service_calls)
+        result.external_http_calls.extend(external_calls)
         result.configuration_bindings.extend(_feign_client_url_bindings(files, root))
 
 
-def _spring_feign_service_calls(result: AnalysisResult, files: list[Path], root: Path) -> list[StaticServiceCall]:
+def _spring_feign_calls(
+    result: AnalysisResult, files: list[Path], root: Path,
+) -> tuple[list[StaticServiceCall], list[ExternalHttpCall]]:
     """Connect a Spring field injection to an explicitly declared Feign mapping."""
     endpoints = _feign_endpoints(files)
     files_by_name = {
@@ -83,8 +99,9 @@ def _spring_feign_service_calls(result: AnalysisResult, files: list[Path], root:
     for (owner, _field), contract in injection_contracts.items():
         if contract is not None:
             injected_contracts_by_owner.setdefault(owner, set()).add(contract)
-    calls: list[StaticServiceCall] = []
-    seen: set[tuple[str, str, str, str, str]] = set()
+    service_calls: list[StaticServiceCall] = []
+    external_calls: list[ExternalHttpCall] = []
+    seen: set[tuple[str, _FeignEndpoint]] = set()
     for edge in result.edges:
         receiver, separator, member = edge.target.rpartition(".")
         if not separator:
@@ -101,24 +118,24 @@ def _spring_feign_service_calls(result: AnalysisResult, files: list[Path], root:
         endpoint = endpoints.get((client or "", member))
         if endpoint is None:
             continue
-        target_service, method, path = endpoint
-        key = (edge.source, target_service, "http", method, path)
+        key = (edge.source, endpoint)
         if key in seen:
             continue
         seen.add(key)
-        calls.append(StaticServiceCall(
-            source=edge.source,
-            target_service=target_service,
-            protocol="http",
-            target_method=method,
-            target_path=path,
-            evidence=edge.evidence,
-        ))
-    return calls
+        if endpoint.external_origin is not None:
+            scheme, host, port = endpoint.external_origin
+            external_calls.append(ExternalHttpCall(
+                edge.source, scheme, host, port, endpoint.method, endpoint.path, edge.evidence,
+            ))
+        else:
+            service_calls.append(StaticServiceCall(
+                edge.source, endpoint.service, "http", endpoint.method, endpoint.path, edge.evidence,
+            ))
+    return service_calls, external_calls
 
 
 def _injected_feign_type(
-    contract: str, source: str | None, endpoints: dict[tuple[str, str], tuple[str, str, str]],
+    contract: str, source: str | None, endpoints: dict[tuple[str, str], _FeignEndpoint],
 ) -> str | None:
     if "." in contract:
         return contract if any(client == contract for client, _method in endpoints) else None
@@ -135,9 +152,9 @@ def _injected_feign_type(
     return next(iter(matches)) if len(matches) == 1 else None
 
 
-def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], tuple[str, str, str]]:
+def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], _FeignEndpoint]:
     """Return only literal method mappings declared in a local Feign interface."""
-    candidates: dict[tuple[str, str], set[tuple[str, str, str]]] = {}
+    candidates: dict[tuple[str, str], set[_FeignEndpoint]] = {}
     for path in files:
         if path.suffix not in {".java", ".kt"}:
             continue
@@ -149,6 +166,11 @@ def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], tuple[str, str,
             if not service or "$" in service or "#{" in service:
                 continue
             client = _qualified_client_name(package, client_match.group("client"))
+            url_match = _FEIGN_LITERAL_URL.search(client_match.group("extra_args"))
+            url = url_match.group(1) if url_match else None
+            destination = literal_public_http_destination(url) if url else None
+            if url and destination is None and "${" not in url and "#{" not in url:
+                continue
             route_prefix, unresolved_route_prefix = spring_route_prefix(client_match.group("annotations"))
             if unresolved_route_prefix:
                 continue
@@ -161,10 +183,13 @@ def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], tuple[str, str,
                     continue
                 if "${" in method_match.group("path") or "#{" in method_match.group("path"):
                     continue
-                candidates.setdefault((client, method_match.group("method")), set()).add((
-                    service,
-                    SPRING_ROUTE_ANNOTATION_TO_METHOD[method_match.group("mapping")],
-                    join_route(route_prefix, method_match.group("path")),
+                method_path = join_route(route_prefix, method_match.group("path"))
+                target_path = join_route(destination[3], method_path) if destination else method_path
+                candidates.setdefault((client, method_match.group("method")), set()).add(_FeignEndpoint(
+                    service=service,
+                    method=SPRING_ROUTE_ANNOTATION_TO_METHOD[method_match.group("mapping")],
+                    path=target_path,
+                    external_origin=destination[:3] if destination else None,
                 ))
     return {key: next(iter(routes)) for key, routes in candidates.items() if len(routes) == 1}
 

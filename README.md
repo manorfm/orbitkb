@@ -192,6 +192,10 @@ dynamic name or conflicting overloaded mappings leave the destination unknown.
 When Feign interfaces share a simple name, explicit imports or the consumer's
 package determine which interface a call reaches; unresolved cases stay unknown.
 Feign URL configuration bindings identify packaged interfaces by qualified name.
+An injected Feign client with a literal public HTTP URL records an external call
+using that host and the combined URL and mapping path. Literal URLs that cannot
+be classified do not produce an internal service call; property based URLs keep
+their configuration binding and declared service name.
 
 All MCP responses are structured JSON and use progressive disclosure: list a bounded
 set, select one item, then ask for detail. The full per-tool contract — exact response

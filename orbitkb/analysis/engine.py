@@ -51,6 +51,7 @@ from orbitkb.analysis.frontends import (
     FrameworkAdapter,
     LanguageFrontend,
 )
+from orbitkb.analysis.http_destination import literal_public_http_destination
 from orbitkb.analysis.jvm_feign import SpringFeignRecognizer
 from orbitkb.analysis.jvm_grpc_analyzer import (
     jvm_grpc_client_bindings,
@@ -156,7 +157,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "89"
+STATIC_ANALYSIS_INPUT_VERSION = "90"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -2847,21 +2848,6 @@ def _node_literal_http_url(node: Node, source: bytes, constants: dict[str, str])
     return base + suffix if base is not None and "\\" not in suffix else None
 
 
-def _node_external_http_destination(url: str) -> tuple[str, str, int | None, str] | None:
-    try:
-        parsed = urlparse(url)
-        host, port = parsed.hostname, parsed.port
-    except ValueError:
-        return None
-    if parsed.scheme not in {"http", "https"} or host is None or "@" in parsed.netloc:
-        return None
-    if "?" in url or "#" in url or not re.fullmatch(r"(?:[a-z0-9-]+\.)+[a-z]{2,}", host):
-        return None
-    if any(label.startswith("-") or label.endswith("-") for label in host.split(".")):
-        return None
-    return parsed.scheme, host, port, parsed.path or "/"
-
-
 def _node_external_http_calls(
     tree: Node, source: bytes, path: Path, root: Path, functions: tuple[_Function, ...],
 ) -> list[ExternalHttpCall]:
@@ -2895,7 +2881,7 @@ def _node_external_http_calls(
                 continue
             args = arguments.named_children
             url = _node_literal_http_url(args[0], source, constants) if args else None
-            destination = _node_external_http_destination(url) if url is not None else None
+            destination = literal_public_http_destination(url) if url is not None else None
             if destination is not None:
                 scheme, host, port, target_path = destination
                 calls.append(ExternalHttpCall(
