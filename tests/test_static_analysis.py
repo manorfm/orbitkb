@@ -887,6 +887,75 @@ data class Bill(val orders: List<Order>) {
                for edge in result.edges)
 
 
+def test_kotlin_implicit_it_generated_copy_is_not_a_flow_call(tmp_path: Path):
+    (tmp_path / "Bill.kt").write_text('''package example.model
+data class Order(val id: Int)
+data class Bill(val orders: List<Order>) {
+    fun revise() = orders.map { it.copy(id = it.id + 1) }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert not any(edge.source == "Bill.revise" and edge.target == "it.copy" for edge in result.edges)
+
+
+def test_kotlin_implicit_it_custom_copy_stays_a_call(tmp_path: Path):
+    (tmp_path / "Bill.kt").write_text('''package example.model
+data class Order(val id: Int) { fun copy(extra: String) = this }
+data class Bill(val orders: List<Order>) {
+    fun revise() = orders.map { it.copy(extra = "x") }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Bill.revise" and edge.target == "Order.copy"
+               and edge.confidence == "medium" for edge in result.edges)
+
+
+def test_kotlin_implicit_it_nested_copy_stays_a_call(tmp_path: Path):
+    (tmp_path / "Bill.kt").write_text('''package example.model
+data class Item(val id: Int)
+data class Order(val items: List<Item>)
+data class Bill(val orders: List<Order>) {
+    fun revise() = orders.map { it.items.map { it.copy() } }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Bill.revise" and edge.target == "it.copy" for edge in result.edges)
+
+
+def test_kotlin_implicit_it_copy_with_non_property_argument_stays_a_call(tmp_path: Path):
+    (tmp_path / "Bill.kt").write_text('''package example.model
+data class Order(val id: Int)
+data class Bill(val orders: List<Order>) {
+    fun revise() = orders.map { it.copy(extra = "x") }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Bill.revise" and edge.target == "it.copy" for edge in result.edges)
+
+
+def test_kotlin_implicit_it_copy_with_local_extension_stays_a_call(tmp_path: Path):
+    (tmp_path / "Bill.kt").write_text('''package example.model
+data class Order(val id: Int)
+fun Order.copy(id: String) = this
+data class Bill(val orders: List<Order>) {
+    fun revise() = orders.map { it.copy(id = "x") }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Bill.revise" and edge.target in {"it.copy", "example.model.Order.copy"}
+               for edge in result.edges)
+
+
 def test_go_net_http_handlefunc_routes_match_discovery_without_claiming_get():
     hints = GoDetector().collect_hints(CATALOG_GO_SAMPLE)
     analysis = StaticAnalysisEngine().analyze(CATALOG_GO_SAMPLE, "go")

@@ -11,7 +11,8 @@ Spring security rule. Redis publication is confirmed, while library calls and
 domain branches still limit the flow. The typed ingredients lambda reaches
 `Ingredient.removes`; its generated data-class `copy` is recognized as a local
 construction operation. `Bill.add` also reaches `Order.isOpen` through the typed
-`orders` collection; `it.copy` remains unresolved. Imported local DTO and entity
+`orders` collection; its generated `it.copy` is recognized as a local construction
+operation. Imported local DTO and entity
 constructors are recognized as construction rather than flow calls. The request
 DTO is extracted. The response
 DTO through `resumeOut` is backed

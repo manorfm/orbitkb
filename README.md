@@ -763,6 +763,9 @@ same project is handled the same way when its declaration is unique. Calls
 with a same-named function or local binding stay unresolved.
 Direct calls to the generated `copy` method inside Kotlin data-class methods
 also stay out of the flow when no local or declared `copy` shadows them.
+The same applies to `it.copy` in a typed Kotlin `map` lambda when named
+arguments match data-class properties. Ambiguous and declared calls remain in
+the flow.
 An internal evidence composer can select route facts by profile for later prompt
 reduction. It preserves each fact's source, route path, status and content digest,
 and carries navigation boundaries and truncation forward without calling a model.

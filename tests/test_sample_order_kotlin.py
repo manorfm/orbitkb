@@ -152,6 +152,8 @@ def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
                and edge.confidence == "medium" for edge in analysis.edges)
     assert not any(boundary.reason == "unresolved" and boundary.source == "Bill.add"
                    and boundary.target == "it.isOpen" for boundary in reached.boundaries)
+    assert not any(boundary.reason == "unresolved" and boundary.source == "Bill.add"
+                   and boundary.target == "it.copy" for boundary in reached.boundaries)
     assert any(edge.source == "AddItemUserCase.add" and edge.target == "Bill.isOpen"
                and edge.confidence == "medium" for edge in analysis.edges)
     assert any(edge.source == "FetchItemMediator.get" and edge.target == "ItemDTO.hasChange"

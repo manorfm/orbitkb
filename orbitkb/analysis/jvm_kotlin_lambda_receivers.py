@@ -12,7 +12,9 @@ from orbitkb.analysis.jvm_scanner import (
     find_calls,
     find_functions,
     find_matching_brace,
+    find_matching_paren,
     mask_non_code,
+    split_top_level,
 )
 from orbitkb.analysis.kotlin_dto_shapes import kotlin_data_class_shapes
 from orbitkb.analysis.models import AnalysisResult, Symbol
@@ -22,7 +24,9 @@ _LAMBDA = re.compile(
     r"(?<![\w.])(?P<local>[A-Za-z_]\w*)\.(?P<field>[A-Za-z_]\w*)\."
     r"(?:map|mapNotNull)\s*\{\s*(?P<element>[A-Za-z_]\w*)\s*->"
 )
-_IMPLICIT_LAMBDA = re.compile(r"(?<![\w.])(?P<field>[A-Za-z_]\w*)\.firstOrNull\s*\{")
+_IMPLICIT_LAMBDA = re.compile(
+    r"(?<![\w.])(?P<field>[A-Za-z_]\w*)\.(?P<operation>firstOrNull|map)\s*\{"
+)
 _LIST = re.compile(r"(?:List|MutableList|Collection)<\s*(?P<element>[A-Za-z_]\w*)\s*>")
 
 
@@ -33,7 +37,7 @@ def _local_type(name: str, file_path: str, imports: dict[str, dict[str, str]], p
 def _list_element(
     owner_type: str, field: str, data_classes: dict[str, list[tuple[str, list[dict]]]],
     imports: dict[str, dict[str, str]], packages: dict[str, str],
-) -> tuple[str, str] | None:
+) -> tuple[str, str, frozenset[str]] | None:
     owners = data_classes.get(owner_type, ())
     if len(owners) != 1:
         return None
@@ -43,15 +47,36 @@ def _list_element(
         return None
     element_name = element_type.group("element")
     elements = data_classes.get(_local_type(element_name, owner_path, imports, packages), ())
-    return (element_name, elements[0][0]) if len(elements) == 1 else None
+    if len(elements) != 1:
+        return None
+    element_path, element_fields = elements[0]
+    return element_name, element_path, frozenset(item["name"] for item in element_fields)
+
+
+def _copy_uses_declared_properties(
+    source: str, visible: str, call_start: int, callee: str, property_names: frozenset[str],
+) -> bool:
+    call = re.match(rf"{re.escape(callee)}\s*\(", visible[call_start:])
+    if call is None:
+        return False
+    opening = call_start + call.end() - 1
+    closing = find_matching_paren(source, opening)
+    if closing < 0:
+        return False
+    arguments = split_top_level(source[opening + 1:closing])
+    if not arguments:
+        return False
+    names = [re.match(r"\s*([A-Za-z_]\w*)\s*=", argument) for argument in arguments]
+    return all(name is not None and name.group(1) in property_names for name in names)
 
 
 def _record_element_calls(
     symbol: Symbol, source: str, visible: str, body_start: int, closing: int, receiver: str,
-    element: tuple[str, str], declarations: dict[str, list[Symbol]],
+    element: tuple[str, str, frozenset[str]], declarations: dict[str, list[Symbol]],
     edge_counts: Counter[tuple[str, str, int]], updates: dict[tuple[str, str, int], str],
+    removals: set[tuple[str, str, int]], extension_copy_receivers: set[str], *, generated_copy: bool = False,
 ) -> None:
-    element_name, element_path = element
+    element_name, element_path, property_names = element
     for callee_name, offset in find_calls(visible[body_start:closing]):
         call_receiver, separator, method = callee_name.rpartition(".")
         if not separator or call_receiver != receiver:
@@ -63,10 +88,17 @@ def _record_element_calls(
             continue
         target = f"{element_name}.{method}"
         methods = declarations.get(target, ())
-        if len(methods) != 1 or methods[0].evidence.file_path != element_path:
-            continue
         line = source.count("\n", 0, body_start + offset) + 1
         key = (symbol.name, callee_name, line)
+        if (generated_copy and method == "copy" and not methods and element_name not in extension_copy_receivers
+                and edge_counts[key] == 1
+                and _copy_uses_declared_properties(
+                    source, visible, body_start + offset, callee_name, property_names,
+                )):
+            removals.add(key)
+            continue
+        if len(methods) != 1 or methods[0].evidence.file_path != element_path:
+            continue
         if edge_counts[key] == 1:
             updates[key] = target
 
@@ -100,7 +132,12 @@ def resolve_kotlin_lambda_element_calls(result: AnalysisResult, files: list[Path
     declarations: dict[str, list[Symbol]] = {}
     for symbol in result.symbols:
         declarations.setdefault(symbol.name, []).append(symbol)
+    extension_copy_receivers = {
+        symbol.name.rsplit(".", 2)[-2] for symbol in result.symbols
+        if symbol.member == "copy" and symbol.name.count(".") >= 2
+    }
     updates: dict[tuple[str, str, int], str] = {}
+    removals: set[tuple[str, str, int]] = set()
     edge_counts = Counter((edge.source, edge.target, edge.evidence.start_line) for edge in result.edges)
 
     for symbol in result.symbols:
@@ -143,7 +180,7 @@ def resolve_kotlin_lambda_element_calls(result: AnalysisResult, files: list[Path
                 continue
             _record_element_calls(
                 symbol, source, visible, match.end(), closing, match.group("element"),
-                element, declarations, edge_counts, updates,
+                element, declarations, edge_counts, updates, removals, extension_copy_receivers,
             )
 
         owner_type = f"{packages[file_path]}.{symbol.owner}"
@@ -171,7 +208,8 @@ def resolve_kotlin_lambda_element_calls(result: AnalysisResult, files: list[Path
             if element is not None:
                 _record_element_calls(
                     symbol, source, visible, opening + 1, closing, "it",
-                    element, declarations, edge_counts, updates,
+                    element, declarations, edge_counts, updates, removals, extension_copy_receivers,
+                    generated_copy=match.group("operation") == "map",
                 )
 
     result.edges = [
@@ -179,4 +217,6 @@ def resolve_kotlin_lambda_element_calls(result: AnalysisResult, files: list[Path
             key := (edge.source, edge.target, edge.evidence.start_line)
         ) in updates and edge.kind == "invokes" else edge
         for edge in result.edges
+        if not ((edge.source, edge.target, edge.evidence.start_line) in removals
+                and edge.kind == "invokes" and edge.boundary_kind is None)
     ]
