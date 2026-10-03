@@ -192,6 +192,7 @@ dynamic name or conflicting overloaded mappings leave the destination unknown.
 When Feign interfaces share a simple name, explicit imports or the consumer's
 package determine which interface a call reaches; unresolved cases stay unknown.
 Feign URL configuration bindings identify packaged interfaces by qualified name.
+Named `@FeignClient` arguments can appear in either order.
 An injected Feign client with a literal public HTTP URL records an external call
 using that host and the combined URL and mapping path. Literal URLs that cannot
 be classified do not produce an internal service call; property based URLs keep

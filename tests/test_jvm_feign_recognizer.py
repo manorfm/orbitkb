@@ -593,3 +593,48 @@ interface VendorClient {
         ("catalog-service", "/items"),
     ]
     assert analysis.external_http_calls == []
+
+
+def test_feign_url_before_name_keeps_external_destination_and_property_binding(tmp_path: Path):
+    java_client = tmp_path / "VendorClient.java"
+    java_client.write_text(
+        '''@FeignClient(url = "https://api.vendor.example/v1", name = "catalog-service")
+@RequestMapping("/catalog")
+interface VendorClient {
+    @GetMapping("/items")
+    Item fetch();
+}
+''', encoding="utf-8",
+    )
+    kotlin_client = tmp_path / "InventoryClient.kt"
+    kotlin_client.write_text(
+        '''@FeignClient(url = $$"${provider.inventory.url}", value = "inventory-service")
+interface InventoryClient {
+    @PostMapping("/reservations")
+    fun reserve(): Reservation
+}
+''', encoding="utf-8",
+    )
+    evidence = Evidence("CatalogService.java", 4, 4)
+    analysis = AnalysisResult(
+        edges=[
+            FlowEdge("CatalogService.read", "vendorClient.fetch", "invokes", evidence),
+            FlowEdge("CatalogService.read", "inventoryClient.reserve", "invokes", evidence),
+        ],
+        injections=[
+            Injection("CatalogService.vendorClient", "VendorClient", None, evidence),
+            Injection("CatalogService.inventoryClient", "InventoryClient", None, evidence),
+        ],
+    )
+
+    SpringFeignRecognizer().enrich(analysis, [java_client, kotlin_client], tmp_path)
+
+    assert [(call.host, call.path) for call in analysis.external_http_calls] == [
+        ("api.vendor.example", "/v1/catalog/items"),
+    ]
+    assert [(call.target_service, call.target_path) for call in analysis.static_service_calls] == [
+        ("inventory-service", "/reservations"),
+    ]
+    assert [(binding.source, binding.key) for binding in analysis.configuration_bindings] == [
+        ("InventoryClient", "provider.inventory.url"),
+    ]

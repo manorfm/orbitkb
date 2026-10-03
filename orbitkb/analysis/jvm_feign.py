@@ -32,7 +32,7 @@ from orbitkb.analysis.route_paths import join_route
 # Stop at the interface's opening brace. A route may contain `{id}`, so the
 # interface body itself must be delimited with find_matching_brace below.
 _FEIGN_CLIENT_PATTERN = re.compile(
-    r'@FeignClient\s*\(\s*(?:(?:name|value)\s*=\s*)?"(?P<service>[^"]+)"(?P<extra_args>[^)]*)\)\s*'
+    r'@FeignClient\s*\((?P<args>[^)]*)\)\s*'
     r'(?P<annotations>(?:@\w+(?:\s*\([^)]*\))?\s*)*)'
     r'(?:public\s+)?interface\s+(?P<client>\w+)\s*\{',
 )
@@ -45,6 +45,7 @@ _FEIGN_METHOD_PATTERN = re.compile(
 _FEIGN_PROPERTY_URL = re.compile(spring_placeholder_literal("key"))
 _FEIGN_EMPTY_URL = re.compile(r'\$*""')
 _FEIGN_LITERAL_URL = re.compile(r'\$*"([^"\n]+)"')
+_FEIGN_SERVICE_NAME = re.compile(r'"([^"\n]+)"')
 _KOTLIN_INTERPOLATED_VALUE = re.compile(r'(?<!\\)\$[A-Za-z_]')
 _PACKAGE_RE = re.compile(r"(?m)^[ \t]*package[ \t]+([\w.]+)[ \t]*;?")
 
@@ -81,6 +82,23 @@ def _feign_url_argument(extra_args: str) -> str | None:
     if not values:
         return None
     return values[0] if len(values) == 1 else ""
+
+
+def _feign_service_name(args: str) -> str | None:
+    values = []
+    for index, argument in enumerate(split_top_level(args)):
+        key, separator, value = argument.partition("=")
+        if separator and key.strip() in {"name", "value"}:
+            values.append(value.strip())
+        elif not separator and index == 0:
+            values.append(argument.strip())
+    names = []
+    for value in values:
+        literal = _FEIGN_SERVICE_NAME.fullmatch(value)
+        if literal is None:
+            return None
+        names.append(literal.group(1))
+    return names[0] if names and len(set(names)) == 1 else None
 
 
 class SpringFeignRecognizer:
@@ -179,11 +197,11 @@ def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], _FeignEndpoint]
         visible_source = mask_non_code(source)
         package = _package_name(source)
         for client_match in _feign_clients(source, visible_source):
-            service = client_match.group("service")
+            service = _feign_service_name(client_match.group("args"))
             if not service or "$" in service or "#{" in service:
                 continue
             client = _qualified_client_name(package, client_match.group("client"))
-            url_argument = _feign_url_argument(client_match.group("extra_args"))
+            url_argument = _feign_url_argument(client_match.group("args"))
             destination = None
             if url_argument is not None and (
                 _FEIGN_EMPTY_URL.fullmatch(url_argument) is None
@@ -233,7 +251,9 @@ def _feign_client_url_bindings(files: list[Path], root: Path) -> list[Configurat
         visible_source = mask_non_code(source)
         package = _package_name(source)
         for client_match in _feign_clients(source, visible_source):
-            url_argument = _feign_url_argument(client_match.group("extra_args"))
+            if _feign_service_name(client_match.group("args")) is None:
+                continue
+            url_argument = _feign_url_argument(client_match.group("args"))
             url_match = _FEIGN_PROPERTY_URL.fullmatch(url_argument) if url_argument is not None else None
             if url_match is None:
                 continue
