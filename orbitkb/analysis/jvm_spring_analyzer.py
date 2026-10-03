@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 import types
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -409,6 +410,29 @@ def _jvm_edges_for_text(
     return edges
 
 
+def _generated_data_class_copy_lines(function: FunctionMatch) -> set[int]:
+    """Find direct, unshadowed calls to Kotlin's generated data-class copy."""
+    if re.search(r"\bcopy\s*:", function.text[:function.body_offset]):
+        return set()
+    body = mask_non_code(function.text[function.body_offset:])
+    calls = [(callee, offset) for callee, offset in find_calls(body)]
+    lines = {
+        offset: function.start_line + function.text.count("\n", 0, function.body_offset + offset)
+        for callee, offset in calls if callee == "copy"
+    }
+    counts = Counter(lines.values())
+    base_depth = 1 if body.lstrip().startswith("{") else 0
+    generated = set()
+    for offset, line in lines.items():
+        prefix = body[:offset]
+        if counts[line] != 1 or prefix.count("{") - prefix.count("}") != base_depth:
+            continue
+        if re.search(r"\b(?:val|var|fun)\s+copy\b", prefix):
+            continue
+        generated.add(line)
+    return generated
+
+
 def _direct_kotlin_local_assignments(function_match: FunctionMatch) -> tuple[tuple[str, str, int], ...]:
     body = function_match.text[function_match.body_offset:]
     assignments = []
@@ -547,7 +571,11 @@ class _KotlinSpringAnalyzer:
             redis_publishers = engine._spring_injected_receivers(
                 result.injections, class_name, "StringRedisTemplate", "RedisTemplate",
             )
-            for function_match in find_functions(text, class_match.body_start, class_match.body_end, kotlin=True):
+            functions = find_functions(text, class_match.body_start, class_match.body_end, kotlin=True)
+            generated_copy = "data" in annotations.split() and not any(
+                function.name == "copy" for function in functions
+            )
+            for function_match in functions:
                 symbol = f"{class_name}.{function_match.name}"
                 evidence = Evidence(path.relative_to(root).as_posix(), function_match.start_line, function_match.end_line)
                 imports = _kotlin_extension_imports(text, function_match)
@@ -560,6 +588,9 @@ class _KotlinSpringAnalyzer:
                     local_assignments=_direct_kotlin_local_assignments(function_match),
                 ))
                 edges = _jvm_edges_for_text(symbol, function_match, path, root, local_classes)
+                if generated_copy:
+                    copy_lines = _generated_data_class_copy_lines(function_match)
+                    edges = [edge for edge in edges if not (edge.target == "copy" and edge.evidence.start_line in copy_lines)]
                 classified_edges, cloud_facts = _classify_spring_edges(
                     edges, persistence_receivers, redis_publishers, cloud_declarations,
                     _mongo_execute_callback_writes(function_match, persistence_receivers.mongo_templates, kotlin=True),

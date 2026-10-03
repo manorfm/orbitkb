@@ -700,6 +700,58 @@ class Handler {
     }
 
 
+def test_kotlin_data_class_generated_copy_is_not_a_flow_call(tmp_path: Path):
+    (tmp_path / "Item.kt").write_text('''package example.model
+data class Item(val quantity: Int) {
+    fun adjust() = copy(quantity = quantity + 1)
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert not any(edge.source == "Item.adjust" and edge.target == "copy" for edge in result.edges)
+
+
+def test_kotlin_custom_copy_call_remains_a_flow_call(tmp_path: Path):
+    (tmp_path / "Item.kt").write_text('''package example.model
+class Item {
+    fun copy() = this
+    fun adjust() = copy()
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Item.adjust" and edge.target == "Item.copy" for edge in result.edges)
+
+
+def test_kotlin_data_class_local_copy_binding_stays_a_call(tmp_path: Path):
+    (tmp_path / "Item.kt").write_text('''package example.model
+data class Item(val quantity: Int) {
+    fun adjust(): Item {
+        val copy = { this }
+        return copy()
+    }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Item.adjust" and edge.target == "copy" for edge in result.edges)
+
+
+def test_kotlin_data_class_nested_receiver_copy_stays_a_call(tmp_path: Path):
+    (tmp_path / "Item.kt").write_text('''package example.model
+data class Item(val quantity: Int) {
+    fun adjust(other: Other) = with(other) { copy() }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Item.adjust" and edge.target == "copy" for edge in result.edges)
+
+
 def test_kotlin_lambda_element_method_resolves_from_proven_return_and_list_property(tmp_path: Path):
     (tmp_path / "Models.kt").write_text('''package example.model
 data class Ingredient(val id: String) { fun removes() = this }
