@@ -33,12 +33,11 @@ from orbitkb.discovery.scan_helpers import find_matching_paren
 _FEIGN_START = re.compile(r'@FeignClient\s*\(')
 _ANNOTATION_NAME = re.compile(r'@[\w.]+')
 _FEIGN_INTERFACE = re.compile(r'(?:public\s+)?interface\s+(?P<client>\w+)\s*\{')
-_FEIGN_METHOD_PATTERN = re.compile(
-    r'@(?P<mapping>GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\s*'
-    r'\(\s*(?:value\s*=\s*)?"(?P<path>[^"]+)"[^)]*\)\s*'
-    r'(?:[\w<>?,\[\]\s]+\s+)?(?P<method>\w+)\s*\(',
-    re.DOTALL,
+_FEIGN_METHOD_ANNOTATION = re.compile(
+    r'@(?P<mapping>GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\s*\('
 )
+_FEIGN_METHOD_PATH = re.compile(r'(?:value\s*=\s*)?"([^"\n]+)"')
+_FEIGN_METHOD_SIGNATURE = re.compile(r'\s*(?:[\w<>?,\[\]\s]+\s+)?(?P<method>\w+)\s*\(')
 _FEIGN_PROPERTY_URL = re.compile(spring_placeholder_literal("key"))
 _FEIGN_EMPTY_URL = re.compile(r'\$*""')
 _FEIGN_LITERAL_URL = re.compile(r'\$*"([^"\n]+)"')
@@ -129,6 +128,24 @@ def _feign_service_name(args: str) -> str | None:
             return None
         names.append(literal.group(1))
     return names[0] if names and len(set(names)) == 1 else None
+
+
+def _feign_mapped_methods(body: str, visible_body: str) -> Iterator[tuple[str, str, str]]:
+    for annotation in _FEIGN_METHOD_ANNOTATION.finditer(visible_body):
+        opening = annotation.end() - 1
+        closing = find_matching_paren(body, opening)
+        if closing < 0:
+            continue
+        arguments = split_top_level(body[opening + 1:closing])
+        if not arguments or (path_match := _FEIGN_METHOD_PATH.fullmatch(arguments[0].strip())) is None:
+            continue
+        signature = _FEIGN_METHOD_SIGNATURE.match(body, closing + 1)
+        if signature is None or visible_body[signature.start("method")] == " ":
+            continue
+        path = path_match.group(1)
+        if "${" in path or "#{" in path:
+            continue
+        yield annotation.group("mapping"), path, signature.group("method")
 
 
 class SpringFeignRecognizer:
@@ -255,16 +272,12 @@ def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], _FeignEndpoint]
             brace_close = find_matching_brace(source, brace_open)
             body = source[brace_open + 1 : brace_close]
             visible_body = visible_source[brace_open + 1 : brace_close]
-            for method_match in _FEIGN_METHOD_PATTERN.finditer(body):
-                if visible_body[method_match.start()] != "@" or visible_body[method_match.start("method")] == " ":
-                    continue
-                if "${" in method_match.group("path") or "#{" in method_match.group("path"):
-                    continue
-                method_path = join_route(route_prefix, method_match.group("path"))
+            for mapping, route, method_name in _feign_mapped_methods(body, visible_body):
+                method_path = join_route(route_prefix, route)
                 target_path = join_route(destination[3], method_path) if destination else method_path
-                candidates.setdefault((client, method_match.group("method")), set()).add(_FeignEndpoint(
+                candidates.setdefault((client, method_name), set()).add(_FeignEndpoint(
                     service=service,
-                    method=SPRING_ROUTE_ANNOTATION_TO_METHOD[method_match.group("mapping")],
+                    method=SPRING_ROUTE_ANNOTATION_TO_METHOD[mapping],
                     path=target_path,
                     external_origin=destination[:3] if destination else None,
                 ))

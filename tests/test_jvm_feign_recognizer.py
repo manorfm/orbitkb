@@ -663,3 +663,27 @@ interface VendorClient {
     assert [(call.host, call.path) for call in analysis.external_http_calls] == [
         ("api.vendor.example", "/v1/(archive)/catalog/(archived)/items"),
     ]
+
+
+def test_feign_method_annotation_with_parenthesis_in_headers_keeps_the_full_path(tmp_path: Path):
+    client = tmp_path / "VendorClient.java"
+    client.write_text(
+        '''@FeignClient(name = "catalog-service", url = "https://api.vendor.example/v1")
+interface VendorClient {
+    @GetMapping(value = "/items/(archived)", headers = "X-View=(archived)")
+    Item fetch();
+}
+''', encoding="utf-8",
+    )
+    evidence = Evidence("CatalogService.java", 4, 4)
+    analysis = AnalysisResult(
+        edges=[FlowEdge("CatalogService.read", "vendorClient.fetch", "invokes", evidence)],
+        injections=[Injection("CatalogService.vendorClient", "VendorClient", None, evidence)],
+    )
+
+    SpringFeignRecognizer().enrich(analysis, [client], tmp_path)
+
+    assert analysis.static_service_calls == []
+    assert [(call.host, call.path) for call in analysis.external_http_calls] == [
+        ("api.vendor.example", "/v1/items/(archived)"),
+    ]
