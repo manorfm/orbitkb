@@ -39,7 +39,8 @@ _FEIGN_METHOD_PATTERN = re.compile(
     re.DOTALL,
 )
 _FEIGN_CLIENT_URL = re.compile(r'\burl\s*=\s*' + spring_placeholder_literal("key"))
-_FEIGN_LITERAL_URL = re.compile(r'\burl\s*=\s*"([^"\n]+)"')
+_FEIGN_LITERAL_URL = re.compile(r'\burl\s*=\s*\$*"([^"\n]+)"')
+_KOTLIN_INTERPOLATED_VALUE = re.compile(r'(?<!\\)\$[A-Za-z_]')
 _PACKAGE_RE = re.compile(r"(?m)^[ \t]*package[ \t]+([\w.]+)[ \t]*;?")
 
 
@@ -166,11 +167,18 @@ def _feign_endpoints(files: list[Path]) -> dict[tuple[str, str], _FeignEndpoint]
             if not service or "$" in service or "#{" in service:
                 continue
             client = _qualified_client_name(package, client_match.group("client"))
-            url_match = _FEIGN_LITERAL_URL.search(client_match.group("extra_args"))
-            url = url_match.group(1) if url_match else None
-            destination = literal_public_http_destination(url) if url else None
-            if url and destination is None and "${" not in url and "#{" not in url:
-                continue
+            extra_args = client_match.group("extra_args")
+            url_match = _FEIGN_LITERAL_URL.search(extra_args)
+            destination = None
+            if url_match is not None and _FEIGN_CLIENT_URL.search(extra_args) is None:
+                url = url_match.group(1)
+                if "${" in url or "#{" in url or (
+                    path.suffix == ".kt" and _KOTLIN_INTERPOLATED_VALUE.search(url)
+                ):
+                    continue
+                destination = literal_public_http_destination(url)
+                if destination is None:
+                    continue
             route_prefix, unresolved_route_prefix = spring_route_prefix(client_match.group("annotations"))
             if unresolved_route_prefix:
                 continue

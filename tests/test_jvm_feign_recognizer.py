@@ -415,3 +415,84 @@ interface {client_name} {{
     SpringFeignRecognizer().enrich(analysis, clients, tmp_path)
 
     assert sorted(call.host for call in analysis.external_http_calls) == ["first.example", "second.example"]
+
+
+def test_feign_composed_dynamic_urls_do_not_claim_a_destination(tmp_path: Path):
+    client = tmp_path / "VendorClients.java"
+    client.write_text(
+        '''@FeignClient(name = "catalog-service", url = "https://${provider.host}/v1")
+interface DynamicHostClient {
+    @GetMapping("/items")
+    Item fetch();
+}
+
+@FeignClient(name = "catalog-service", url = "https://api.vendor.example/${tenant}")
+interface DynamicPathClient {
+    @GetMapping("/items")
+    Item fetch();
+}
+''', encoding="utf-8",
+    )
+    evidence = Evidence("CatalogService.java", 4, 4)
+    analysis = AnalysisResult(
+        edges=[
+            FlowEdge("CatalogService.read", "dynamicHostClient.fetch", "invokes", evidence),
+            FlowEdge("CatalogService.read", "dynamicPathClient.fetch", "invokes", evidence),
+        ],
+        injections=[
+            Injection("CatalogService.dynamicHostClient", "DynamicHostClient", None, evidence),
+            Injection("CatalogService.dynamicPathClient", "DynamicPathClient", None, evidence),
+        ],
+    )
+
+    SpringFeignRecognizer().enrich(analysis, [client], tmp_path)
+
+    assert analysis.static_service_calls == []
+    assert analysis.external_http_calls == []
+
+
+def test_feign_public_url_joins_interface_and_method_prefixes(tmp_path: Path):
+    client = tmp_path / "VendorClient.java"
+    client.write_text(
+        '''@FeignClient(name = "catalog-service", url = "https://api.vendor.example/api")
+@RequestMapping("/v1")
+interface VendorClient {
+    @GetMapping("/items/{itemId}")
+    Item fetch();
+}
+''', encoding="utf-8",
+    )
+    evidence = Evidence("CatalogService.java", 4, 4)
+    analysis = AnalysisResult(
+        edges=[FlowEdge("CatalogService.read", "vendorClient.fetch", "invokes", evidence)],
+        injections=[Injection("CatalogService.vendorClient", "VendorClient", None, evidence)],
+    )
+
+    SpringFeignRecognizer().enrich(analysis, [client], tmp_path)
+
+    assert analysis.static_service_calls == []
+    assert [(call.host, call.path) for call in analysis.external_http_calls] == [
+        ("api.vendor.example", "/api/v1/items/{itemId}"),
+    ]
+
+
+def test_kotlin_feign_interpolated_url_path_does_not_claim_a_literal_path(tmp_path: Path):
+    client = tmp_path / "VendorClient.kt"
+    client.write_text(
+        '''@FeignClient(name = "catalog-service", url = "https://api.vendor.example/$tenant")
+interface VendorClient {
+    @GetMapping("/items")
+    fun fetch(): Item
+}
+''', encoding="utf-8",
+    )
+    evidence = Evidence("CatalogService.kt", 4, 4)
+    analysis = AnalysisResult(
+        edges=[FlowEdge("CatalogService.read", "vendorClient.fetch", "invokes", evidence)],
+        injections=[Injection("CatalogService.vendorClient", "VendorClient", None, evidence)],
+    )
+
+    SpringFeignRecognizer().enrich(analysis, [client], tmp_path)
+
+    assert analysis.static_service_calls == []
+    assert analysis.external_http_calls == []
