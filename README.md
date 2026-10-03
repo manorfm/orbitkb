@@ -751,8 +751,9 @@ Calls to `convertAndSend` on an injected Spring `RedisTemplate` or
 `StringRedisTemplate` appear as Redis Pub/Sub publish boundaries. A dynamic
 channel or payload remains unknown unless separately proven by source evidence.
 Kotlin construction of a class declared in the same file does not create a
-call-flow boundary. If a function shares the class name, the call stays
-unresolved rather than assuming construction.
+call-flow boundary. An explicitly imported class declared elsewhere in the
+same project is handled the same way when its declaration is unique. Calls
+with a same-named function or local binding stay unresolved.
 An internal evidence composer can select route facts by profile for later prompt
 reduction. It preserves each fact's source, route path, status and content digest,
 and carries navigation boundaries and truncation forward without calling a model.

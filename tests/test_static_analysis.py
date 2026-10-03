@@ -639,6 +639,67 @@ class Handler {
                for edge in result.edges)
 
 
+def test_kotlin_imported_local_class_constructor_is_not_a_flow_call(tmp_path: Path):
+    (tmp_path / "Models.kt").write_text("package example.model\ndata class Item(val id: String)\n", encoding="utf-8")
+    (tmp_path / "Handler.kt").write_text('''package example.web
+import example.model.Item
+class Handler {
+    fun handle() = Item("one")
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert not any(edge.source == "Handler.handle" and edge.target == "Item" for edge in result.edges)
+
+
+def test_kotlin_imported_constructor_keeps_same_name_function_ambiguous(tmp_path: Path):
+    (tmp_path / "Models.kt").write_text("package example.model\nclass Item\n", encoding="utf-8")
+    (tmp_path / "Factory.kt").write_text("package example.web\nfun Item() = Unit\n", encoding="utf-8")
+    (tmp_path / "Handler.kt").write_text('''package example.web
+import example.model.Item
+class Handler {
+    fun handle() = Item()
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Handler.handle" and edge.target == "Item" for edge in result.edges)
+
+
+def test_kotlin_imported_constructor_keeps_shadowed_name_as_call(tmp_path: Path):
+    (tmp_path / "Models.kt").write_text("package example.model\nclass Item\n", encoding="utf-8")
+    (tmp_path / "Handler.kt").write_text('''package example.web
+import example.model.Item
+class Handler {
+    fun handle(Item: () -> Unit) = Item()
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Handler.handle" and edge.target == "Item" for edge in result.edges)
+
+
+def test_kotlin_imported_constructor_requires_matching_local_declaration(tmp_path: Path):
+    (tmp_path / "Models.kt").write_text("package example.model\nclass Item\nclass Outer { class Inner }\n",
+                                         encoding="utf-8")
+    (tmp_path / "Handler.kt").write_text('''package example.web
+import vendor.Item
+import example.model.Inner
+class Handler {
+    fun handle() { Item(); Inner() }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert {(edge.source, edge.target) for edge in result.edges} >= {
+        ("Handler.handle", "Item"), ("Handler.handle", "Inner"),
+    }
+
+
 def test_go_net_http_handlefunc_routes_match_discovery_without_claiming_get():
     hints = GoDetector().collect_hints(CATALOG_GO_SAMPLE)
     analysis = StaticAnalysisEngine().analyze(CATALOG_GO_SAMPLE, "go")

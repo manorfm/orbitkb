@@ -59,6 +59,7 @@ from orbitkb.analysis.jvm_grpc_analyzer import (
     kotlin_grpc_client_bindings,
     kotlin_grpc_handlers,
 )
+from orbitkb.analysis.jvm_kotlin_constructors import remove_imported_constructor_calls
 from orbitkb.analysis.jvm_security_analyzer import SpringSecurityAdapter
 from orbitkb.analysis.jvm_spring_data import (
     SPRING_DATA_REPOSITORY_BASE_TYPES,
@@ -157,7 +158,7 @@ from orbitkb.discovery.scan_helpers import SKIP_DIRS
 from orbitkb.security.redaction import redact_sensitive_values
 
 _HTTP_METHOD_LITERALS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-STATIC_ANALYSIS_INPUT_VERSION = "99"
+STATIC_ANALYSIS_INPUT_VERSION = "100"
 
 # Silent unless a caller (`orbitkb index/update --verbose`) explicitly raises this
 # logger's level. A native crash (see _edges_for/_text) is not a catchable Python
@@ -3518,6 +3519,7 @@ class StaticAnalysisEngine:
             result.grpc_client_bindings.extend(_go_grpc_client_bindings(files, root))
         if stack == "jvm-spring":
             enrich_kotlin_expression_returns(result, files, root)
+            remove_imported_constructor_calls(result, files, root)
         _enrich_contract_fields(result.contracts, files)
         _enrich_rabbitmq_contracts(result.contracts, files)
         _enrich_openapi_contracts(result, root)

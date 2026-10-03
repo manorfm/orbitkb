@@ -157,6 +157,10 @@ def test_sample_route_reaches_catalog_but_remains_ineligible_for_zero_call():
     assert ("persistence_call", "collection.updateOne") in {
         (boundary.reason, boundary.target) for boundary in reached.boundaries
     }
+    assert not any(
+        boundary.reason == "unresolved" and boundary.target in {"BillItem", "Item", "Ingredient", "ItemDTO"}
+        for boundary in reached.boundaries
+    )
     assert any(
         edge.source == "BillOrderDAO.add"
         and edge.target == "collection.updateOne"
