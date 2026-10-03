@@ -203,6 +203,7 @@ host or path expressions, constants, or concatenations do not establish a destin
 An empty URL uses the declared service name.
 Feign method routes accept positional literals and named `value` or `path`
 literals in any argument order, including a one-item Java or Kotlin route array.
+Class and interface `@RequestMapping` prefixes also accept one-item route arrays.
 Multiple route values and conflicting declarations remain unresolved.
 
 All MCP responses are structured JSON and use progressive disclosure: list a bounded

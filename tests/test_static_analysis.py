@@ -5926,6 +5926,38 @@ class PublicController {
     ]
 
 
+def test_spring_http_routes_compose_single_route_array_class_prefix(tmp_path: Path):
+    (tmp_path / "CatalogController.java").write_text(
+        '''@RequestMapping(path = {"/v1"})
+class CatalogController {
+  @GetMapping("/items")
+  void items() { }
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(entry.method, entry.name) for entry in result.entrypoints if entry.kind == "http"] == [
+        ("GET", "/v1/items"),
+    ]
+
+
+def test_spring_http_routes_do_not_choose_conflicting_class_prefixes(tmp_path: Path):
+    (tmp_path / "CatalogController.java").write_text(
+        '''@RequestMapping(value = "/v1", path = "/v2")
+class CatalogController {
+  @GetMapping("/items")
+  void items() { }
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [entry for entry in result.entrypoints if entry.kind == "http"] == []
+
+
 def test_spring_feign_does_not_claim_path_when_interface_prefix_is_dynamic(tmp_path: Path):
     (tmp_path / "InventoryClient.java").write_text(
         '''@FeignClient(name = "inventory")

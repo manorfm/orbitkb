@@ -17,6 +17,7 @@ from orbitkb.analysis.jvm_scanner import (
 )
 from orbitkb.analysis.jvm_spring_syntax import (
     SPRING_ROUTE_ANNOTATION_TO_METHOD,
+    single_literal_route_path,
     spring_placeholder_literal,
     spring_route_prefix,
 )
@@ -36,7 +37,6 @@ _FEIGN_INTERFACE = re.compile(r'(?:public\s+)?interface\s+(?P<client>\w+)\s*\{')
 _FEIGN_METHOD_ANNOTATION = re.compile(
     r'@(?P<mapping>GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\s*\('
 )
-_FEIGN_METHOD_PATH = re.compile(r'"([^"\n]+)"')
 _FEIGN_METHOD_SIGNATURE = re.compile(r'\s*(?:[\w<>?,\[\]\s]+\s+)?(?P<method>\w+)\s*\(')
 _FEIGN_PROPERTY_URL = re.compile(spring_placeholder_literal("key"))
 _FEIGN_EMPTY_URL = re.compile(r'\$*""')
@@ -130,19 +130,6 @@ def _feign_service_name(args: str) -> str | None:
     return names[0] if names and len(set(names)) == 1 else None
 
 
-def _feign_literal_path(value: str) -> str | None:
-    value = value.strip()
-    if value.startswith(("[", "{")) and value.endswith(("]", "}")):
-        if (value[0], value[-1]) not in {("[", "]"), ("{", "}")}:
-            return None
-        elements = split_top_level(value[1:-1])
-        if len(elements) != 1:
-            return None
-        value = elements[0].strip()
-    literal = _FEIGN_METHOD_PATH.fullmatch(value)
-    return literal.group(1) if literal is not None else None
-
-
 def _feign_method_path(arguments: list[str]) -> str | None:
     paths = []
     for index, argument in enumerate(arguments):
@@ -154,8 +141,8 @@ def _feign_method_path(arguments: list[str]) -> str | None:
             value = key
         else:
             continue
-        literal = _feign_literal_path(value)
-        if literal is None:
+        literal = single_literal_route_path(value)
+        if literal is None or not literal:
             return None
         paths.append(literal)
     return paths[0] if paths and len(set(paths)) == 1 else None

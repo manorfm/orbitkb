@@ -17,6 +17,25 @@ SPRING_ROUTE_ANNOTATION_TO_METHOD: dict[str, str] = {
     "DeleteMapping": "DELETE",
 }
 
+_LITERAL_ROUTE_PATH = re.compile(r'"([^"\n]*)"')
+
+
+def single_literal_route_path(value: str) -> str | None:
+    """Read one literal path from a scalar or one-element Java/Kotlin array."""
+    value = value.strip()
+    if value.startswith(("[", "{")) and value.endswith(("]", "}")):
+        if (value[0], value[-1]) not in {("[", "]"), ("{", "}")}:
+            return None
+        elements = split_top_level(value[1:-1])
+        if len(elements) != 1:
+            return None
+        value = elements[0].strip()
+    literal = _LITERAL_ROUTE_PATH.fullmatch(value)
+    if literal is None or "${" in literal.group(1) or "#{" in literal.group(1):
+        return None
+    return literal.group(1)
+
+
 def spring_annotation_calls(modifiers: str) -> Iterator[tuple[str, str]]:
     """Yield annotation calls, skipping `@` text inside another annotation's arguments."""
     cursor = 0
@@ -44,6 +63,7 @@ def spring_route_prefix(annotations: str) -> tuple[str | None, bool]:
     """Return a literal class/interface prefix and whether a declared path is unresolved."""
     for annotation_name, arguments in spring_annotation_calls(annotations):
         if annotation_name == "RequestMapping":
+            paths = []
             for index, part in enumerate(split_top_level(arguments[1:-1])):
                 key, separator, value = part.partition("=")
                 if separator:
@@ -53,10 +73,12 @@ def spring_route_prefix(annotations: str) -> tuple[str | None, bool]:
                     value = key
                 else:
                     continue
-                literal = re.fullmatch(r'\s*"([^"\n]*)"\s*', value)
-                if literal is None or "${" in literal.group(1) or "#{" in literal.group(1):
+                path = single_literal_route_path(value)
+                if path is None:
                     return None, True
-                return literal.group(1), False
+                paths.append(path)
+            if paths:
+                return (paths[0], False) if len(set(paths)) == 1 else (None, True)
     return None, False
 
 

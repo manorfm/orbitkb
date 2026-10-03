@@ -801,3 +801,27 @@ interface VendorClient {
 
     assert analysis.static_service_calls == []
     assert analysis.external_http_calls == []
+
+
+def test_feign_interface_single_route_array_composes_with_method_path(tmp_path: Path):
+    client = tmp_path / "VendorClient.kt"
+    client.write_text(
+        '''@FeignClient(name = "catalog-service")
+@RequestMapping(path = ["/v1"])
+interface VendorClient {
+    @GetMapping("/items")
+    fun fetch(): Item
+}
+''', encoding="utf-8",
+    )
+    evidence = Evidence("CatalogService.kt", 4, 4)
+    analysis = AnalysisResult(
+        edges=[FlowEdge("CatalogService.read", "vendorClient.fetch", "invokes", evidence)],
+        injections=[Injection("CatalogService.vendorClient", "VendorClient", None, evidence)],
+    )
+
+    SpringFeignRecognizer().enrich(analysis, [client], tmp_path)
+
+    assert [(call.target_service, call.target_path) for call in analysis.static_service_calls] == [
+        ("catalog-service", "/v1/items"),
+    ]
