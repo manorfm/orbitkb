@@ -827,6 +827,66 @@ class Handler(private val provider: Provider) {
                for edge in result.edges)
 
 
+def test_kotlin_implicit_it_resolves_from_data_class_list_property(tmp_path: Path):
+    (tmp_path / "Bill.kt").write_text('''package example.model
+data class Order(val open: Boolean) { fun isOpen() = open }
+data class Bill(val orders: List<Order>) {
+    fun firstOpen() = orders.firstOrNull { it.isOpen() }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Bill.firstOpen" and edge.target == "Order.isOpen"
+               and edge.confidence == "medium" for edge in result.edges)
+
+
+def test_kotlin_implicit_it_stays_unresolved_inside_nested_lambda(tmp_path: Path):
+    (tmp_path / "Bill.kt").write_text('''package example.model
+data class Order(val items: List<Item>) { fun isOpen() = true }
+data class Item(val open: Boolean) { fun isOpen() = open }
+data class Bill(val orders: List<Order>) {
+    fun firstOpen() = orders.firstOrNull { it.items.any { it.isOpen() } }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Bill.firstOpen" and edge.target == "it.isOpen"
+               for edge in result.edges)
+
+
+def test_kotlin_implicit_it_stays_unresolved_when_property_is_shadowed(tmp_path: Path):
+    (tmp_path / "Bill.kt").write_text('''package example.model
+data class Order(val open: Boolean) { fun isOpen() = open }
+data class Other(val open: Boolean) { fun isOpen() = open }
+data class Bill(val orders: List<Order>) {
+    fun firstOpen(orders: List<Other>) = orders.firstOrNull { it.isOpen() }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Bill.firstOpen" and edge.target == "it.isOpen"
+               for edge in result.edges)
+
+
+def test_kotlin_implicit_it_stays_unresolved_in_another_receiver_scope(tmp_path: Path):
+    (tmp_path / "Bill.kt").write_text('''package example.model
+data class Order(val open: Boolean) { fun isOpen() = open }
+data class OtherOrder(val open: Boolean) { fun isOpen() = open }
+data class Other(val orders: List<OtherOrder>)
+data class Bill(val orders: List<Order>) {
+    fun firstOpen(other: Other) = with(other) { orders.firstOrNull { it.isOpen() } }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert any(edge.source == "Bill.firstOpen" and edge.target == "it.isOpen"
+               for edge in result.edges)
+
+
 def test_go_net_http_handlefunc_routes_match_discovery_without_claiming_get():
     hints = GoDetector().collect_hints(CATALOG_GO_SAMPLE)
     analysis = StaticAnalysisEngine().analyze(CATALOG_GO_SAMPLE, "go")

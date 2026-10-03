@@ -738,6 +738,9 @@ For a named Kotlin `map` or `mapNotNull` parameter, a call on that element can
 reach a local method when a uniquely resolved local return and a declared
 `List` property prove the element type. An uncertain return or property keeps
 the call unresolved.
+A direct `firstOrNull` lambda using implicit `it` can also resolve a call when
+the enclosing data class declares the collection property and the element method
+is unique. Nested receiver scopes and shadowed properties remain unresolved.
 When a source location has exactly one call edge and one proven outbound service
 call, navigation reports that edge as an external boundary. A different source
 or competing edge remains unresolved.

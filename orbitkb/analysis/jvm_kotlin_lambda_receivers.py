@@ -1,4 +1,4 @@
-"""Resolve a named Kotlin collection lambda parameter through a proven local type."""
+"""Resolve Kotlin collection lambda parameters through proven local types."""
 
 from __future__ import annotations
 
@@ -8,7 +8,12 @@ from dataclasses import replace
 from pathlib import Path
 
 from orbitkb.analysis.jvm_imports import parse_jvm_imports
-from orbitkb.analysis.jvm_scanner import find_calls, find_matching_brace, mask_non_code
+from orbitkb.analysis.jvm_scanner import (
+    find_calls,
+    find_functions,
+    find_matching_brace,
+    mask_non_code,
+)
 from orbitkb.analysis.kotlin_dto_shapes import kotlin_data_class_shapes
 from orbitkb.analysis.models import AnalysisResult, Symbol
 
@@ -17,6 +22,7 @@ _LAMBDA = re.compile(
     r"(?<![\w.])(?P<local>[A-Za-z_]\w*)\.(?P<field>[A-Za-z_]\w*)\."
     r"(?:map|mapNotNull)\s*\{\s*(?P<element>[A-Za-z_]\w*)\s*->"
 )
+_IMPLICIT_LAMBDA = re.compile(r"(?<![\w.])(?P<field>[A-Za-z_]\w*)\.firstOrNull\s*\{")
 _LIST = re.compile(r"(?:List|MutableList|Collection)<\s*(?P<element>[A-Za-z_]\w*)\s*>")
 
 
@@ -24,17 +30,65 @@ def _local_type(name: str, file_path: str, imports: dict[str, dict[str, str]], p
     return imports[file_path].get(name, f"{packages[file_path]}.{name}")
 
 
+def _list_element(
+    owner_type: str, field: str, data_classes: dict[str, list[tuple[str, list[dict]]]],
+    imports: dict[str, dict[str, str]], packages: dict[str, str],
+) -> tuple[str, str] | None:
+    owners = data_classes.get(owner_type, ())
+    if len(owners) != 1:
+        return None
+    owner_path, fields = owners[0]
+    property_types = [item["type"] for item in fields if item["name"] == field]
+    if len(property_types) != 1 or (element_type := _LIST.fullmatch(property_types[0])) is None:
+        return None
+    element_name = element_type.group("element")
+    elements = data_classes.get(_local_type(element_name, owner_path, imports, packages), ())
+    return (element_name, elements[0][0]) if len(elements) == 1 else None
+
+
+def _record_element_calls(
+    symbol: Symbol, source: str, visible: str, body_start: int, closing: int, receiver: str,
+    element: tuple[str, str], declarations: dict[str, list[Symbol]],
+    edge_counts: Counter[tuple[str, str, int]], updates: dict[tuple[str, str, int], str],
+) -> None:
+    element_name, element_path = element
+    for callee_name, offset in find_calls(visible[body_start:closing]):
+        call_receiver, separator, method = callee_name.rpartition(".")
+        if not separator or call_receiver != receiver:
+            continue
+        prefix = visible[body_start:body_start + offset]
+        if prefix.count("{") != prefix.count("}"):
+            continue
+        if re.search(rf"\b(?:val|var)\s+{re.escape(receiver)}\b", prefix):
+            continue
+        target = f"{element_name}.{method}"
+        methods = declarations.get(target, ())
+        if len(methods) != 1 or methods[0].evidence.file_path != element_path:
+            continue
+        line = source.count("\n", 0, body_start + offset) + 1
+        key = (symbol.name, callee_name, line)
+        if edge_counts[key] == 1:
+            updates[key] = target
+
+
 def resolve_kotlin_lambda_element_calls(result: AnalysisResult, files: list[Path], root: Path) -> None:
-    """Link `element.method()` only when a local return and List property prove its type."""
+    """Link element calls only when a local return or member List property proves their type."""
     sources = {
         path.relative_to(root).as_posix(): path.read_text(encoding="utf-8", errors="ignore")
         for path in files if path.suffix == ".kt"
     }
     packages: dict[str, str] = {}
     imports: dict[str, dict[str, str]] = {}
+    visible_sources: dict[str, str] = {}
+    function_bodies: dict[tuple[str, int, str], list[int]] = {}
     data_classes: dict[str, list[tuple[str, list[dict]]]] = {}
     for file_path, source in sources.items():
         visible = mask_non_code(source)
+        visible_sources[file_path] = visible
+        for function in find_functions(visible, 0, len(visible), kotlin=True):
+            function_bodies.setdefault((file_path, function.start_line, function.name), []).append(
+                function.start_offset + function.body_offset,
+            )
         package = _PACKAGE.search(visible)
         if package is None:
             continue
@@ -52,12 +106,12 @@ def resolve_kotlin_lambda_element_calls(result: AnalysisResult, files: list[Path
     for symbol in result.symbols:
         file_path = symbol.evidence.file_path
         source = sources.get(file_path)
-        if source is None or file_path not in packages or not symbol.local_assignments:
+        if source is None or file_path not in packages:
             continue
         lines = source.splitlines(keepends=True)
         start = sum(map(len, lines[:symbol.evidence.start_line - 1]))
         end = sum(map(len, lines[:symbol.evidence.end_line]))
-        visible = mask_non_code(source)
+        visible = visible_sources[file_path]
         for match in _LAMBDA.finditer(visible, start, end):
             opening = visible.find("{", match.start(), match.end())
             closing = find_matching_brace(source, opening)
@@ -84,33 +138,41 @@ def resolve_kotlin_lambda_element_calls(result: AnalysisResult, files: list[Path
             if returned.evidence.file_path not in packages:
                 continue
             owner_type = _local_type(returned.return_type, returned.evidence.file_path, imports, packages)
-            owner_classes = data_classes.get(owner_type, ())
-            if len(owner_classes) != 1:
+            element = _list_element(owner_type, match.group("field"), data_classes, imports, packages)
+            if element is None:
                 continue
-            owner_path, fields = owner_classes[0]
-            property_types = [field["type"] for field in fields if field["name"] == match.group("field")]
-            if len(property_types) != 1 or (element_type := _LIST.fullmatch(property_types[0])) is None:
+            _record_element_calls(
+                symbol, source, visible, match.end(), closing, match.group("element"),
+                element, declarations, edge_counts, updates,
+            )
+
+        owner_type = f"{packages[file_path]}.{symbol.owner}"
+        owners = data_classes.get(owner_type, ())
+        if len(owners) != 1 or owners[0][0] != file_path:
+            continue
+        body_positions = function_bodies.get((file_path, symbol.evidence.start_line, symbol.member), ())
+        if len(body_positions) != 1:
+            continue
+        function_body = body_positions[0]
+        base_depth = 1 if visible[function_body:function_body + 1] == "{" else 0
+        for match in _IMPLICIT_LAMBDA.finditer(visible, start, end):
+            preceding_body = visible[function_body:match.start()]
+            if preceding_body.count("{") - preceding_body.count("}") != base_depth:
                 continue
-            element_name = element_type.group("element")
-            element_fqn = _local_type(element_name, owner_path, imports, packages)
-            element_classes = data_classes.get(element_fqn, ())
-            if len(element_classes) != 1:
+            opening = match.end() - 1
+            closing = find_matching_brace(source, opening)
+            if closing < 0 or closing >= end or re.match(r"\s*[A-Za-z_]\w*\s*->", visible[opening + 1:closing]):
                 continue
-            element_path, _ = element_classes[0]
-            for callee_name, offset in find_calls(visible[match.end():closing]):
-                receiver, separator, method = callee_name.rpartition(".")
-                if not separator or receiver != match.group("element"):
-                    continue
-                if re.search(rf"\b(?:val|var)\s+{re.escape(receiver)}\b", visible[match.end():match.end() + offset]):
-                    continue
-                target = f"{element_name}.{method}"
-                methods = declarations.get(target, ())
-                if len(methods) != 1 or methods[0].evidence.file_path != element_path:
-                    continue
-                line = source.count("\n", 0, match.end() + offset) + 1
-                key = (symbol.name, callee_name, line)
-                if edge_counts[key] == 1:
-                    updates[key] = target
+            field = match.group("field")
+            preceding = visible[start:match.start()]
+            if re.search(rf"\b(?:val|var)\s+{re.escape(field)}\b|\b{re.escape(field)}\s*:", preceding):
+                continue
+            element = _list_element(owner_type, field, data_classes, imports, packages)
+            if element is not None:
+                _record_element_calls(
+                    symbol, source, visible, opening + 1, closing, "it",
+                    element, declarations, edge_counts, updates,
+                )
 
     result.edges = [
         replace(edge, target=updates[key], confidence="medium") if (
