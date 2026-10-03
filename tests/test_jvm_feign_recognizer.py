@@ -184,3 +184,99 @@ interface InventoryClient {
     assert [(call.target_method, call.target_path) for call in analysis.static_service_calls] == [
         ("GET", "/health"),
     ]
+
+
+def test_feign_recognizer_resolves_homonymous_interfaces_from_explicit_imports(tmp_path: Path):
+    first = tmp_path / "first" / "InventoryClient.java"
+    first.parent.mkdir()
+    first.write_text(
+        '''package first;
+@FeignClient("primary-inventory")
+interface InventoryClient {
+    @GetMapping("/primary/items")
+    Item fetch();
+}
+''', encoding="utf-8",
+    )
+    second = tmp_path / "second" / "InventoryClient.java"
+    second.parent.mkdir()
+    second.write_text(
+        '''package second;
+@FeignClient("secondary-inventory")
+interface InventoryClient {
+    @GetMapping("/secondary/items")
+    Item fetch();
+}
+''', encoding="utf-8",
+    )
+    primary_consumer = tmp_path / "PrimaryService.java"
+    primary_consumer.write_text(
+        '''import first.InventoryClient;
+class PrimaryService { private InventoryClient client; }
+''', encoding="utf-8",
+    )
+    secondary_consumer = tmp_path / "SecondaryService.java"
+    secondary_consumer.write_text(
+        '''import second.InventoryClient;
+class SecondaryService { private InventoryClient client; }
+''', encoding="utf-8",
+    )
+    unknown_consumer = tmp_path / "UnknownService.java"
+    unknown_consumer.write_text(
+        '''import first.*;
+import second.*;
+/*
+import second.InventoryClient;
+*/
+class UnknownService { private InventoryClient client; }
+''', encoding="utf-8",
+    )
+    analysis = AnalysisResult(
+        edges=[
+            FlowEdge(f"{owner}.read", "client.fetch", "invokes", Evidence(f"{owner}.java", 2, 2))
+            for owner in ("PrimaryService", "SecondaryService", "UnknownService")
+        ],
+        injections=[
+            Injection(f"{owner}.client", "InventoryClient", None, Evidence(f"{owner}.java", 2, 2))
+            for owner in ("PrimaryService", "SecondaryService", "UnknownService")
+        ],
+    )
+
+    SpringFeignRecognizer().enrich(
+        analysis, [first, second, primary_consumer, secondary_consumer, unknown_consumer], tmp_path,
+    )
+
+    assert [(call.source, call.target_service, call.target_path) for call in analysis.static_service_calls] == [
+        ("PrimaryService.read", "primary-inventory", "/primary/items"),
+        ("SecondaryService.read", "secondary-inventory", "/secondary/items"),
+    ]
+
+
+def test_feign_recognizer_resolves_a_fully_qualified_injection_type(tmp_path: Path):
+    client = tmp_path / "InventoryClient.java"
+    client.write_text(
+        '''package inventory;
+@FeignClient("inventory-service")
+interface InventoryClient {
+    @GetMapping("/items")
+    Item fetch();
+}
+''', encoding="utf-8",
+    )
+    consumer = tmp_path / "CatalogService.kt"
+    consumer.write_text(
+        '''package catalog
+class CatalogService(private val client: inventory.InventoryClient)
+''', encoding="utf-8",
+    )
+    evidence = Evidence("CatalogService.kt", 2, 2)
+    analysis = AnalysisResult(
+        edges=[FlowEdge("CatalogService.read", "client.fetch", "invokes", evidence)],
+        injections=[Injection("CatalogService.client", "inventory.InventoryClient", None, evidence)],
+    )
+
+    SpringFeignRecognizer().enrich(analysis, [client, consumer], tmp_path)
+
+    assert [(call.target_service, call.target_path) for call in analysis.static_service_calls] == [
+        ("inventory-service", "/items"),
+    ]

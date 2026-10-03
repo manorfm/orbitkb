@@ -5969,3 +5969,61 @@ interface InventoryClient {
     result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
 
     assert result.static_service_calls == []
+
+
+def test_spring_feign_resolves_homonymous_interfaces_from_consumer_import(tmp_path: Path):
+    for package, service, route in (
+        ("first", "primary-inventory", "/primary/items"),
+        ("second", "secondary-inventory", "/secondary/items"),
+    ):
+        file = tmp_path / package / "InventoryClient.java"
+        file.parent.mkdir()
+        file.write_text(
+            f'''package {package};
+@FeignClient("{service}")
+interface InventoryClient {{
+  @GetMapping("{route}")
+  Item fetch();
+}}
+''', encoding="utf-8",
+        )
+    (tmp_path / "CatalogService.java").write_text(
+        '''import first.InventoryClient;
+class CatalogService {
+  private InventoryClient client;
+  Item read() { return client.fetch(); }
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(call.source, call.target_service, call.target_path) for call in result.static_service_calls] == [
+        ("CatalogService.read", "primary-inventory", "/primary/items"),
+    ]
+
+
+def test_kotlin_spring_feign_resolves_an_aliased_interface_import(tmp_path: Path):
+    (tmp_path / "InventoryClient.kt").write_text(
+        '''package inventory
+@FeignClient("inventory-service")
+interface InventoryClient {
+  @GetMapping("/items")
+  fun fetch(): Item
+}
+''', encoding="utf-8",
+    )
+    (tmp_path / "CatalogService.kt").write_text(
+        '''package catalog
+import inventory.InventoryClient as StockClient
+class CatalogService(private val client: StockClient) {
+  fun read(): Item = client.fetch()
+}
+''', encoding="utf-8",
+    )
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(call.source, call.target_service, call.target_path) for call in result.static_service_calls] == [
+        ("CatalogService.read", "inventory-service", "/items"),
+    ]

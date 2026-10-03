@@ -189,6 +189,8 @@ unresolved path expressions are omitted.
 Feign declarations and mappings inside comments or strings are ignored.
 Feign calls need a literal service name and an unambiguous method mapping; a
 dynamic name or conflicting overloaded mappings leave the destination unknown.
+When Feign interfaces share a simple name, explicit imports or the consumer's
+package determine which interface a call reaches; unresolved cases stay unknown.
 
 All MCP responses are structured JSON and use progressive disclosure: list a bounded
 set, select one item, then ask for detail. The full per-tool contract — exact response
