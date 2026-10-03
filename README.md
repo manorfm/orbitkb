@@ -744,8 +744,9 @@ Confirmed Spring Data reads and writes appear as persistence boundaries in
 canonical navigation; this does not assign a collection name to the operation.
 Calls on injected Spring JDBC, Mongo and JPA templates use the same boundary
 evidence. `MongoTemplate.execute` confirms a Mongo boundary while its read/write
-direction stays unknown. Overloaded methods in one class are traversed as
-possible paths with inferred confidence.
+direction stays unknown. A `collection.updateOne` call inside its Kotlin callback
+is recorded as a write when its source location is unambiguous. Overloaded
+methods in one class are traversed as possible paths with inferred confidence.
 Calls to `convertAndSend` on an injected Spring `RedisTemplate` or
 `StringRedisTemplate` appear as Redis Pub/Sub publish boundaries. A dynamic
 channel or payload remains unknown unless separately proven by source evidence.

@@ -34,7 +34,9 @@ from orbitkb.analysis.jvm_scanner import (
     find_calls,
     find_classes,
     find_functions,
+    find_matching_brace,
     find_matching_paren,
+    mask_non_code,
     mask_ranges,
     split_top_level,
 )
@@ -65,6 +67,9 @@ _DIRECT_LOCAL_CALL_RE = re.compile(
     r"(?m)^[ \t]*val[ \t]+(?P<name>[A-Za-z_]\w*)[ \t]*=[ \t]*"
     r"(?P<callee>[A-Za-z_]\w*\.[A-Za-z_]\w*)[ \t]*\("
 )
+_MONGO_EXECUTE_RE = re.compile(r'(?<![\w.])(?P<template>[A-Za-z_]\w*)\.execute\s*\(')
+_MONGO_CALLBACK_PARAMETER_RE = re.compile(r'\s*(?P<collection>[A-Za-z_]\w*)\s*->')
+
 # `ResponseEntity.BodyBuilder`'s own named header setters -- a fixed, well-known
 # Spring API surface, not a guess: calling `.eTag(...)` always sets the `ETag`
 # header, regardless of the (often computed) argument, same as the generic
@@ -296,6 +301,7 @@ def _java_constructor_param_members(
 def _classify_spring_edges(
     edges: list[FlowEdge], receivers: engine._SpringPersistenceReceivers,
     redis_publishers: frozenset[str], cloud_declarations: dict[str, tuple],
+    mongo_callback_writes: set[tuple[int, str]],
 ) -> tuple[list[FlowEdge], list[CloudFact]]:
     classified = []
     cloud_facts: list[CloudFact] = []
@@ -309,12 +315,19 @@ def _classify_spring_edges(
             or engine._spring_mongo_template_call_kind(edge.target, receivers.mongo_templates)
             or engine._entity_manager_call_kind(edge.target, receivers.entity_managers)
         )
-        kind = repository_kind or template_kind or ("publishes" if redis_publish else None) or cloud_kind
+        callback_write = (edge.evidence.start_line, edge.target) in mongo_callback_writes
+        kind = (
+            repository_kind or template_kind or ("writes" if callback_write else None)
+            or ("publishes" if redis_publish else None) or cloud_kind
+        )
         # Generic name matching is disabled for JVM persistence: `repository.save`
         # is an operation only with a local repository dependency.
         if kind is None and edge.kind in {"reads", "writes"}:
             kind = "invokes"
-        boundary_kind = "redis_pubsub" if redis_publish else "persistence" if template_kind else edge.boundary_kind
+        boundary_kind = (
+            "redis_pubsub" if redis_publish else "persistence" if template_kind or callback_write
+            else edge.boundary_kind
+        )
         classified.append(FlowEdge(
             edge.source, edge.target, kind or edge.kind, edge.evidence, edge.confidence, edge.origin,
             boundary_kind=boundary_kind,
@@ -322,6 +335,60 @@ def _classify_spring_edges(
         if cloud_fact is not None:
             cloud_facts.append(cloud_fact)
     return classified, cloud_facts
+
+
+def _mongo_execute_callback_writes(
+    function: FunctionMatch, mongo_templates: frozenset[str], *, kotlin: bool,
+) -> set[tuple[int, str]]:
+    """Find collection.updateOne inside a proven MongoTemplate.execute callback."""
+    if not mongo_templates:
+        return set()
+    parameter_names = engine._declared_parameter_types(
+        function.text[:function.body_offset], kotlin=kotlin,
+    )
+    body = function.text[function.body_offset:]
+    visible = mask_non_code(body)
+    executions = []
+    for execute in _MONGO_EXECUTE_RE.finditer(visible):
+        name = execute.group("template")
+        if name not in mongo_templates or name in parameter_names:
+            continue
+        if kotlin and re.search(rf"\b(?:val|var)\s+{re.escape(name)}\b", visible[:execute.start()]):
+            continue
+        executions.append(execute)
+    if not executions:
+        return set()
+    call_counts: dict[tuple[int, str], int] = {}
+    for callee, offset in find_calls(visible):
+        line = function.start_line + function.text.count("\n", 0, function.body_offset + offset)
+        key = (line, callee)
+        call_counts[key] = call_counts.get(key, 0) + 1
+    writes: set[tuple[int, str]] = set()
+    for execute in executions:
+        arguments_end = find_matching_paren(body, execute.end() - 1)
+        if arguments_end < 0:
+            continue
+        cursor = arguments_end + 1
+        while cursor < len(visible) and visible[cursor].isspace():
+            cursor += 1
+        if cursor >= len(visible) or visible[cursor] != "{":
+            continue
+        callback_end = find_matching_brace(body, cursor)
+        if callback_end < 0:
+            continue
+        parameter = _MONGO_CALLBACK_PARAMETER_RE.match(visible, cursor + 1)
+        if parameter is None:
+            continue
+        callback_start = parameter.end()
+        target = f'{parameter.group("collection")}.updateOne'
+        for callee, offset in find_calls(visible[callback_start:callback_end]):
+            if callee != target:
+                continue
+            call_offset = function.body_offset + callback_start + offset
+            line = function.start_line + function.text.count("\n", 0, call_offset)
+            if call_counts.get((line, target)) == 1:
+                writes.add((line, target))
+    return writes
 
 
 def _jvm_edges_for_text(
@@ -495,6 +562,7 @@ class _KotlinSpringAnalyzer:
                 edges = _jvm_edges_for_text(symbol, function_match, path, root, local_classes)
                 classified_edges, cloud_facts = _classify_spring_edges(
                     edges, persistence_receivers, redis_publishers, cloud_declarations,
+                    _mongo_execute_callback_writes(function_match, persistence_receivers.mongo_templates, kotlin=True),
                 )
                 result.edges.extend(classified_edges)
                 result.cloud_facts.extend(cloud_facts)
@@ -594,6 +662,7 @@ class _JavaSpringAnalyzer:
                 edges = _jvm_edges_for_text(symbol, function_match, path, root)
                 classified_edges, cloud_facts = _classify_spring_edges(
                     edges, persistence_receivers, redis_publishers, cloud_declarations,
+                    _mongo_execute_callback_writes(function_match, persistence_receivers.mongo_templates, kotlin=False),
                 )
                 result.edges.extend(classified_edges)
                 result.cloud_facts.extend(cloud_facts)

@@ -2754,6 +2754,77 @@ class Unproven {
                and edge.boundary_kind is None for edge in result.edges)
 
 
+def test_mongo_execute_classifies_only_its_collection_callback_write(tmp_path: Path):
+    (tmp_path / "Orders.kt").write_text('''class Orders(private val mongo: MongoTemplate) {
+  fun save() = mongo.execute(Order::class.java) { collection -> collection.updateOne() }
+  fun unrelated() = collection.updateOne()
+}
+class Unproven {
+  fun save(mongo: Client) = mongo.execute(Order::class.java) { collection -> collection.updateOne() }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert {(edge.source, edge.kind, edge.boundary_kind) for edge in result.edges
+            if edge.target == "collection.updateOne"} == {
+        ("Orders.save", "writes", "persistence"),
+        ("Orders.unrelated", "invokes", None),
+        ("Unproven.save", "invokes", None),
+    }
+
+
+def test_mongo_callback_does_not_use_a_nested_receiver_with_the_same_name(tmp_path: Path):
+    (tmp_path / "Orders.kt").write_text('''class Orders(private val mongo: MongoTemplate) {
+  fun unrelated() = other.mongo.execute(Order::class.java) { collection -> collection.updateOne() }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(edge.kind, edge.boundary_kind) for edge in result.edges
+            if edge.target == "collection.updateOne"] == [("invokes", None)]
+
+
+def test_mongo_callback_does_not_use_a_shadowed_template_name(tmp_path: Path):
+    (tmp_path / "Orders.kt").write_text('''class Orders(private val mongo: MongoTemplate) {
+  fun unrelated(mongo: Client) = mongo.execute(Order::class.java) { collection -> collection.updateOne() }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(edge.kind, edge.boundary_kind) for edge in result.edges
+            if edge.target == "collection.updateOne"] == [("invokes", None)]
+
+
+def test_mongo_callback_does_not_use_a_shadowed_local_name(tmp_path: Path):
+    (tmp_path / "Orders.kt").write_text('''class Orders(private val mongo: MongoTemplate) {
+  fun unrelated() {
+    val mongo = Client()
+    mongo.execute(Order::class.java) { collection -> collection.updateOne() }
+  }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(edge.kind, edge.boundary_kind) for edge in result.edges
+            if edge.target == "collection.updateOne"] == [("invokes", None)]
+
+
+def test_mongo_callback_keeps_same_line_duplicate_calls_unresolved(tmp_path: Path):
+    (tmp_path / "Orders.kt").write_text('''class Orders(private val mongo: MongoTemplate) {
+  fun save() = run { mongo.execute(Order::class.java) { collection -> collection.updateOne() }; collection.updateOne() }
+}
+''', encoding="utf-8")
+
+    result = StaticAnalysisEngine().analyze(tmp_path, "jvm-spring")
+
+    assert [(edge.kind, edge.boundary_kind) for edge in result.edges
+            if edge.target == "collection.updateOne"] == [("invokes", None), ("invokes", None)]
+
+
 def test_spring_analyzers_classify_only_explicit_entity_manager_dependencies(tmp_path: Path):
     (tmp_path / "Orders.java").write_text(
         '''class Orders {
