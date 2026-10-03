@@ -740,3 +740,64 @@ interface VendorClient {
 
     assert analysis.static_service_calls == []
     assert analysis.external_http_calls == []
+
+
+def test_feign_single_route_arrays_resolve_for_kotlin_and_java(tmp_path: Path):
+    kotlin_client = tmp_path / "KotlinVendorClient.kt"
+    kotlin_client.write_text(
+        '''@FeignClient(name = "catalog-service")
+interface KotlinVendorClient {
+    @GetMapping(path = ["/items"])
+    fun fetch(): Item
+}
+''', encoding="utf-8",
+    )
+    java_client = tmp_path / "JavaVendorClient.java"
+    java_client.write_text(
+        '''@FeignClient(name = "inventory-service")
+interface JavaVendorClient {
+    @PostMapping(value = {"/reservations"})
+    Reservation reserve();
+}
+''', encoding="utf-8",
+    )
+    evidence = Evidence("CatalogService.kt", 4, 4)
+    analysis = AnalysisResult(
+        edges=[
+            FlowEdge("CatalogService.read", "kotlinVendorClient.fetch", "invokes", evidence),
+            FlowEdge("CatalogService.read", "javaVendorClient.reserve", "invokes", evidence),
+        ],
+        injections=[
+            Injection("CatalogService.kotlinVendorClient", "KotlinVendorClient", None, evidence),
+            Injection("CatalogService.javaVendorClient", "JavaVendorClient", None, evidence),
+        ],
+    )
+
+    SpringFeignRecognizer().enrich(analysis, [kotlin_client, java_client], tmp_path)
+
+    assert [(call.target_service, call.target_method, call.target_path) for call in analysis.static_service_calls] == [
+        ("catalog-service", "GET", "/items"),
+        ("inventory-service", "POST", "/reservations"),
+    ]
+
+
+def test_feign_multiple_route_array_remains_unresolved(tmp_path: Path):
+    client = tmp_path / "VendorClient.kt"
+    client.write_text(
+        '''@FeignClient(name = "catalog-service")
+interface VendorClient {
+    @GetMapping(path = ["/items", "/legacy-items"])
+    fun fetch(): Item
+}
+''', encoding="utf-8",
+    )
+    evidence = Evidence("CatalogService.kt", 4, 4)
+    analysis = AnalysisResult(
+        edges=[FlowEdge("CatalogService.read", "vendorClient.fetch", "invokes", evidence)],
+        injections=[Injection("CatalogService.vendorClient", "VendorClient", None, evidence)],
+    )
+
+    SpringFeignRecognizer().enrich(analysis, [client], tmp_path)
+
+    assert analysis.static_service_calls == []
+    assert analysis.external_http_calls == []

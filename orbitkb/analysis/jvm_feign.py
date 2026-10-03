@@ -130,6 +130,19 @@ def _feign_service_name(args: str) -> str | None:
     return names[0] if names and len(set(names)) == 1 else None
 
 
+def _feign_literal_path(value: str) -> str | None:
+    value = value.strip()
+    if value.startswith(("[", "{")) and value.endswith(("]", "}")):
+        if (value[0], value[-1]) not in {("[", "]"), ("{", "}")}:
+            return None
+        elements = split_top_level(value[1:-1])
+        if len(elements) != 1:
+            return None
+        value = elements[0].strip()
+    literal = _FEIGN_METHOD_PATH.fullmatch(value)
+    return literal.group(1) if literal is not None else None
+
+
 def _feign_method_path(arguments: list[str]) -> str | None:
     paths = []
     for index, argument in enumerate(arguments):
@@ -141,10 +154,10 @@ def _feign_method_path(arguments: list[str]) -> str | None:
             value = key
         else:
             continue
-        literal = _FEIGN_METHOD_PATH.fullmatch(value.strip())
+        literal = _feign_literal_path(value)
         if literal is None:
             return None
-        paths.append(literal.group(1))
+        paths.append(literal)
     return paths[0] if paths and len(set(paths)) == 1 else None
 
 
